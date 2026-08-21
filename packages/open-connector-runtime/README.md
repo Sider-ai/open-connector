@@ -1,4 +1,4 @@
-# @sider/open-connector-runtime
+# @liushuangls/open-connector-runtime
 
 Public Node.js runtime package built from Sider's OpenConnector fork. It contains the generated provider catalog,
 lazy provider executors, Action schemas and execution primitives, OAuth helpers, MCP helpers, and runtime storage
@@ -10,7 +10,7 @@ tenant ownership, authorization policy, credential encryption, rate limits, and 
 ## Install
 
 ```sh
-npm install @sider/open-connector-runtime
+npm install @liushuangls/open-connector-runtime
 ```
 
 Node.js 22.18 or newer is required. The package is ESM-only and publishes compiled JavaScript plus TypeScript
@@ -19,9 +19,9 @@ declarations; consumers do not execute TypeScript from `node_modules`.
 ## Load the catalog and executors
 
 ```ts
-import { loadCatalog } from "@sider/open-connector-runtime/catalog-store";
-import { ProviderLoader } from "@sider/open-connector-runtime/providers/provider-loader";
-import { executorModules } from "@sider/open-connector-runtime/providers/registry";
+import { loadCatalog } from "@liushuangls/open-connector-runtime/catalog-store";
+import { ProviderLoader } from "@liushuangls/open-connector-runtime/providers/provider-loader";
+import { executorModules } from "@liushuangls/open-connector-runtime/providers/registry";
 
 const catalog = await loadCatalog(undefined, {
   executableServices: Object.keys(executorModules),

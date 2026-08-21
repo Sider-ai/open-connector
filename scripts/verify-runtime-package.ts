@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const packageName = "@sider/open-connector-runtime";
+const packageName = "@liushuangls/open-connector-runtime";
 const rootDir = fileURLToPath(new URL("../", import.meta.url));
 const temporaryRoot = await mkdtemp(join(tmpdir(), "sider-open-connector-runtime-"));
 
@@ -121,11 +121,11 @@ function formatBytes(bytes: number): string {
 
 function smokeTestProgram(): string {
   return String.raw`
-import { loadCatalog } from "@sider/open-connector-runtime/catalog-store";
-import { ConnectionService } from "@sider/open-connector-runtime/connection-service";
-import { ProviderLoader } from "@sider/open-connector-runtime/providers/provider-loader";
-import { executorModules } from "@sider/open-connector-runtime/providers/registry";
-import { ActionRunner } from "@sider/open-connector-runtime/server/actions/action-runner";
+import { loadCatalog } from "@liushuangls/open-connector-runtime/catalog-store";
+import { ConnectionService } from "@liushuangls/open-connector-runtime/connection-service";
+import { ProviderLoader } from "@liushuangls/open-connector-runtime/providers/provider-loader";
+import { executorModules } from "@liushuangls/open-connector-runtime/providers/registry";
+import { ActionRunner } from "@liushuangls/open-connector-runtime/server/actions/action-runner";
 
 const catalog = await loadCatalog(undefined, { executableServices: ["quickchart"] });
 const providerLoader = new ProviderLoader(executorModules);
