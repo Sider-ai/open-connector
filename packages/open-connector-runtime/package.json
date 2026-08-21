@@ -1,0 +1,152 @@
+{
+  "name": "@sider/open-connector-runtime",
+  "version": "1.4.0-sider.1",
+  "description": "OpenConnector providers, actions, OAuth primitives, and execution runtime for Node.js",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Sider-ai/open-connector.git",
+    "directory": "packages/open-connector-runtime"
+  },
+  "files": [
+    "catalog/apps",
+    "dist",
+    "migrations",
+    "LICENSE.txt",
+    "NOTICE.md"
+  ],
+  "type": "module",
+  "exports": {
+    "./catalog-store": {
+      "types": "./dist/catalog-store.d.ts",
+      "import": "./dist/catalog-store.js"
+    },
+    "./connection-service": {
+      "types": "./dist/connection-service.d.ts",
+      "import": "./dist/connection-service.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp.d.ts",
+      "import": "./dist/mcp.js"
+    },
+    "./core/action-policy": {
+      "types": "./dist/core/action-policy.d.ts",
+      "import": "./dist/core/action-policy.js"
+    },
+    "./core/action-search": {
+      "types": "./dist/core/action-search.d.ts",
+      "import": "./dist/core/action-search.js"
+    },
+    "./core/request": {
+      "types": "./dist/core/request.d.ts",
+      "import": "./dist/core/request.js"
+    },
+    "./core/types": {
+      "types": "./dist/core/types.d.ts",
+      "import": "./dist/core/types.js"
+    },
+    "./oauth/oauth-client-config-service": {
+      "types": "./dist/oauth/oauth-client-config-service.d.ts",
+      "import": "./dist/oauth/oauth-client-config-service.js"
+    },
+    "./oauth/oauth-credential-refresh-service": {
+      "types": "./dist/oauth/oauth-credential-refresh-service.d.ts",
+      "import": "./dist/oauth/oauth-credential-refresh-service.js"
+    },
+    "./oauth/oauth-flow-service": {
+      "types": "./dist/oauth/oauth-flow-service.d.ts",
+      "import": "./dist/oauth/oauth-flow-service.js"
+    },
+    "./providers/provider-loader": {
+      "types": "./dist/providers/provider-loader.d.ts",
+      "import": "./dist/providers/provider-loader.js"
+    },
+    "./providers/registry": {
+      "types": "./dist/providers/registry.generated.d.ts",
+      "import": "./dist/providers/registry.generated.js"
+    },
+    "./server/actions/action-runner": {
+      "types": "./dist/server/actions/action-runner.d.ts",
+      "import": "./dist/server/actions/action-runner.js"
+    },
+    "./server/logger": {
+      "types": "./dist/server/logger.d.ts",
+      "import": "./dist/server/logger.js"
+    },
+    "./server/secrets/secret-codec": {
+      "types": "./dist/server/secrets/secret-codec.d.ts",
+      "import": "./dist/server/secrets/secret-codec.js"
+    },
+    "./server/secrets/secret-codec-core": {
+      "types": "./dist/server/secrets/secret-codec-core.d.ts",
+      "import": "./dist/server/secrets/secret-codec-core.js"
+    },
+    "./server/storage/idempotency-store": {
+      "types": "./dist/server/storage/idempotency-store.d.ts",
+      "import": "./dist/server/storage/idempotency-store.js"
+    },
+    "./server/storage/postgres-migrations": {
+      "types": "./dist/server/storage/postgres-migrations.d.ts",
+      "import": "./dist/server/storage/postgres-migrations.js"
+    },
+    "./server/storage/postgres-runtime-store": {
+      "types": "./dist/server/storage/postgres-runtime-store.d.ts",
+      "import": "./dist/server/storage/postgres-runtime-store.js"
+    },
+    "./server/storage/runtime-database": {
+      "types": "./dist/server/storage/runtime-database.d.ts",
+      "import": "./dist/server/storage/runtime-database.js"
+    },
+    "./server/storage/runtime-policy-store": {
+      "types": "./dist/server/storage/runtime-policy-store.d.ts",
+      "import": "./dist/server/storage/runtime-policy-store.js"
+    },
+    "./server/storage/runtime-store": {
+      "types": "./dist/server/storage/runtime-store.d.ts",
+      "import": "./dist/server/storage/runtime-store.js"
+    },
+    "./server/storage/runtime-token-service": {
+      "types": "./dist/server/storage/runtime-token-service.d.ts",
+      "import": "./dist/server/storage/runtime-token-service.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "next"
+  },
+  "scripts": {
+    "build": "npm --prefix ../.. run build:runtime-package",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1111.0",
+    "@cfworker/json-schema": "^4.1.1",
+    "@hono/node-server": "^2.0.10",
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "@scalar/hono-api-reference": "^0.11.7",
+    "ali-oss": "^6.23.0",
+    "busboy": "^1.6.0",
+    "fast-xml-builder": "^1.3.0",
+    "fast-xml-parser": "^5.10.1",
+    "fast-xml-validator": "^1.4.1",
+    "hono": "^4.12.34",
+    "imapflow": "^1.4.6",
+    "jose": "^6.2.3",
+    "mailparser": "^3.9.14",
+    "mdast-util-from-markdown": "^2.0.3",
+    "mdast-util-gfm": "^3.1.0",
+    "mdast-util-to-markdown": "^2.1.2",
+    "micromark-extension-gfm": "^3.0.0",
+    "minisearch": "^7.2.0",
+    "mqtt": "^5.15.2",
+    "nodemailer": "^9.0.3",
+    "pg": "^8.23.0",
+    "pino": "^10.3.1",
+    "rss-parser": "^3.13.0",
+    "zod": "^4.4.3"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  }
+}

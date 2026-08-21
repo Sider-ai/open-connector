@@ -16,6 +16,11 @@ src/providers/action-contracts.generated.ts
 *.tsbuildinfo
 data/
 
+# Generated public runtime package assets
+packages/open-connector-runtime/LICENSE.txt
+packages/open-connector-runtime/NOTICE.md
+packages/open-connector-runtime/migrations/
+
 # Local Xero OAuth app credentials (never commit)
 xero-credentials.json
 xero-encryption-key.txt

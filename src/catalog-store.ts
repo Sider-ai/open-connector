@@ -2,7 +2,11 @@ import type { ActionDefinition, AuthType, ProviderDefinition } from "./core/type
 
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { sortProviders } from "./core/catalog.ts";
+
+/** Catalog generated next to the source tree or bundled runtime package. */
+export const bundledCatalogDirectory: string = fileURLToPath(new URL("../catalog/apps/", import.meta.url));
 
 export type ActionExecutionStatus = {
   locallyExecutable: boolean;
@@ -144,7 +148,7 @@ function toProviderSummary(provider: RuntimeProviderDefinition): ProviderSummary
  * Load generated provider catalog files from disk.
  */
 export async function loadCatalog(
-  catalogDir: string = join(process.cwd(), "catalog/apps"),
+  catalogDir: string = bundledCatalogDirectory,
   options: LoadCatalogOptions = {},
 ): Promise<CatalogStore> {
   const entries = await readdir(catalogDir, { withFileTypes: true });

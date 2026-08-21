@@ -3,6 +3,7 @@
   "version": "1.4.0",
   "private": true,
   "workspaces": [
+    "packages/open-connector-runtime",
     "web"
   ],
   "type": "module",
@@ -11,7 +12,9 @@
     "dev": "node scripts/dev-local.ts",
     "dev:api": "node scripts/ensure-generated.ts && node src/server/index.ts",
     "build": "npm run typecheck",
+    "build:runtime-package": "node scripts/ensure-generated.ts && node scripts/build-runtime-package.ts",
     "build:web": "npm run build --workspace web",
+    "verify:runtime-package": "node scripts/verify-runtime-package.ts",
     "dev:cloudflare": "npm run generate:catalog && npm run build:web && node scripts/copy-catalog-assets.ts && wrangler dev --config wrangler.local.jsonc",
     "deploy:cloudflare": "npm run generate:catalog && npm run build:web && node scripts/copy-catalog-assets.ts && wrangler deploy --config wrangler.local.jsonc --minify",
     "start": "node scripts/ensure-generated.ts && node src/server/index.ts",
@@ -42,7 +45,7 @@
     "fast-xml-builder": "^1.3.0",
     "fast-xml-parser": "^5.10.1",
     "fast-xml-validator": "^1.4.1",
-    "hono": "^4.12.27",
+    "hono": "^4.12.34",
     "imapflow": "^1.4.6",
     "jose": "^6.2.3",
     "mailparser": "^3.9.14",
