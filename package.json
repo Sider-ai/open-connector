@@ -31,7 +31,8 @@
     "format": "oxfmt --check .",
     "format:fix": "oxfmt .",
     "fix": "npm run lint:fix && npm run format:fix",
-    "fix-check": "npm run fix && npm run typecheck"
+    "fix-check": "npm run fix && npm run typecheck",
+    "publish:runtime-package": "npm publish --workspace @sider/open-connector-runtime --tag next --access public"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1111.0",
