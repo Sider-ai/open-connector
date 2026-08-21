@@ -12,6 +12,7 @@ src/providers/action-contracts.generated.ts
 .env.*
 !.env.example
 .DS_Store
+.idea/
 *.log
 *.tsbuildinfo
 data/
