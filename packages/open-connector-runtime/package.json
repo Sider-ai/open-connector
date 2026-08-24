@@ -1,6 +1,6 @@
 {
   "name": "@liushuangls/open-connector-runtime",
-  "version": "1.4.0-sider.1",
+  "version": "1.4.0-sider.2",
   "description": "OpenConnector providers, actions, OAuth primitives, and execution runtime for Node.js",
   "license": "Apache-2.0",
   "repository": {
@@ -44,6 +44,10 @@
     "./core/types": {
       "types": "./dist/core/types.d.ts",
       "import": "./dist/core/types.js"
+    },
+    "./oauth/oauth-authorization-service": {
+      "types": "./dist/oauth/oauth-authorization-service.d.ts",
+      "import": "./dist/oauth/oauth-authorization-service.js"
     },
     "./oauth/oauth-client-config-service": {
       "types": "./dist/oauth/oauth-client-config-service.d.ts",

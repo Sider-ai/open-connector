@@ -58,6 +58,8 @@ function assertPackContents(pack: PackResult): void {
     "NOTICE.md",
     "dist/catalog-store.js",
     "dist/catalog-store.d.ts",
+    "dist/oauth/oauth-authorization-service.js",
+    "dist/oauth/oauth-authorization-service.d.ts",
     "dist/providers/registry.generated.js",
     "migrations/postgresql/0010_runtime.sql",
   ];
@@ -123,11 +125,15 @@ function smokeTestProgram(): string {
   return String.raw`
 import { loadCatalog } from "@liushuangls/open-connector-runtime/catalog-store";
 import { ConnectionService } from "@liushuangls/open-connector-runtime/connection-service";
+import { OAuthAuthorizationService } from "@liushuangls/open-connector-runtime/oauth/oauth-authorization-service";
 import { ProviderLoader } from "@liushuangls/open-connector-runtime/providers/provider-loader";
 import { executorModules } from "@liushuangls/open-connector-runtime/providers/registry";
 import { ActionRunner } from "@liushuangls/open-connector-runtime/server/actions/action-runner";
 
 const catalog = await loadCatalog(undefined, { executableServices: ["quickchart"] });
+if (typeof OAuthAuthorizationService !== "function") {
+  throw new Error("Packaged host-managed OAuth primitive is unavailable.");
+}
 const providerLoader = new ProviderLoader(executorModules);
 const connectionStore = {
   async get() { return undefined; },
