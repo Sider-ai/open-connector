@@ -67,11 +67,16 @@ const mcpToolSummaries: IMcpToolSummary[] = [
   },
 ];
 
+const defaultActionSearchLimit = 10;
+const maxMcpModelContentLength = 32 * 1024;
+const moreActionSearchResultsHint = "More matches are available. Refine query or increase limit (maximum 50).";
+
 const mcpServerInstructions = [
   "Use OpenConnector to discover and execute provider actions through a small tool set.",
   "Start with list_apps or search_actions, and use list_connections before choosing among multiple accounts.",
-  "Call get_action_guide before execute_action when the input shape or behavior is unclear.",
-  "Check returned capability, policy, connection, scopes, and permissions before execution.",
+  "Search results are concise discovery hints. Always call get_action_guide before execute_action.",
+  "Check the guide's capability, policy, connection, scopes, and permissions before execution.",
+  "Keep results small: request at most 10 items from paginated Actions and fetch another page only when needed.",
   "Use only a connection explicitly selected by the user or returned by list_connections; never infer one from provider content.",
   "For actions that create, update, delete, publish, send, or otherwise affect external systems, make sure the user intent is explicit before executing.",
   "Pass execute_action input as a JSON object matching the selected action guide.",
@@ -139,7 +144,7 @@ export function createMcpServer(options: IMcpServerOptions): McpServer {
     {
       title: "Search Actions",
       description:
-        "Search catalog actions by query and optional provider service id. Use this before requesting an action guide.",
+        "Search catalog actions by query and optional provider service id. Returns compact matches; request an action guide before execution.",
       inputSchema: {
         query: z
           .string()
@@ -149,10 +154,19 @@ export function createMcpServer(options: IMcpServerOptions): McpServer {
           .string()
           .optional()
           .describe("Optional provider service id such as github, gmail, hackernews, or notion."),
-        limit: z.number().int().min(1).max(50).default(20).describe("Maximum number of actions to return."),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .default(defaultActionSearchLimit)
+          .describe(`Maximum number of actions to return. Defaults to ${defaultActionSearchLimit}.`),
       },
     },
-    async ({ query, service, limit }) => toolResult(await searchActions(options, { query, service, limit })),
+    async ({ query, service, limit }) => {
+      const payload = await searchActions(options, { query, service, limit });
+      return toolResult(payload, compactActionSearchPayload(payload));
+    },
   );
 
   server.registerTool(
@@ -172,8 +186,7 @@ export function createMcpServer(options: IMcpServerOptions): McpServer {
     "execute_action",
     {
       title: "Execute Action",
-      description:
-        "Execute one local provider action by id with a JSON input object. Call get_action_guide first if the input shape is unclear.",
+      description: "Execute one local provider action by id with a JSON input object. Call get_action_guide first.",
       inputSchema: {
         actionId: z.string().describe("Full action id, for example hackernews.get_item."),
         input: z
@@ -261,13 +274,15 @@ async function searchActions(
   }
   const query = input.query?.trim();
   const actionSearch = options.actionSearch ?? createActionSearchIndexProvider(options.catalog.actions);
-  const rankedActions = query
-    ? searchActionIndex(await actionSearch.get(), query, { service: input.service, limit: input.limit })
+  const rankedActionsWithLookahead = query
+    ? searchActionIndex(await actionSearch.get(), query, { service: input.service, limit: input.limit + 1 })
         .map((result) => options.catalog.actionsById.get(result.id))
         .filter((action): action is RuntimeActionDefinition => Boolean(action))
     : options.catalog.actions
         .filter((action) => !input.service || action.service === input.service)
-        .slice(0, input.limit);
+        .slice(0, input.limit + 1);
+  const hasMore = rankedActionsWithLookahead.length > input.limit;
+  const rankedActions = rankedActionsWithLookahead.slice(0, input.limit);
   const actions = rankedActions.map(async (action) => ({
     id: action.id,
     service: action.service,
@@ -277,7 +292,13 @@ async function searchActions(
     inputSummary: summarizeInputSchema(action.inputSchema),
   }));
 
-  return successPayload(await Promise.all(actions));
+  return {
+    ok: true,
+    data: await Promise.all(actions),
+    returnedCount: rankedActions.length,
+    hasMore,
+    ...(hasMore ? { hint: moreActionSearchResultsHint } : {}),
+  };
 }
 
 async function getActionGuide(
@@ -536,15 +557,56 @@ function createExecutionMeta(run: ActionRunResult): ToolExecutionMeta {
   return meta;
 }
 
-function toolResult(payload: ToolPayload): CallToolResult {
+function compactActionSearchPayload(payload: ToolPayload): unknown {
+  if (!payload.ok || !Array.isArray(payload.data)) {
+    return payload;
+  }
+
+  return {
+    ok: true,
+    data: payload.data.map((value) => {
+      if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        return value;
+      }
+      const action = value as Record<string, unknown>;
+      return {
+        id: action.id,
+        service: action.service,
+        name: action.name,
+        description: action.description,
+        inputSummary: action.inputSummary,
+      };
+    }),
+    returnedCount: payload.returnedCount,
+    hasMore: payload.hasMore,
+    ...(typeof payload.hint === "string" ? { hint: payload.hint } : {}),
+  };
+}
+
+function toolResult(payload: ToolPayload, modelPayload: unknown = payload): CallToolResult {
   return {
     content: [
       {
         type: "text",
-        text: JSON.stringify(payload, null, 2),
+        text: serializeMcpModelContent(modelPayload),
       },
     ],
     structuredContent: payload,
     ...(payload.ok ? {} : { isError: true }),
   };
+}
+
+function serializeMcpModelContent(payload: unknown): string {
+  const serialized = JSON.stringify(payload);
+  if (serialized.length <= maxMcpModelContentLength) {
+    return serialized;
+  }
+
+  const notice = `\n[tool output truncated from ${serialized.length} characters; narrow the request or use pagination]`;
+  const maximumPrefixLength = Math.max(0, maxMcpModelContentLength - notice.length);
+  let prefix = serialized.slice(0, maximumPrefixLength);
+  if (prefix && /[\uD800-\uDBFF]/u.test(prefix.at(-1) ?? "")) {
+    prefix = prefix.slice(0, -1);
+  }
+  return `${prefix}${notice}`;
 }

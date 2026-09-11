@@ -88,6 +88,17 @@ The MCP server exposes a small discovery-oriented tool set:
 - `get_action_guide`
 - `execute_action`
 
+`search_actions` returns at most ten matches by default. Its model-facing text contains only the
+action identity, description, and input summary; the complete capability metadata remains available
+in `structuredContent`. Call `get_action_guide` before execution to inspect the current policy,
+connection, scopes, permissions, and full input guide. Search responses include `returnedCount` and
+`hasMore`; when another match exists, `hint` tells the Agent to refine the query or raise `limit`.
+
+MCP text content is compact JSON and is capped at 32 KiB so large Provider responses do not consume
+an Agent's context without bound. The full protocol `structuredContent` is preserved for clients that
+need to inspect or render the complete result. Paginated Actions should normally request no more than
+10 items and fetch subsequent pages only when they are actually needed.
+
 Use `list_connections` to discover configured accounts before selecting one. Both
 `get_action_guide` and `execute_action` accept an optional `connectionName`:
 

@@ -109,8 +109,79 @@ describe("MCP server", () => {
 
       expect(instructions).toBeTypeOf("string");
       expect(instructions).toContain("use list_connections before choosing among multiple accounts");
-      expect(instructions).toContain("Call get_action_guide before execute_action");
+      expect(instructions).toContain("Always call get_action_guide before execute_action");
+      expect(instructions).toContain("request at most 10 items from paginated Actions");
     });
+  });
+
+  it("defaults action search to ten compact model-facing results", async () => {
+    await withMcpClient(async (client) => {
+      const tools = await client.listTools();
+      const searchTool = tools.tools.find((tool) => tool.name === "search_actions");
+      const limitSchema = (searchTool?.inputSchema.properties as Record<string, Record<string, unknown>> | undefined)
+        ?.limit;
+      const result = await client.callTool({
+        name: "search_actions",
+        arguments: { query: "echo" },
+      });
+      const text = result.content.find((content) => content.type === "text")?.text ?? "";
+
+      expect(limitSchema?.default).toBe(10);
+      expect(JSON.parse(text)).toEqual({
+        ok: true,
+        data: [
+          {
+            id: "example.echo",
+            service: "example",
+            name: "echo",
+            description: "Echo input.",
+            inputSummary: [{ name: "message", required: true, type: "string", description: "" }],
+          },
+        ],
+        returnedCount: 1,
+        hasMore: false,
+      });
+      expect(result.structuredContent).toMatchObject({
+        ok: true,
+        data: [{ id: "example.echo", capability: expect.any(Object) }],
+        returnedCount: 1,
+        hasMore: false,
+      });
+    });
+  });
+
+  it("tells the model when more action search matches are available", async () => {
+    const secondEchoAction: ActionDefinition = {
+      ...echoAction,
+      id: "example.echo_twice",
+      name: "echo_twice",
+      description: "Echo input twice.",
+    };
+    await withMcpClient(
+      async (client) => {
+        const result = await client.callTool({
+          name: "search_actions",
+          arguments: { query: "echo", limit: 1 },
+        });
+        const text = result.content.find((content) => content.type === "text")?.text ?? "";
+        const modelPayload = JSON.parse(text) as Record<string, unknown>;
+
+        expect(modelPayload).toMatchObject({
+          ok: true,
+          returnedCount: 1,
+          hasMore: true,
+          hint: "More matches are available. Refine query or increase limit (maximum 50).",
+        });
+        expect(modelPayload.data).toHaveLength(1);
+        expect(result.structuredContent).toMatchObject({
+          returnedCount: 1,
+          hasMore: true,
+          hint: "More matches are available. Refine query or increase limit (maximum 50).",
+        });
+      },
+      {},
+      [echoAction, secondEchoAction],
+    );
   });
 
   it("returns structured content for action search and execution", async () => {
@@ -149,6 +220,21 @@ describe("MCP server", () => {
           default: true,
         },
       });
+    });
+  });
+
+  it("bounds model-facing Action output while preserving complete structured content", async () => {
+    await withMcpClient(async (client) => {
+      const message = "x".repeat(32 * 1024);
+      const result = await client.callTool({
+        name: "execute_action",
+        arguments: { actionId: "example.echo", input: { message } },
+      });
+      const text = result.content.find((content) => content.type === "text")?.text ?? "";
+
+      expect(text.length).toBeLessThanOrEqual(32 * 1024);
+      expect(text).toMatch(/\n\[tool output truncated from \d+ characters; narrow the request or use pagination\]$/);
+      expect(result.structuredContent).toMatchObject({ ok: true, data: { message } });
     });
   });
 
@@ -628,9 +714,10 @@ async function withMcpClient(
     };
     signal?: AbortSignal;
   } = {},
+  catalogActions: readonly ActionDefinition[] = exampleProvider.actions,
 ): Promise<void> {
-  const catalog = createCatalogStore([exampleProvider], {
-    executableActionIds: ["example.echo"],
+  const catalog = createCatalogStore([{ ...exampleProvider, actions: [...catalogActions] }], {
+    executableActionIds: catalogActions.map((action) => action.id),
   });
   const providerLoader = new EchoProviderLoader();
   const connections = new ConnectionService({
