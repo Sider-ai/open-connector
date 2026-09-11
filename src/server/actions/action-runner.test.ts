@@ -60,6 +60,7 @@ describe("ActionRunner", () => {
     });
 
     expect(run).toMatchObject({ auditPersisted: true, result: { ok: true } });
+    expect(run?.executionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(runs.items).toEqual([
       expect.objectContaining({
         id: run?.executionId,

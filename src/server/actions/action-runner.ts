@@ -8,6 +8,7 @@ import type { IRunLogStore, RunLog, RunLogCaller, RunLogListInput, RunLogPage } 
 
 import { ConnectionError } from "../../connection-service.ts";
 import { executeAction as executeProviderAction } from "../../core/execution.ts";
+import { generateUuidV7 } from "../../core/uuid-v7.ts";
 import { safeRunLogError, summarizeForRunLog } from "./run-log-summary.ts";
 
 export interface ActionRunnerOptions {
@@ -61,7 +62,7 @@ export class ActionRunner {
       return undefined;
     }
 
-    const executionId = crypto.randomUUID();
+    const executionId = generateUuidV7();
     const logContext = {
       actionId: action.id,
       service: action.service,
