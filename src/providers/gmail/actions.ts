@@ -213,15 +213,16 @@ export const gmailActions: ActionDefinition[] = [
   action({
     name: "fetch_emails",
     description:
-      "List Gmail messages with optional query, label, and pagination filters. Use detail to choose IDs, summaries, or full messages.",
+      "List Gmail messages with optional query, label, and pagination filters. Prefer summary detail for list and search results. Fetch one selected message separately when its body is needed.",
     requiredScopes: gmailReadScopes,
     properties: pageFields({
       query,
       labelIds,
       includeSpamTrash: s.boolean({ description: "Whether to include Spam and Trash." }),
-      detail: s.stringEnum(["ids", "summary", "full"], {
+      detail: s.stringEnum(["summary", "ids", "full"], {
         default: "summary",
-        description: "Message detail level.",
+        description:
+          "Message detail level. Defaults to summary and should remain summary for list or search requests. Use full only when the current task explicitly needs message bodies and keep maxResults small.",
       }),
     }),
     outputSchema: s.object(
