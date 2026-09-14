@@ -66,3 +66,8 @@
 - Run `npm run build` only when you need a separate no-fix typecheck, for example after generated files changed or for CI parity.
 - Run `npm run generate:catalog` when provider definitions or actions change.
 - Run provider examples manually when the task changes user-facing example behavior.
+
+## Runtime Releases
+
+- Publish Runtime prereleases with npm web authentication. Bump the package version, build and verify the Runtime package, create the tarball, then publish that tarball with `--tag next --access public --auth-type=web`. Press Enter when the CLI presents its authentication URL and complete the confirmation in the already signed-in browser; do not fall back to asking for an OTP in chat.
+- After publishing, verify the exact registry version and both `next` and `latest` dist-tags. Keep `latest` unchanged unless the release request explicitly includes promoting it.
