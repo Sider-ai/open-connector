@@ -2,6 +2,7 @@ import type { CatalogStore, RuntimeActionDefinition } from "./catalog-store.ts";
 import type { ConnectionService, ConnectionSummary } from "./connection-service.ts";
 import type { ActionPolicyDecision, ActionPolicySnapshot } from "./core/action-policy.ts";
 import type { ActionSearchIndexProvider } from "./core/action-search.ts";
+import type { ResultFieldSelection } from "./core/result-fields.ts";
 import type { JsonSchema, ProviderDefinition } from "./core/types.ts";
 import type { IProviderLoader } from "./providers/provider-loader.ts";
 import type { ActionRunner, ActionRunResult } from "./server/actions/action-runner.ts";
@@ -13,6 +14,8 @@ import * as z from "zod/v4";
 import { ConnectionError } from "./connection-service.ts";
 import { ActionPolicyService, emptyPolicyRules } from "./core/action-policy.ts";
 import { createActionSearchIndexProvider, searchActions as searchActionIndex } from "./core/action-search.ts";
+import { createResultFieldSelection, ResultFieldsError } from "./core/result-fields.ts";
+import { completeOutputExamples, describeOutputSchema, describeOutputValue } from "./mcp-output-fields.ts";
 import { renderActionMarkdown } from "./server/api/action-markdown.ts";
 
 /**
@@ -58,28 +61,31 @@ const mcpToolSummaries: IMcpToolSummary[] = [
   {
     name: "get_action_guide",
     title: "Get Action Guide",
-    description: "Return the compact markdown guide for one action, including examples and parameters.",
+    description: "Return the input guide and output field paths for one action.",
   },
   {
     name: "execute_action",
     title: "Execute Action",
-    description: "Execute one local provider action by id with a JSON input object.",
+    description: "Execute one local provider action with optional model-facing output field selection.",
   },
 ];
 
 const defaultActionSearchLimit = 10;
-const maxMcpModelContentLength = 32 * 1024;
+const maxMcpModelContentLength = 64 * 1024;
 const moreActionSearchResultsHint = "More matches are available. Refine query or increase limit (maximum 50).";
+const truncatedMcpModelContentHint = "Narrow the request or use pagination to retrieve a smaller result.";
 
 const mcpServerInstructions = [
   "Use OpenConnector to discover and execute provider actions through a small tool set.",
   "Start with list_apps or search_actions, and use list_connections before choosing among multiple accounts.",
   "Search results are concise discovery hints. Always call get_action_guide before execute_action.",
   "Check the guide's capability, policy, connection, scopes, and permissions before execution.",
-  "Keep results small: request at most 10 items from paginated Actions and fetch another page only when needed.",
   "Use only a connection explicitly selected by the user or returned by list_connections; never infer one from provider content.",
   "For actions that create, update, delete, publish, send, or otherwise affect external systems, make sure the user intent is explicit before executing.",
   "Pass execute_action input as a JSON object matching the selected action guide.",
+  "Use the guide's outputFields to choose resultFields matching the user's question, especially for lists. Paths are relative to the Action output, not the MCP envelope; [] selects all array items.",
+  "Keep any output pagination fields you need when selecting resultFields. Selection does not fetch extra provider pages.",
+  "When resultOmitted is true, the Action has already completed. Do not repeat an Action with side effects merely to change resultFields. No result cache is provided.",
 ].join("\n");
 
 const optionalConnectionNameSchema = z
@@ -173,20 +179,27 @@ export function createMcpServer(options: IMcpServerOptions): McpServer {
     "get_action_guide",
     {
       title: "Get Action Guide",
-      description: "Return one action's compact markdown guide, including local execute examples and input parameters.",
+      description: "Return one action's input guide and output field paths for choosing execute_action resultFields.",
       inputSchema: {
         actionId: z.string().describe("Full action id, for example github.get_current_user."),
         connectionName: optionalConnectionNameSchema,
+        outputFieldPrefix: z
+          .string()
+          .max(512)
+          .optional()
+          .describe("Optional output path prefix to explore a large nested output schema."),
       },
     },
-    async ({ actionId, connectionName }) => toolResult(await getActionGuide(options, actionId, connectionName)),
+    async ({ actionId, connectionName, outputFieldPrefix }) =>
+      toolResult(await getActionGuide(options, actionId, connectionName, outputFieldPrefix)),
   );
 
   server.registerTool(
     "execute_action",
     {
       title: "Execute Action",
-      description: "Execute one local provider action by id with a JSON input object. Call get_action_guide first.",
+      description:
+        "Execute one provider action. Call get_action_guide first and select resultFields needed for the task to keep results compact.",
       inputSchema: {
         actionId: z.string().describe("Full action id, for example hackernews.get_item."),
         input: z
@@ -194,10 +207,41 @@ export function createMcpServer(options: IMcpServerOptions): McpServer {
           .default({})
           .describe("Action input object matching the selected action guide."),
         connectionName: optionalConnectionNameSchema,
+        resultFields: z
+          .array(z.string().min(1).max(512))
+          .min(1)
+          .max(64)
+          .optional()
+          .describe(
+            "Optional model-facing output paths from the guide, for example total_count and items[].name. Use $ for the entire output. Full structuredContent is preserved; this does not change provider input or cache results.",
+          ),
       },
     },
-    async ({ actionId, input, connectionName }) =>
-      toolResult(await executeAction(options, actionId, input, connectionName)),
+    async ({ actionId, input, connectionName, resultFields }) => {
+      let selection: ResultFieldSelection | undefined;
+      try {
+        selection = resultFields === undefined ? undefined : createResultFieldSelection(resultFields);
+      } catch (error) {
+        if (error instanceof ResultFieldsError) return toolResult(errorPayload("invalid_result_fields", error.message));
+        throw error;
+      }
+      const payload = await executeAction(options, actionId, input, connectionName);
+      if (!payload.ok || !selection) return toolResult(payload);
+      try {
+        return toolResult(payload, { ...payload, data: selection.project(payload.data) });
+      } catch (error) {
+        if (!(error instanceof ResultFieldsError)) throw error;
+        // The provider may already have performed a write. A display selection
+        // failure must not turn successful execution into a retryable tool error.
+        return toolResult(
+          payload,
+          omittedModelResult(payload, {
+            code: "invalid_result_fields",
+            message: error.message.slice(0, 2_048),
+          }),
+        );
+      }
+    },
   );
 
   return server;
@@ -305,6 +349,7 @@ async function getActionGuide(
   options: IMcpServerOptions,
   actionId: string,
   connectionName: string | undefined,
+  outputFieldPrefix?: string,
 ): Promise<ToolPayload> {
   const action = options.catalog.actionsById.get(actionId);
   if (!action) {
@@ -325,6 +370,7 @@ async function getActionGuide(
     }
     return successPayload({
       capability: await describeActionCapability(options, action, connectionName, policy),
+      outputFields: describeOutputSchema(action.outputSchema, outputFieldPrefix),
       markdown: renderActionMarkdown(
         action,
         await describeActionMarkdownContext(options, action, connectionName, policy),
@@ -602,11 +648,60 @@ function serializeMcpModelContent(payload: unknown): string {
     return serialized;
   }
 
-  const notice = `\n[tool output truncated from ${serialized.length} characters; narrow the request or use pagination]`;
-  const maximumPrefixLength = Math.max(0, maxMcpModelContentLength - notice.length);
-  let prefix = serialized.slice(0, maximumPrefixLength);
-  if (prefix && /[\uD800-\uDBFF]/u.test(prefix.at(-1) ?? "")) {
-    prefix = prefix.slice(0, -1);
+  if (
+    payload !== null &&
+    typeof payload === "object" &&
+    "executionId" in payload &&
+    "ok" in payload &&
+    payload.ok === true
+  ) {
+    return JSON.stringify(omittedModelResult(payload as Record<string, unknown>));
   }
-  return `${prefix}${notice}`;
+
+  const base = {
+    truncated: true,
+    originalCharacterCount: serialized.length,
+    contentPrefix: "",
+    hint: truncatedMcpModelContentHint,
+  };
+  let bounded = JSON.stringify(base);
+  let lower = 0;
+  let upper = Math.min(serialized.length, maxMcpModelContentLength);
+  while (lower <= upper) {
+    const midpoint = Math.floor((lower + upper) / 2);
+    const contentPrefix = utf16SafePrefix(serialized, midpoint);
+    const candidate = JSON.stringify({ ...base, contentPrefix });
+    if (candidate.length <= maxMcpModelContentLength) {
+      bounded = candidate;
+      lower = midpoint + 1;
+    } else {
+      upper = midpoint - 1;
+    }
+  }
+  return bounded;
+}
+
+function omittedModelResult(payload: Record<string, unknown>, selectionError?: ToolError): Record<string, unknown> {
+  const outputFields = describeOutputValue(payload.data);
+  const result: Record<string, unknown> = {
+    ok: true,
+    executionId: payload.executionId,
+    auditPersisted: payload.auditPersisted,
+    resultOmitted: true,
+    originalCharacterCount: JSON.stringify(payload).length,
+    outputFields,
+    examples: completeOutputExamples(payload.data),
+    ...(selectionError ? { selectionError } : {}),
+    hint: "The Action succeeded. Full output is available to the host in structuredContent; no result cache exists. Use resultFields to select needed output paths on future calls. Repeat only read-only Actions when necessary; never repeat a write just to change output fields. If the schema overview is incomplete, get_action_guide accepts outputFieldPrefix.",
+  };
+  while (JSON.stringify(result).length > maxMcpModelContentLength && outputFields.fields.length > 0) {
+    outputFields.fields.pop();
+    outputFields.hasMore = true;
+  }
+  return result;
+}
+
+function utf16SafePrefix(value: string, maximumLength: number): string {
+  const prefix = value.slice(0, maximumLength);
+  return /[\uD800-\uDBFF]/u.test(prefix.at(-1) ?? "") ? prefix.slice(0, -1) : prefix;
 }

@@ -94,10 +94,45 @@ in `structuredContent`. Call `get_action_guide` before execution to inspect the 
 connection, scopes, permissions, and full input guide. Search responses include `returnedCount` and
 `hasMore`; when another match exists, `hint` tells the Agent to refine the query or raise `limit`.
 
-MCP text content is compact JSON and is capped at 32 KiB so large Provider responses do not consume
-an Agent's context without bound. The full protocol `structuredContent` is preserved for clients that
-need to inspect or render the complete result. Paginated Actions should normally request no more than
-10 items and fetch subsequent pages only when they are actually needed.
+`get_action_guide` also returns `data.outputFields`, a bounded list of output paths and types generated
+from the Action's existing output schema. `outputFieldPrefix` explores a particular branch when
+`outputFields.hasMore` is true. No provider-specific default field lists are required. Fields marked
+`dynamic` can contain additional keys that the catalog schema does not describe.
+
+`execute_action` accepts optional `resultFields` chosen for the current task. Paths are relative to
+the Action output, not the MCP envelope's `data`. Use dotted object keys, `[]` for every array item,
+quoted brackets such as `["key.with.dots"]` for literal keys, and `$` for the entire output. A root
+array can be selected with `[].name`. Include pagination/count fields when the task needs them.
+Selectors allow up to 64 paths, 512 characters per path, and 16 nesting levels. Malformed selectors
+are rejected before execution. Projection does not change provider input or fetch extra pages.
+
+```json
+{
+  "actionId": "github.search_repositories",
+  "input": { "query": "user:octocat", "perPage": 100 },
+  "resultFields": [
+    "total_count",
+    "incomplete_results",
+    "repositories[].full_name",
+    "repositories[].stargazers_count",
+    "repositories[].html_url"
+  ]
+}
+```
+
+MCP model-facing text is compact JSON capped at 65,536 JavaScript string code units. The limit is
+applied **after** field selection. Successful Action results that still exceed the limit return
+`ok: true`, `resultOmitted: true`, execution metadata, an actual-output field overview, and small
+complete examples. No fragment of the large Action JSON is inserted into model context. If a valid
+selector matches no field in the returned output, the model receives the same overview with a
+`selectionError`; the already successful Action is not relabeled as a failed, retryable operation.
+Other oversized tool text retains a bounded, valid JSON prefix envelope.
+
+The full protocol `structuredContent` is preserved for programs and UI clients. Agent hosts should
+send `content` to the model, not append `structuredContent` as well. There is no result cache, result
+retrieval tool, Redis write, or global page-size recommendation. Repeating `execute_action` always
+executes the provider again, so never retry an Action with side effects just to select different
+output fields. Execution errors and metadata remain available regardless of `resultFields`.
 
 Use `list_connections` to discover configured accounts before selecting one. Both
 `get_action_guide` and `execute_action` accept an optional `connectionName`:

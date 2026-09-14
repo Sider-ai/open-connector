@@ -110,7 +110,7 @@ describe("MCP server", () => {
       expect(instructions).toBeTypeOf("string");
       expect(instructions).toContain("use list_connections before choosing among multiple accounts");
       expect(instructions).toContain("Always call get_action_guide before execute_action");
-      expect(instructions).toContain("request at most 10 items from paginated Actions");
+      expect(instructions).not.toContain("request at most 10 items from paginated Actions");
     });
   });
 
@@ -223,18 +223,166 @@ describe("MCP server", () => {
     });
   });
 
-  it("bounds model-facing Action output while preserving complete structured content", async () => {
+  it("replaces oversized Action text with a bounded field overview and keeps complete structured content", async () => {
     await withMcpClient(async (client) => {
-      const message = "x".repeat(32 * 1024);
+      const message = `prefix-${'🙂\\"'.repeat(24 * 1024)}-suffix`;
       const result = await client.callTool({
         name: "execute_action",
         arguments: { actionId: "example.echo", input: { message } },
       });
       const text = result.content.find((content) => content.type === "text")?.text ?? "";
+      const truncated = JSON.parse(text) as Record<string, unknown>;
+      const complete = JSON.stringify(result.structuredContent);
 
-      expect(text.length).toBeLessThanOrEqual(32 * 1024);
-      expect(text).toMatch(/\n\[tool output truncated from \d+ characters; narrow the request or use pagination\]$/);
+      expect(text.length).toBeLessThanOrEqual(64 * 1024);
+      expect(truncated).toMatchObject({
+        ok: true,
+        resultOmitted: true,
+        originalCharacterCount: complete.length,
+        outputFields: {
+          fields: expect.arrayContaining([expect.objectContaining({ path: "message", type: "string" })]),
+        },
+      });
+      expect(truncated).not.toHaveProperty("contentPrefix");
+      expect(text.length).toBeLessThan(4_000);
+      expect(truncated.hint).toContain("never repeat a write");
       expect(result.structuredContent).toMatchObject({ ok: true, data: { message } });
+    });
+  });
+
+  it("wraps oversized non-Action model text in bounded valid JSON", async () => {
+    const action = {
+      ...echoAction,
+      description: `large-guide-${"x".repeat(70 * 1024)}`,
+    };
+    await withMcpClient(
+      async (client) => {
+        const result = await client.callTool({
+          name: "get_action_guide",
+          arguments: { actionId: action.id },
+        });
+        const text = result.content.find((content) => content.type === "text")?.text ?? "";
+        const bounded = JSON.parse(text) as Record<string, unknown>;
+
+        expect(text.length).toBeLessThanOrEqual(64 * 1024);
+        expect(bounded).toMatchObject({
+          truncated: true,
+          originalCharacterCount: expect.any(Number),
+          contentPrefix: expect.stringContaining('{"ok":true'),
+          hint: "Narrow the request or use pagination to retrieve a smaller result.",
+        });
+        expect(result.structuredContent).toMatchObject({ ok: true });
+      },
+      {},
+      [action],
+    );
+  });
+
+  it("projects only model-facing output without altering provider input, full output or execution metadata", async () => {
+    const action = {
+      ...echoAction,
+      inputSchema: { type: "object" },
+      outputSchema: {
+        type: "object",
+        properties: {
+          total_count: { type: "integer" },
+          items: {
+            type: "array",
+            items: { type: "object", properties: { name: { type: "string" }, body: { type: "string" } } },
+          },
+        },
+      },
+    };
+    await withMcpClient(
+      async (client) => {
+        const guide = await client.callTool({ name: "get_action_guide", arguments: { actionId: action.id } });
+        expect(guide.structuredContent).toMatchObject({
+          data: {
+            outputFields: {
+              fields: expect.arrayContaining([expect.objectContaining({ path: "items[].name", type: "string" })]),
+            },
+          },
+        });
+        const input = {
+          total_count: 100,
+          items: Array.from({ length: 100 }, (_, i) => ({ name: `record-${i}`, body: "x".repeat(2_000) })),
+        };
+        const run = await client.callTool({
+          name: "execute_action",
+          arguments: {
+            actionId: action.id,
+            input,
+            resultFields: ["total_count", "items[].name"],
+          },
+        });
+        const text = run.content.find((c) => c.type === "text")?.text ?? "";
+        const model = JSON.parse(text);
+        expect(text.length).toBeLessThan(4_000);
+        expect(model.data).toEqual({ total_count: 100, items: input.items.map(({ name }) => ({ name })) });
+        expect(model).toMatchObject({ ok: true, executionId: expect.any(String), auditPersisted: true });
+        expect(model).not.toHaveProperty("resultOmitted");
+        expect(run.structuredContent).toMatchObject({ ok: true, data: input });
+      },
+      {},
+      [action],
+    );
+  });
+
+  it("rejects malformed selectors before invoking the Action runner", async () => {
+    const run = vi.spyOn(ActionRunner.prototype, "run");
+    try {
+      await withMcpClient(async (client) => {
+        const result = await client.callTool({
+          name: "execute_action",
+          arguments: {
+            actionId: echoAction.id,
+            input: { message: "hello" },
+            resultFields: ["message[0]"],
+          },
+        });
+        expect(result.structuredContent).toMatchObject({ ok: false, error: { code: "invalid_result_fields" } });
+        expect(result.isError).toBe(true);
+      });
+      expect(run).not.toHaveBeenCalled();
+    } finally {
+      run.mockRestore();
+    }
+  });
+
+  it("does not turn a successful Action into a retryable failure when a selected output field is absent", async () => {
+    await withMcpClient(async (client) => {
+      const result = await client.callTool({
+        name: "execute_action",
+        arguments: {
+          actionId: echoAction.id,
+          input: { message: "hello" },
+          resultFields: ["misspelled"],
+        },
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent).toMatchObject({ ok: true, data: { message: "hello" } });
+      const text = result.content.find((c) => c.type === "text")?.text ?? "";
+      expect(JSON.parse(text)).toMatchObject({
+        ok: true,
+        resultOmitted: true,
+        executionId: expect.any(String),
+        selectionError: { code: "invalid_result_fields", message: expect.stringContaining("misspelled") },
+      });
+    });
+  });
+
+  it("preserves execution errors when resultFields are supplied", async () => {
+    await withMcpClient(async (client) => {
+      const result = await client.callTool({
+        name: "execute_action",
+        arguments: {
+          actionId: echoAction.id,
+          input: {},
+          resultFields: ["message"],
+        },
+      });
+      expect(result.structuredContent).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+      expect(result.isError).toBe(true);
     });
   });
 
