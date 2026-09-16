@@ -57,6 +57,29 @@ describe("OAuth token requests", () => {
     expect(String(init?.body)).toContain("code=authorization-code");
   });
 
+  it("applies provider token fields and static grant parameters", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json({ access_token: "access-token", refresh_token: "refresh-token" }),
+    );
+    vi.stubGlobal("fetch", fetcher);
+
+    await requestAuthorizationCodeToken({
+      ...authorizationCodeRequest,
+      tokenRequestFields: { authorizationCode: { grantType: false, redirectUri: false } },
+      extraFields: { expiring: "1" },
+    });
+
+    const body = fetcher.mock.calls[0]?.[1]?.body;
+    expect(body).toBeInstanceOf(URLSearchParams);
+    if (!(body instanceof URLSearchParams)) {
+      throw new Error("Expected OAuth token request body to use URLSearchParams");
+    }
+    expect(body.get("code")).toBe("authorization-code");
+    expect(body.get("expiring")).toBe("1");
+    expect(body.has("grant_type")).toBe(false);
+    expect(body.has("redirect_uri")).toBe(false);
+  });
+
   it("keeps client_secret_basic credentials out of authorization-code and refresh bodies", async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       Response.json({ access_token: "access-token", refresh_token: "refresh-token" }),

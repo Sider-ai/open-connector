@@ -137,6 +137,11 @@ export type OAuth2AuthDefinition = {
   };
   /** Extra static authorization URL parameters, such as Google `access_type=offline`. */
   authorizationParams?: Record<string, string>;
+  /** Extra static token request parameters for each OAuth grant. */
+  tokenRequestParams?: {
+    authorizationCode?: Record<string, string>;
+    refresh?: Record<string, string>;
+  };
   /** Provider-specific OAuth authorization request field names. */
   authorizationRequestFields?: {
     clientId?: string | false;
@@ -147,6 +152,8 @@ export type OAuth2AuthDefinition = {
   };
   /** Extra local OAuth app fields required before starting authorization. */
   clientConfigFields?: OAuthClientConfigFieldDefinition[];
+  /** Non-secret provider fields collected for each authorization, such as a Shopify shop domain. */
+  authorizationFields?: CredentialDefinition[];
 };
 
 /**

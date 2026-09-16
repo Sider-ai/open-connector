@@ -80,6 +80,33 @@ describe("OAuthCredentialRefreshService", () => {
     expect(String(request?.body)).toContain("client_secret=connection-client-secret");
   });
 
+  it("uses connection authorization values when resolving a shop-specific refresh endpoint", async () => {
+    stubRefreshResponse({});
+    const resolveEndpointUrl = vi.fn(() => "https://provider.example.com/oauth/token");
+    const dynamicClientConfigs = {
+      getOAuthDefinition: () => ({
+        type: "oauth2",
+        tokenUrl: "https://{shopDomain}/admin/oauth/access_token",
+        tokenEndpointAuthMethod: "client_secret_post",
+        scopes: [],
+      }),
+      getConfig: async () => ({ clientId: "client-id", clientSecret: "client-secret", extra: {} }),
+      resolveEndpointUrl,
+    } as unknown as OAuthClientConfigService;
+
+    await new OAuthCredentialRefreshService(dynamicClientConfigs).refresh(
+      "shopify_admin",
+      expiredCredential({ oauthAuthorizationValues: { shopDomain: "example-shop.myshopify.com" } }),
+    );
+
+    expect(resolveEndpointUrl).toHaveBeenCalledWith(
+      "shopify_admin",
+      "https://{shopDomain}/admin/oauth/access_token",
+      expect.objectContaining({ clientId: "client-id" }),
+      { shopDomain: "example-shop.myshopify.com" },
+    );
+  });
+
   it("never carries the lapsed expiry forward, which would refresh on every call", async () => {
     const credential = expiredCredential({ expires_in: 3600 });
     stubRefreshResponse({});

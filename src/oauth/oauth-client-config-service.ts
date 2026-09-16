@@ -144,10 +144,16 @@ export class OAuthClientConfigService {
     return `${this.origin}${OAuthClientConfigService.callbackPath}`;
   }
 
-  resolveEndpointUrl(service: string, endpointUrl: string, config: OAuthClientConfig): string {
+  resolveEndpointUrl(
+    service: string,
+    endpointUrl: string,
+    config: OAuthClientConfig,
+    authorizationValues: Record<string, string> = {},
+  ): string {
     this.getOAuthDefinition(service);
+    const endpointValues = { ...config.extra, ...authorizationValues };
     const resolved = endpointUrl.replaceAll(/\{(\+?)([A-Za-z0-9_]+)\}/g, (_match, rawModifier: string, key: string) => {
-      const value = config.extra[key];
+      const value = endpointValues[key];
       if (!value) {
         throw new OAuthClientConfigError("invalid_input", `${key} is required.`);
       }

@@ -12,6 +12,7 @@ import {
 } from "../../core/cast.ts";
 import { readBoundedResponseBytes } from "../../core/request.ts";
 import { createProviderTimeout, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { normalizeShopDomain } from "./shop-domain.ts";
 
 export const shopifyAdminApiVersion = "2026-04";
 
@@ -595,7 +596,7 @@ type ShopifyAdminActionHandler = (
 ) => Promise<unknown>;
 
 interface ShopifyAdminActionContext {
-  apiKey: string;
+  accessToken: string;
   shopDomain: string;
   fetcher: typeof fetch;
   transitFiles?: TransitFileWriter;
@@ -915,10 +916,11 @@ export const shopifyAdminActionHandlers: ProviderActionHandlers<"shopify_admin",
 };
 
 export async function validateShopifyAdminCredential(
-  apiKey: string,
+  accessToken: string,
   shopDomainValue: string | undefined,
   fetcher: typeof fetch,
   signal?: AbortSignal,
+  grantedScopes: string[] = [],
 ): Promise<{
   profile: { accountId: string; displayName: string; grantedScopes: string[] };
   metadata: Record<string, unknown>;
@@ -926,7 +928,7 @@ export async function validateShopifyAdminCredential(
   const shopDomain = normalizeShopDomain(shopDomainValue);
   const payload = await requestShopifyAdminGraphQL(
     {
-      apiKey,
+      accessToken,
       shopDomain,
       fetcher,
       signal,
@@ -941,7 +943,7 @@ export async function validateShopifyAdminCredential(
     profile: {
       accountId: `shopify_admin:${shopDomain}`,
       displayName: shop.name,
-      grantedScopes: [],
+      grantedScopes,
     },
     metadata: {
       shopDomain,
@@ -952,30 +954,6 @@ export async function validateShopifyAdminCredential(
       myshopifyDomain: shop.myshopifyDomain,
     },
   };
-}
-
-export function normalizeShopDomain(value: string | undefined): string {
-  const trimmed = value?.trim();
-  if (!trimmed) {
-    throw new ProviderRequestError(400, "shopDomain is required");
-  }
-
-  let host = trimmed;
-  if (trimmed.includes("://")) {
-    try {
-      host = new URL(trimmed).hostname;
-    } catch {
-      throw new ProviderRequestError(400, "shopDomain must be a myshopify.com domain or URL");
-    }
-  } else {
-    host = trimmed.split("/")[0] ?? "";
-  }
-
-  const normalized = host.toLowerCase();
-  if (!isMyshopifyDomain(normalized)) {
-    throw new ProviderRequestError(400, "shopDomain must be a myshopify.com domain or URL");
-  }
-  return normalized;
 }
 
 export function buildShopifyAdminApiBaseUrl(shopDomain: string): string {
@@ -996,7 +974,7 @@ async function requestShopifyAdminGraphQL(
       accept: "application/json",
       "content-type": "application/json",
       "user-agent": providerUserAgent,
-      "x-shopify-access-token": context.apiKey,
+      "x-shopify-access-token": context.accessToken,
     },
     body: JSON.stringify(compactObject({ query: request.query, variables: request.variables })),
     signal: context.signal,
@@ -1588,31 +1566,6 @@ function readRequiredBoolean(input: Record<string, unknown>, key: string): boole
     throw new ProviderRequestError(502, `shopify_admin response is missing ${key}`);
   }
   return value;
-}
-
-function isMyshopifyDomain(host: string): boolean {
-  if (!host.endsWith(".myshopify.com") || host.length <= ".myshopify.com".length) {
-    return false;
-  }
-  return host
-    .slice(0, -".myshopify.com".length)
-    .split(".")
-    .every((segment) => isDnsLabel(segment));
-}
-
-function isDnsLabel(value: string): boolean {
-  if (!value || value.startsWith("-") || value.endsWith("-") || value.length > 63) {
-    return false;
-  }
-  for (const char of value) {
-    const code = char.charCodeAt(0);
-    const isDigit = code >= 48 && code <= 57;
-    const isLowercaseLetter = code >= 97 && code <= 122;
-    if (!isDigit && !isLowercaseLetter && char !== "-") {
-      return false;
-    }
-  }
-  return true;
 }
 
 function providerInputError(message: string): ProviderRequestError {

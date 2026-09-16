@@ -2,6 +2,7 @@ import type { ResolvedCredential } from "../core/types.ts";
 import type { OAuthClientConfigService } from "./oauth-client-config-service.ts";
 
 import { ConnectionError } from "../connection-service.ts";
+import { optionalRecord, stringRecord } from "../core/cast.ts";
 import { refreshSlackOAuthCredential } from "../providers/slack/oauth.ts";
 import { readOAuthClientConfigMetadata } from "./oauth-client-config-service.ts";
 import { expiresAtFromLifetime, requestRefreshToken } from "./oauth-token.ts";
@@ -42,7 +43,13 @@ export class OAuthCredentialRefreshService implements IOAuthCredentialRefresher 
         tokenRequestFields: auth.tokenRequestFields,
         tokenEndpointAuthMethod: auth.tokenEndpointAuthMethod,
         tokenRequestFormat: auth.tokenRequestFormat,
-        tokenUrl: this.clientConfigs.resolveEndpointUrl(service, auth.refreshTokenUrl ?? auth.tokenUrl, config),
+        tokenUrl: this.clientConfigs.resolveEndpointUrl(
+          service,
+          auth.refreshTokenUrl ?? auth.tokenUrl,
+          config,
+          stringRecord(optionalRecord(credential.metadata.oauthAuthorizationValues) ?? {}),
+        ),
+        extraFields: auth.tokenRequestParams?.refresh,
         createError: (message) => new ConnectionError("oauth_token_refresh_failed", message),
       });
     if (service == "slack") {

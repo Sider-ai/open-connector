@@ -1,4 +1,4 @@
-import type { ResolvedCredential } from "../core/types.ts";
+import type { CredentialDefinition, ResolvedCredential } from "../core/types.ts";
 import type {
   OAuthClientConfig,
   OAuthClientConfigInput,
@@ -6,6 +6,12 @@ import type {
 } from "./oauth-client-config-service.ts";
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { normalizeCredentialValues } from "../core/credential-fields.ts";
+import {
+  normalizeShopifyAuthorizationValues,
+  ShopifyOAuthValidationError,
+  verifyShopifyOAuthCallback,
+} from "../providers/shopify_admin/oauth.ts";
 import { normalizeSlackAuthorizationCredential } from "../providers/slack/oauth.ts";
 import { requestAuthorizationCodeToken } from "./oauth-token.ts";
 
@@ -24,12 +30,14 @@ export interface OAuthAuthorizationState {
   state: string;
   createdAt: string;
   pkceCodeVerifier?: string;
+  authorizationValues?: Record<string, string>;
   clientConfig?: OAuthClientConfig;
 }
 
 export interface PrepareOAuthAuthorizationInput {
   service: string;
   connectionName?: string;
+  authorizationValues?: Record<string, unknown>;
   clientConfig?: OAuthClientConfigInput;
 }
 
@@ -44,6 +52,7 @@ export interface PreparedOAuthAuthorization {
 export interface ExchangeOAuthAuthorizationCodeInput {
   pending: OAuthAuthorizationState;
   code: string;
+  callbackParameters?: readonly (readonly [name: string, value: string])[];
 }
 
 /**
@@ -84,16 +93,24 @@ export class OAuthAuthorizationService {
 
     const state = randomUUID();
     const pkceCodeVerifier = auth.pkce ? createPkceCodeVerifier() : undefined;
+    const authorizationValues = normalizeAuthorizationValues(
+      service,
+      auth.authorizationFields ?? [],
+      input.authorizationValues ?? {},
+    );
     const pending: OAuthAuthorizationState = {
       service,
       connectionName,
       state,
       createdAt: new Date().toISOString(),
       pkceCodeVerifier,
+      ...(Object.keys(authorizationValues).length === 0 ? {} : { authorizationValues }),
       clientConfig: input.clientConfig ? config : undefined,
     };
 
-    const authorizationUrl = new URL(this.clientConfigs.resolveEndpointUrl(service, auth.authorizationUrl, config));
+    const authorizationUrl = new URL(
+      this.clientConfigs.resolveEndpointUrl(service, auth.authorizationUrl, config, authorizationValues),
+    );
     for (const [key, value] of Object.entries(auth.authorizationParams ?? {})) {
       authorizationUrl.searchParams.set(key, value);
     }
@@ -135,6 +152,23 @@ export class OAuthAuthorizationService {
       );
     }
 
+    if (pending.service === "shopify_admin") {
+      try {
+        verifyShopifyOAuthCallback({
+          parameters: input.callbackParameters ?? [],
+          clientSecret: config.clientSecret,
+          expectedCode: input.code,
+          expectedShopDomain: pending.authorizationValues?.shopDomain,
+          expectedState: pending.state,
+        });
+      } catch (error) {
+        if (error instanceof ShopifyOAuthValidationError) {
+          throw new OAuthFlowError("oauth_callback_validation_failed", error.message);
+        }
+        throw error;
+      }
+    }
+
     let tokenResponse = await requestAuthorizationCodeToken({
       code: input.code,
       state: pending.state,
@@ -145,8 +179,13 @@ export class OAuthAuthorizationService {
       tokenRequestFields: auth.tokenRequestFields,
       tokenEndpointAuthMethod: auth.tokenEndpointAuthMethod,
       tokenRequestFormat: auth.tokenRequestFormat,
-      tokenUrl: this.clientConfigs.resolveEndpointUrl(pending.service, auth.tokenUrl, config),
-      extraFields: createTokenExtraFields(pending),
+      tokenUrl: this.clientConfigs.resolveEndpointUrl(
+        pending.service,
+        auth.tokenUrl,
+        config,
+        pending.authorizationValues,
+      ),
+      extraFields: createTokenExtraFields(auth.tokenRequestParams?.authorizationCode, pending),
       createError: (message) => new OAuthFlowError("oauth_token_exchange_failed", message),
     });
     if (pending.service === "slack") {
@@ -165,6 +204,9 @@ export class OAuthAuthorizationService {
           oauthClientId: config.clientId,
           oauthClientExtra: config.extra,
           oauthClientSecretExtra: config.secretExtra,
+          ...(pending.authorizationValues === undefined
+            ? {}
+            : { oauthAuthorizationValues: pending.authorizationValues }),
           oauthClientConfig: pending.clientConfig ? config : undefined,
         },
       },
@@ -193,14 +235,41 @@ function setAuthorizationParam(
   }
 }
 
-function createTokenExtraFields(state: OAuthAuthorizationState): Record<string, string> | undefined {
-  if (!state.pkceCodeVerifier) {
+function createTokenExtraFields(
+  configured: Record<string, string> | undefined,
+  state: OAuthAuthorizationState,
+): Record<string, string> | undefined {
+  if (!state.pkceCodeVerifier && configured === undefined) {
     return undefined;
   }
 
   return {
-    code_verifier: state.pkceCodeVerifier,
+    ...(configured ?? {}),
+    ...(state.pkceCodeVerifier === undefined ? {} : { code_verifier: state.pkceCodeVerifier }),
   };
+}
+
+function normalizeAuthorizationValues(
+  service: string,
+  fields: CredentialDefinition[],
+  input: Record<string, unknown>,
+): Record<string, string> {
+  const values = normalizeCredentialValues({
+    fields,
+    values: input,
+    createError: (message) => new OAuthFlowError("invalid_authorization_values", message),
+  });
+  if (service !== "shopify_admin") {
+    return values;
+  }
+  try {
+    return normalizeShopifyAuthorizationValues(values);
+  } catch (error) {
+    if (error instanceof ShopifyOAuthValidationError) {
+      throw new OAuthFlowError("invalid_authorization_values", error.message);
+    }
+    throw error;
+  }
 }
 
 function createPkceCodeVerifier(): string {
