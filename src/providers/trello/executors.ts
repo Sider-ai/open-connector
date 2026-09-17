@@ -5,6 +5,7 @@ import type {
   ProviderProxyExecutor,
 } from "../../core/types.ts";
 import type { TrelloActionContext } from "./runtime.ts";
+import type { TrelloCredential } from "./runtime.ts";
 
 import {
   createProviderFetch,
@@ -15,10 +16,15 @@ import {
   providerUserAgent,
   readProviderProxyErrorMessage,
   readProviderProxyResponse,
-  requireCustomCredential,
   toProviderProxyError,
 } from "../provider-runtime.ts";
-import { trelloActionHandlers, trelloApiBaseUrl, validateTrelloCredential } from "./runtime.ts";
+import {
+  applyTrelloAuthentication,
+  trelloActionHandlers,
+  trelloApiBaseUrl,
+  validateTrelloCredential,
+  validateTrelloOAuthCredential,
+} from "./runtime.ts";
 
 const service = "trello";
 
@@ -29,13 +35,9 @@ export const executors: ProviderExecutors = defineProviderExecutors<TrelloAction
   handlers: trelloActionHandlers,
   skipDnsValidation: true,
   async createContext(context: ExecutionContext, fetcher: typeof fetch): Promise<TrelloActionContext> {
-    const credential = await context.getCredential(service);
-    if (credential?.authType !== "custom_credential") {
-      throw new ProviderRequestError(401, "Configure trello custom credentials first.");
-    }
+    const credential = await requireTrelloCredential(context);
     return {
-      apiKey: credential.values.apiKey,
-      apiToken: credential.values.apiToken,
+      ...credential,
       fetcher,
       signal: context.signal,
     };
@@ -44,12 +46,11 @@ export const executors: ProviderExecutors = defineProviderExecutors<TrelloAction
 
 export const proxy: ProviderProxyExecutor = async (input, context) => {
   try {
-    const credential = await requireCustomCredential(context, service);
+    const credential = await requireTrelloCredential(context);
     const url = createProviderProxyUrl(trelloApiBaseUrl, input.endpoint, input.query);
-    url.searchParams.set("key", credential.values.apiKey);
-    url.searchParams.set("token", credential.values.apiToken);
     const headers = normalizeProviderProxyHeaders(input.headers);
     headers.set("user-agent", providerUserAgent);
+    applyTrelloAuthentication(url, headers, credential);
 
     const init: RequestInit = {
       method: input.method,
@@ -76,4 +77,25 @@ export const proxy: ProviderProxyExecutor = async (input, context) => {
 
 export const credentialValidators: CredentialValidators = {
   customCredential: validateTrelloCredential,
+  oauth2(input, options) {
+    return validateTrelloOAuthCredential(input.accessToken, input.metadata.scope, options);
+  },
 };
+
+async function requireTrelloCredential(context: ExecutionContext): Promise<TrelloCredential> {
+  const credential = await context.getCredential(service);
+  if (credential?.authType === "custom_credential") {
+    return {
+      authType: "custom_credential",
+      apiKey: credential.values.apiKey,
+      apiToken: credential.values.apiToken,
+    };
+  }
+  if (credential?.authType === "oauth2") {
+    return {
+      authType: "oauth2",
+      accessToken: credential.accessToken,
+    };
+  }
+  throw new ProviderRequestError(401, "Configure Trello credentials first.");
+}

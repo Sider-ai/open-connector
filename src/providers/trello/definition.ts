@@ -1,6 +1,7 @@
 import type { ProviderDefinition } from "../../core/types.ts";
 
 import { trelloActions } from "./actions.ts";
+import { trelloOAuthScopes } from "./scopes.ts";
 
 const service = "trello";
 
@@ -8,8 +9,20 @@ export const provider: ProviderDefinition = {
   service,
   displayName: "Trello",
   categories: ["Productivity"],
-  authTypes: ["custom_credential"],
+  authTypes: ["oauth2", "custom_credential"],
   auth: [
+    {
+      type: "oauth2",
+      authorizationUrl: "https://auth.atlassian.com/authorize",
+      tokenUrl: "https://auth.atlassian.com/oauth/token",
+      scopes: trelloOAuthScopes,
+      tokenEndpointAuthMethod: "client_secret_post",
+      tokenRequestFormat: "json",
+      pkce: { method: "S256" },
+      authorizationParams: {
+        prompt: "consent",
+      },
+    },
     {
       type: "custom_credential",
       fields: [
