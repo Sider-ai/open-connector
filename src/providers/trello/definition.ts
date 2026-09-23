@@ -15,6 +15,7 @@ export const provider: ProviderDefinition = {
       type: "oauth2",
       authorizationUrl: "https://auth.atlassian.com/authorize",
       tokenUrl: "https://auth.atlassian.com/oauth/token",
+      requireCredentialVerification: true,
       scopes: trelloOAuthScopes,
       tokenEndpointAuthMethod: "client_secret_post",
       tokenRequestFormat: "json",

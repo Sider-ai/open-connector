@@ -1,6 +1,6 @@
 {
   "name": "@liushuangls/open-connector-runtime",
-  "version": "1.4.0-sider.9",
+  "version": "1.4.0-sider.12",
   "description": "OpenConnector providers, actions, OAuth primitives, and execution runtime for Node.js",
   "license": "Apache-2.0",
   "repository": {

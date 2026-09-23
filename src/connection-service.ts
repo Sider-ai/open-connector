@@ -1,4 +1,5 @@
 import type { CatalogStore, RuntimeProviderDefinition } from "./catalog-store.ts";
+import type { ProviderFailureDiagnostic } from "./core/provider-error-diagnostic.ts";
 import type {
   ApiKeyAuthDefinition,
   AuthType,
@@ -14,7 +15,8 @@ import type { IOAuthCredentialRefresher } from "./oauth/oauth-credential-refresh
 import type { IProviderLoader } from "./providers/provider-loader.ts";
 
 import { normalizeCredentialValues } from "./core/credential-fields.ts";
-import { providerFetch } from "./providers/provider-runtime.ts";
+import { createProviderFailureDiagnostic } from "./core/provider-error-diagnostic.ts";
+import { ProviderRequestError, providerFetch } from "./providers/provider-runtime.ts";
 
 export const defaultConnectionName = "default";
 const connectionNamePattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
@@ -342,7 +344,13 @@ export class ConnectionService {
     try {
       validation = await this.validateOAuthCredential(service, credential);
     } catch (error) {
-      if (!(error instanceof ConnectionError && error.code === "credential_verification_failed")) {
+      const requireVerification = provider.auth.some(
+        (auth) => auth.type === "oauth2" && auth.requireCredentialVerification === true,
+      );
+      if (
+        !(error instanceof ConnectionError && error.code === "credential_verification_failed") ||
+        requireVerification
+      ) {
         throw error;
       }
     }
@@ -564,9 +572,21 @@ export class ConnectionService {
     try {
       return (await validate()) ?? {};
     } catch (error) {
+      const message = error instanceof Error ? error.message : `${service} credential verification failed.`;
+      const upstreamMessage =
+        error instanceof ProviderRequestError &&
+        error.details !== null &&
+        typeof error.details === "object" &&
+        "upstreamMessage" in error.details &&
+        typeof error.details.upstreamMessage === "string"
+          ? error.details.upstreamMessage
+          : message;
       throw new ConnectionError(
         "credential_verification_failed",
-        error instanceof Error ? error.message : `${service} credential verification failed.`,
+        message,
+        error instanceof ProviderRequestError
+          ? createProviderFailureDiagnostic(error.status, upstreamMessage)
+          : undefined,
       );
     }
   }
@@ -719,9 +739,11 @@ function readLegacyString(metadata: Record<string, unknown> | undefined, key: st
  */
 export class ConnectionError extends Error {
   readonly code: string;
+  readonly providerFailure?: ProviderFailureDiagnostic;
 
-  constructor(code: string, message: string) {
+  constructor(code: string, message: string, providerFailure?: ProviderFailureDiagnostic) {
     super(message);
     this.code = code;
+    this.providerFailure = providerFailure;
   }
 }

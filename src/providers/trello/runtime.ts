@@ -2,6 +2,7 @@ import type { CredentialValidationResult } from "../../core/types.ts";
 import type { ProviderActionHandlers } from "../provider-runtime.ts";
 
 import { compactObject, optionalBoolean, optionalRecord, optionalString } from "../../core/cast.ts";
+import { sanitizeProviderDiagnosticMessage } from "../../core/provider-error-diagnostic.ts";
 import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 export const trelloApiBaseUrl: string = "https://api.trello.com/1";
@@ -570,15 +571,20 @@ async function trelloRequest<T>(input: TrelloRequestInput): Promise<T> {
   }
 
   const message = await readTrelloError(response);
-  if (response.status === 401 || response.status === 403) {
-    throw new ProviderRequestError(400, normalizeTrelloAuthError(message, input.credential.authType));
+  const details = { upstreamMessage: message };
+  if (response.status === 401) {
+    throw new ProviderRequestError(401, trelloAuthenticationError(message, input.credential.authType), details);
+  }
+  if (response.status === 403) {
+    throw new ProviderRequestError(403, `Trello denied this request (HTTP 403): ${message}`, details);
   }
   if (response.status === 429) {
-    throw new ProviderRequestError(429, message);
+    throw new ProviderRequestError(429, message, details);
   }
   throw new ProviderRequestError(
     response.status >= 400 && response.status < 600 ? response.status : 502,
     `Trello ${input.phase} request failed: ${message}`,
+    details,
   );
 }
 
@@ -602,9 +608,9 @@ function parseTrelloGrantedScopes(value: unknown): string[] {
     .filter(Boolean);
 }
 
-function normalizeTrelloAuthError(message: string, authType: TrelloCredential["authType"]) {
+function trelloAuthenticationError(message: string, authType: TrelloCredential["authType"]): string {
   if (authType === "oauth2") {
-    return "Invalid or expired Trello OAuth access token. Reconnect Trello.";
+    return `Trello authentication failed (HTTP 401): ${message}`;
   }
   if (message === "invalid key") {
     return "Invalid Trello API key. Use the Key from https://trello.com/power-ups/admin, not the API Secret or an Atlassian API token.";
@@ -621,19 +627,21 @@ async function readTrelloError(response: Response) {
   if (contentType.includes("application/json")) {
     const payload = (await response.json().catch(() => undefined)) as unknown;
     if (typeof payload === "string" && payload) {
-      return payload;
+      return sanitizeProviderDiagnosticMessage(payload) || fallback;
     }
     const record = optionalRecord(payload);
     return (
-      readOptionalString(record?.message) ??
-      readOptionalString(record?.error) ??
-      readOptionalString(record?.detail) ??
-      fallback
+      sanitizeProviderDiagnosticMessage(
+        readOptionalString(record?.message) ??
+          readOptionalString(record?.error) ??
+          readOptionalString(record?.detail) ??
+          fallback,
+      ) || fallback
     );
   }
 
   const text = await response.text().catch(() => "");
-  return text || fallback;
+  return sanitizeProviderDiagnosticMessage(text || fallback) || fallback;
 }
 
 function readFields(value: unknown, fallback: string[]) {

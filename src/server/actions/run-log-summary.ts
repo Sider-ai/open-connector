@@ -1,4 +1,7 @@
+import type { ProviderFailureDiagnostic } from "../../core/provider-error-diagnostic.ts";
 import type { ExecutionResult } from "../../core/types.ts";
+
+import { createProviderFailureDiagnostic } from "../../core/provider-error-diagnostic.ts";
 
 const maxNodes = 256;
 const maxBytes = 16 * 1024;
@@ -30,6 +33,8 @@ interface SummaryState {
   nodes: number;
 }
 
+export type { ProviderFailureDiagnostic } from "../../core/provider-error-diagnostic.ts";
+
 /** Return a bounded, redacted value suitable for run audit storage. */
 export function summarizeForRunLog(value: unknown): unknown {
   try {
@@ -48,6 +53,31 @@ export function safeRunLogError(error: ExecutionResult["error"]): { errorCode?: 
     errorCode: error.code,
     errorMessage: safeErrorMessages[error.code] ?? "Action execution failed.",
   };
+}
+
+/** Only explicit, sanitized upstream messages are eligible for diagnostic logs. */
+export function safeProviderFailureDiagnostic(error: ExecutionResult["error"]): ProviderFailureDiagnostic | undefined {
+  const details = error?.details;
+  if (details === null || typeof details !== "object") {
+    return undefined;
+  }
+  const status = (details as Record<string, unknown>).status;
+  const providerDetails = (details as Record<string, unknown>).details;
+  if (
+    typeof status !== "number" ||
+    !Number.isInteger(status) ||
+    status < 400 ||
+    status > 599 ||
+    providerDetails === null ||
+    typeof providerDetails !== "object"
+  ) {
+    return undefined;
+  }
+  const upstreamMessage = (providerDetails as Record<string, unknown>).upstreamMessage;
+  if (typeof upstreamMessage !== "string") {
+    return undefined;
+  }
+  return createProviderFailureDiagnostic(status, upstreamMessage);
 }
 
 function summarize(value: unknown, path: string[], depth: number, state: SummaryState): unknown {

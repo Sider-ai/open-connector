@@ -1,6 +1,7 @@
 import type {
   CredentialValidators,
   ExecutionContext,
+  ExecutionResult,
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
@@ -16,6 +17,7 @@ import {
   providerUserAgent,
   readProviderProxyErrorMessage,
   readProviderProxyResponse,
+  toProviderExecutionError,
   toProviderProxyError,
 } from "../provider-runtime.ts";
 import {
@@ -34,6 +36,7 @@ export const executors: ProviderExecutors = defineProviderExecutors<TrelloAction
   service,
   handlers: trelloActionHandlers,
   skipDnsValidation: true,
+  mapError: mapTrelloActionError,
   async createContext(context: ExecutionContext, fetcher: typeof fetch): Promise<TrelloActionContext> {
     const credential = await requireTrelloCredential(context);
     return {
@@ -43,6 +46,22 @@ export const executors: ProviderExecutors = defineProviderExecutors<TrelloAction
     };
   },
 });
+
+export function mapTrelloActionError(error: unknown): ExecutionResult {
+  const result = toProviderExecutionError(error, "Trello request failed");
+  if (!(error instanceof ProviderRequestError) || error.status !== 400 || result.ok || !result.error) {
+    return result;
+  }
+  const details = error.details;
+  const upstreamMessage =
+    details !== null && typeof details === "object" && "upstreamMessage" in details
+      ? details.upstreamMessage
+      : undefined;
+  if (upstreamMessage !== "invalid token" && upstreamMessage !== "invalid key") {
+    return result;
+  }
+  return { ...result, error: { ...result.error, code: "authorization_failed" } };
+}
 
 export const proxy: ProviderProxyExecutor = async (input, context) => {
   try {

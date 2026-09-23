@@ -8,6 +8,7 @@ import { createCatalogStore } from "./catalog-store.ts";
 import { ConnectionService } from "./connection-service.ts";
 import { OAuthClientConfigService } from "./oauth/oauth-client-config-service.ts";
 import { OAuthCredentialRefreshService } from "./oauth/oauth-credential-refresh-service.ts";
+import { ProviderRequestError } from "./providers/provider-runtime.ts";
 
 const hackernewsProvider: ProviderDefinition = {
   service: "hackernews",
@@ -431,6 +432,38 @@ describe("ConnectionService", () => {
       authType: "oauth2",
       accessToken: "access-token",
     });
+  });
+
+  it("rejects an OAuth connection when its provider requires credential verification", async () => {
+    const strictProvider: ProviderDefinition = {
+      ...oauthProvider,
+      auth: oauthProvider.auth.map((auth) =>
+        auth.type === "oauth2" ? { ...auth, requireCredentialVerification: true } : auth,
+      ),
+    };
+    const service = createService([strictProvider], {
+      providerLoader: new FakeProviderLoader({
+        async oauth2() {
+          throw new ProviderRequestError(400, "Trello validate request failed: invalid token", {
+            upstreamMessage: "invalid token",
+          });
+        },
+      }),
+    });
+
+    await expect(
+      service.setOAuthCredential("example", {
+        authType: "oauth2",
+        accessToken: "access-token",
+        tokenType: "Bearer",
+        profile: testProfile,
+        metadata: {},
+      }),
+    ).rejects.toMatchObject({
+      code: "credential_verification_failed",
+      providerFailure: { providerHttpStatus: 400, providerErrorMessage: "invalid token" },
+    });
+    await expect(service.listConnections()).resolves.toEqual([]);
   });
 
   it("refreshes expired OAuth credentials before returning them", async () => {

@@ -96,6 +96,8 @@ export type OAuth2AuthDefinition = {
   tokenUrl: string;
   /** Provider token endpoint used to refresh an access token. Defaults to tokenUrl. */
   refreshTokenUrl?: string;
+  /** Reject the connection when the provider rejects the newly issued access token. */
+  requireCredentialVerification?: boolean;
   /** OAuth scopes joined with spaces into the authorization URL `scope` parameter. */
   scopes: string[];
   /** Separator used when joining OAuth scopes. Defaults to a space. */

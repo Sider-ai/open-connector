@@ -5,11 +5,12 @@ import type { ExecutionContext, ExecutionResult, TransitFileWriter } from "../..
 import type { IProviderLoader } from "../../providers/provider-loader.ts";
 import type { Logger } from "../logger.ts";
 import type { IRunLogStore, RunLog, RunLogCaller, RunLogListInput, RunLogPage } from "../storage/runtime-store.ts";
+import type { ProviderFailureDiagnostic } from "./run-log-summary.ts";
 
 import { ConnectionError } from "../../connection-service.ts";
 import { executeAction as executeProviderAction } from "../../core/execution.ts";
 import { generateUuidV7 } from "../../core/uuid-v7.ts";
-import { safeRunLogError, summarizeForRunLog } from "./run-log-summary.ts";
+import { safeProviderFailureDiagnostic, safeRunLogError, summarizeForRunLog } from "./run-log-summary.ts";
 
 export interface ActionRunnerOptions {
   catalog: CatalogStore;
@@ -36,6 +37,7 @@ export interface ActionRunResult {
   auditPersisted: boolean;
   result: ExecutionResult;
   connection?: ConnectionSummary;
+  providerFailure?: ProviderFailureDiagnostic;
 }
 
 /**
@@ -134,6 +136,7 @@ export class ActionRunner {
     const completedAtMs = Date.now();
     const durationMs = completedAtMs - startedAtMs;
     const auditError = safeRunLogError(result.error);
+    const providerFailure = safeProviderFailureDiagnostic(result.error);
     const runLog: RunLog = {
       id: executionId,
       service: action.service,
@@ -176,10 +179,10 @@ export class ActionRunner {
     } else if (result.error?.code === "execution_cancelled") {
       this.options.logger?.info(completedLogContext, "action run cancelled");
     } else {
-      this.options.logger?.warn(completedLogContext, "action run failed");
+      this.options.logger?.warn({ ...completedLogContext, ...providerFailure }, "action run failed");
     }
 
-    return { executionId, auditPersisted, result, connection: connection?.summary };
+    return { executionId, auditPersisted, result, connection: connection?.summary, providerFailure };
   }
 
   listRuns(input?: RunLogListInput): Promise<RunLogPage> {

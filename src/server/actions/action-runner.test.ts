@@ -130,6 +130,39 @@ describe("ActionRunner", () => {
     expect(JSON.stringify(entries)).not.toContain("secret-in-executor");
   });
 
+  it("logs a sanitized provider status and reason with the execution id", async () => {
+    const runs = new MemoryRunLogStore();
+    const { entries, logger } = createTestLogger();
+    const runner = createRunner({
+      runs,
+      logger,
+      providerLoader: new TestProviderLoader(async () => ({
+        ok: false,
+        error: {
+          code: "authorization_failed",
+          message: "Trello denied this request (HTTP 403): unauthorized org access",
+          details: { status: 403, details: { upstreamMessage: "unauthorized org access" } },
+        },
+      })),
+    });
+
+    const run = await runner.run({ actionId: "example.echo", input: {}, caller: "mcp" });
+
+    expect(run?.providerFailure).toEqual({
+      providerHttpStatus: 403,
+      providerErrorMessage: "unauthorized org access",
+    });
+    expect(entries).toContainEqual({
+      fields: expect.objectContaining({
+        executionId: run?.executionId,
+        providerHttpStatus: 403,
+        providerErrorMessage: "unauthorized org access",
+      }),
+      message: "action run failed",
+    });
+    expect(runs.items[0]).toMatchObject({ errorMessage: "The provider rejected authorization." });
+  });
+
   it("propagates cancellation to the execution context and records it without a warning", async () => {
     const runs = new MemoryRunLogStore();
     const { entries, logger } = createTestLogger();

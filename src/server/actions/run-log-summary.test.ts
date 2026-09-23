@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { safeRunLogError, summarizeForRunLog } from "./run-log-summary.ts";
+import { safeProviderFailureDiagnostic, safeRunLogError, summarizeForRunLog } from "./run-log-summary.ts";
 
 describe("summarizeForRunLog", () => {
   it("redacts credentials by path, value pattern, and URL", () => {
@@ -178,5 +178,33 @@ describe("safeRunLogError", () => {
     expect(
       safeRunLogError({ code: "provider_error", message: "provider returned secret-token", details: { raw: true } }),
     ).toEqual({ errorCode: "provider_error", errorMessage: "The provider request failed." });
+  });
+});
+
+describe("safeProviderFailureDiagnostic", () => {
+  it("keeps the upstream status and reason while redacting credentials", () => {
+    expect(
+      safeProviderFailureDiagnostic({
+        code: "authorization_failed",
+        message: "Trello denied this request.",
+        details: {
+          status: 403,
+          details: { upstreamMessage: "unauthorized org access\nAuthorization: Bearer sensitive-value" },
+        },
+      }),
+    ).toEqual({
+      providerHttpStatus: 403,
+      providerErrorMessage: "unauthorized org access authorization=[redacted]",
+    });
+  });
+
+  it("does not log unmarked provider response details", () => {
+    expect(
+      safeProviderFailureDiagnostic({
+        code: "provider_error",
+        message: "secret response",
+        details: { status: 500, details: { raw: "secret response" } },
+      }),
+    ).toBeUndefined();
   });
 });
