@@ -493,6 +493,23 @@ export const supabaseActions: ActionDefinition[] = [
     }),
   }),
   defineProviderAction(service, {
+    name: "execute_sql",
+    description: "Execute SQL through Supabase with database write access. The statement can change schema or data.",
+    requiredScopes: [supabaseScopes.databaseWrite],
+    inputSchema: s.actionInput(
+      {
+        projectRef,
+        query: s.nonEmptyString("The SQL statement to execute with database write access."),
+        parameters: s.array(s.unknown("A query parameter."), { description: "Optional positional query parameters." }),
+      },
+      ["projectRef", "query"],
+      "Input parameters for executing a writable SQL statement.",
+    ),
+    outputSchema: s.actionOutput({
+      result: s.unknown("The SQL response returned by Supabase, or null when Supabase returns no response body."),
+    }),
+  }),
+  defineProviderAction(service, {
     name: "list_storage_buckets",
     description: "List Storage buckets for a Supabase project.",
     requiredScopes: [supabaseScopes.storageRead],

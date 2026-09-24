@@ -12,6 +12,6 @@ export const credentialValidators: CredentialValidators = {
     return validateSupabaseCredential(input.apiKey, fetcher);
   },
   async oauth2(input, { fetcher }) {
-    return validateSupabaseCredential(input.accessToken, fetcher);
+    return validateSupabaseCredential(input.accessToken, fetcher, input.metadata.scope);
   },
 };

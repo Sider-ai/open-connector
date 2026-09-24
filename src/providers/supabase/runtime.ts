@@ -113,6 +113,9 @@ export const supabaseActionHandlers: ProviderActionHandlers<"supabase", Supabase
   run_read_only_query(input, context) {
     return supabaseRunReadOnlyQuery(input, context);
   },
+  execute_sql(input, context) {
+    return supabaseExecuteSql(input, context);
+  },
   list_storage_buckets(input, context) {
     return supabaseListStorageBuckets(input, context);
   },
@@ -130,6 +133,7 @@ export const supabaseActionHandlers: ProviderActionHandlers<"supabase", Supabase
 export async function validateSupabaseCredential(
   accessToken: string,
   fetcher: typeof fetch,
+  reportedScope?: unknown,
 ): Promise<{
   profile: {
     accountId: string;
@@ -154,7 +158,7 @@ export async function validateSupabaseCredential(
     profile: {
       accountId: subject ?? buildSupabaseAccountFingerprint(organizations, accessToken),
       displayName: buildSupabaseAccountLabel(organizations),
-      grantedScopes: supabaseProviderScopes,
+      grantedScopes: parseSupabaseReportedScopes(reportedScope),
     },
     metadata: {
       validationEndpoint: "/organizations",
@@ -167,6 +171,16 @@ export async function validateSupabaseCredential(
           : "access_token_fingerprint",
     },
   };
+}
+
+function parseSupabaseReportedScopes(value: unknown): string[] {
+  if (typeof value !== "string") {
+    // Supabase may omit scope from its token response. Declared app capabilities
+    // are not proof of the permissions granted to this particular credential.
+    return [];
+  }
+  const knownScopes = new Set(supabaseProviderScopes);
+  return [...new Set(value.split(/[\s,]+/u).filter((scope) => knownScopes.has(scope)))];
 }
 
 async function supabaseListOrganizations(context: BearerProviderContext): Promise<unknown> {
@@ -487,6 +501,23 @@ async function supabaseRunReadOnlyQuery(input: SupabaseActionInput, context: Bea
   };
 }
 
+async function supabaseExecuteSql(input: SupabaseActionInput, context: BearerProviderContext): Promise<unknown> {
+  const projectRef = readProjectRef(input);
+  const result = await requestSupabaseJson({
+    method: "POST",
+    path: `/projects/${encodeURIComponent(projectRef)}/database/query`,
+    context,
+    body: jsonObject({
+      query: optionalRawString(input.query),
+      parameters: Array.isArray(input.parameters) ? input.parameters : undefined,
+      read_only: false,
+    }),
+    responseMode: "optional_json",
+  });
+
+  return { result: result ?? null };
+}
+
 async function supabaseListStorageBuckets(
   input: SupabaseActionInput,
   context: BearerProviderContext,
@@ -753,7 +784,7 @@ function createSupabaseError(response: Response, payload: unknown, phase: Supaba
     : `supabase request failed with ${response.status}`;
 
   if (response.status === 401 || response.status === 403) {
-    return new ProviderRequestError(phase === "validate" ? 400 : 401, message, detail);
+    return new ProviderRequestError(phase === "validate" ? 400 : response.status, message, detail);
   }
   if (response.status === 429) {
     return new ProviderRequestError(429, message, detail);

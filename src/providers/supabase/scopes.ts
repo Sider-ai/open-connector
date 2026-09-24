@@ -4,6 +4,7 @@ export const supabaseScopes = {
   secretsRead: "secrets:read",
   secretsWrite: "secrets:write",
   databaseRead: "database:read",
+  databaseWrite: "database:write",
   storageRead: "storage:read",
   edgeFunctionsRead: "edge_functions:read",
 } as const;

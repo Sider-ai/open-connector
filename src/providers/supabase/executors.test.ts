@@ -4,10 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { executeAction } from "../../core/execution.ts";
 import { setDefaultGuardedFetchDnsLookup } from "../../core/guarded-fetch.ts";
 import { provider } from "./definition.ts";
-import { executors } from "./executors.ts";
+import { credentialValidators, executors } from "./executors.ts";
 
 interface CapturedRequest {
   url: URL;
+  method: string;
+  body: string;
   authorization: string | null;
   apiKey: string | null;
 }
@@ -28,6 +30,63 @@ beforeEach(() => {
 afterEach(() => {
   setDefaultGuardedFetchDnsLookup(undefined);
   vi.unstubAllGlobals();
+});
+
+describe("Supabase OAuth scopes", () => {
+  it("reports only known scopes explicitly returned with the credential", async () => {
+    const fetcher = async () => Response.json([]);
+    const credential = {
+      ...oauthCredential,
+      metadata: { scope: "projects:read database:write,unknown database:write" },
+    };
+
+    const reported = await credentialValidators.oauth2!(credential, { fetcher });
+    const unknown = await credentialValidators.oauth2!(oauthCredential, { fetcher });
+
+    expect(reported?.profile?.grantedScopes).toEqual(["projects:read", "database:write"]);
+    expect(unknown?.profile?.grantedScopes).toEqual([]);
+  });
+});
+
+describe("Supabase SQL actions", () => {
+  it("executes writable SQL through the Management API without changing the read-only action", async () => {
+    const requests = stubResponses([
+      Response.json([{ created: true }], { status: 201 }),
+      Response.json([{ value: 1 }]),
+    ]);
+    const query = "CREATE TABLE public.weather (id bigint PRIMARY KEY)";
+
+    const writeResult = await executeSqlAction("execute_sql", { projectRef, query });
+    const readResult = await executeSqlAction("run_read_only_query", { projectRef, query: "SELECT 1" });
+
+    expect(writeResult).toEqual({ ok: true, output: { result: [{ created: true }] } });
+    expect(readResult).toEqual({ ok: true, output: { result: [{ value: 1 }] } });
+    expect(provider.actions.find((action) => action.name === "execute_sql")?.requiredScopes).toEqual([
+      "database:write",
+    ]);
+    expect(requests[0]).toMatchObject({
+      method: "POST",
+      authorization: "Bearer supabase-management-token",
+      url: expect.objectContaining({ pathname: `/v1/projects/${projectRef}/database/query` }),
+    });
+    expect(JSON.parse(requests[0]!.body)).toEqual({ query, read_only: false });
+    expect(requests[1]?.url.pathname).toBe(`/v1/projects/${projectRef}/database/query/read-only`);
+  });
+
+  it("preserves Supabase HTTP 403 when database write permission is denied", async () => {
+    stubResponses([Response.json({ message: "database write access denied" }, { status: 403 })]);
+
+    const result = await executeSqlAction("execute_sql", { projectRef, query: "CREATE TABLE public.weather (id int)" });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "authorization_failed",
+        message: "database write access denied",
+        details: { status: 403 },
+      },
+    });
+  });
 });
 
 describe("Supabase download_storage_object", () => {
@@ -215,6 +274,8 @@ function stubResponses(responses: Response[]): CapturedRequest[] {
     const request = input instanceof Request ? input : new Request(input, init);
     requests.push({
       url: new URL(request.url),
+      method: request.method,
+      body: await request.text(),
       authorization: request.headers.get("authorization"),
       apiKey: request.headers.get("apikey"),
     });
@@ -225,6 +286,12 @@ function stubResponses(responses: Response[]): CapturedRequest[] {
     return response;
   });
   return requests;
+}
+
+async function executeSqlAction(name: "execute_sql" | "run_read_only_query", input: Record<string, unknown>) {
+  return executeAction(provider.actions.find((action) => action.name === name)!, executors[`supabase.${name}`], input, {
+    getCredential: async () => oauthCredential,
+  });
 }
 
 function createTransitFileStore(maxBytes: number): {
