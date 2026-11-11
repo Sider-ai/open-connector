@@ -573,19 +573,20 @@ export class ConnectionService {
       return (await validate()) ?? {};
     } catch (error) {
       const message = error instanceof Error ? error.message : `${service} credential verification failed.`;
-      const upstreamMessage =
-        error instanceof ProviderRequestError &&
-        error.details !== null &&
-        typeof error.details === "object" &&
-        "upstreamMessage" in error.details &&
-        typeof error.details.upstreamMessage === "string"
-          ? error.details.upstreamMessage
-          : message;
+      const upstream =
+        error instanceof ProviderRequestError && error.details !== null && typeof error.details === "object"
+          ? (error.details as Record<string, unknown>)
+          : undefined;
+      const upstreamMessage = typeof upstream?.upstreamMessage === "string" ? upstream.upstreamMessage : message;
       throw new ConnectionError(
         "credential_verification_failed",
         message,
         error instanceof ProviderRequestError
-          ? createProviderFailureDiagnostic(error.status, upstreamMessage)
+          ? createProviderFailureDiagnostic(
+              typeof upstream?.upstreamStatus === "number" ? upstream.upstreamStatus : error.status,
+              upstreamMessage,
+              upstream?.upstreamCode,
+            )
           : undefined,
       );
     }

@@ -649,7 +649,10 @@ export const trelloActions: ActionDefinition[] = [
       },
     ),
     outputSchema: s.object("Search results returned by Trello.", {
-      results: s.array("Search results returned by Trello.", s.looseObject("One Trello search result.")),
+      results: s.array(
+        "Search results returned by Trello. Grouped responses are flattened with modelType identifying action, board, card, member, or organization.",
+        s.looseObject("One Trello search result."),
+      ),
     }),
   }),
 ];

@@ -1,5 +1,5 @@
 import type { ProviderFailureDiagnostic } from "../../core/provider-error-diagnostic.ts";
-import type { ExecutionResult } from "../../core/types.ts";
+import type { ActionDefinition, ExecutionResult } from "../../core/types.ts";
 
 import { createProviderFailureDiagnostic } from "../../core/provider-error-diagnostic.ts";
 
@@ -45,14 +45,60 @@ export function summarizeForRunLog(value: unknown): unknown {
   }
 }
 
-export function safeRunLogError(error: ExecutionResult["error"]): { errorCode?: string; errorMessage?: string } {
+export function safeRunLogError(
+  error: ExecutionResult["error"],
+  action?: Pick<ActionDefinition, "inputSchema">,
+): { errorCode?: string; errorMessage?: string } {
   if (!error) {
     return {};
   }
+  const diagnostic = safeProviderFailureDiagnostic(error);
   return {
     errorCode: error.code,
-    errorMessage: safeErrorMessages[error.code] ?? "Action execution failed.",
+    errorMessage: diagnostic
+      ? diagnostic.providerErrorCode
+        ? `${diagnostic.providerErrorCode}: ${diagnostic.providerErrorMessage}`
+        : diagnostic.providerErrorMessage
+      : (safeInputValidationMessage(error, action) ?? safeErrorMessages[error.code] ?? "Action execution failed."),
   };
+}
+
+/** Use only schema-owned field names and constraints, never rejected input values or unknown keys. */
+function safeInputValidationMessage(
+  error: NonNullable<ExecutionResult["error"]>,
+  action: Pick<ActionDefinition, "inputSchema"> | undefined,
+): string | undefined {
+  if (error.code !== "invalid_input" || !Array.isArray(error.details) || !action) return undefined;
+  const properties = action.inputSchema.properties;
+  if (!properties || typeof properties !== "object") return undefined;
+  const fields = Object.keys(properties);
+  const hints = new Set<string>();
+  for (const issue of error.details) {
+    if (!issue || typeof issue !== "object") continue;
+    if (issue.keyword === "required" && issue.keywordLocation === "#/required") {
+      const field = fields.find((name) => issue.error === `Instance does not have required property "${name}".`);
+      if (field) hints.add(`${field} is required`);
+    } else if (issue.keyword === "additionalProperties") {
+      hints.add("unexpected input field");
+    } else if (
+      typeof issue.instanceLocation === "string" &&
+      ["type", "enum", "minimum", "maximum", "minLength", "maxLength", "pattern"].includes(issue.keyword)
+    ) {
+      const field = fields.find((name) => {
+        const pointer = `#/${name.replace(/~/g, "~0").replace(/\//g, "~1")}`;
+        return issue.instanceLocation === pointer || issue.instanceLocation.startsWith(`${pointer}/`);
+      });
+      if (field) hints.add(`${field} (${issue.keyword})`);
+    } else if (issue.keyword === "anyOf" && issue.keywordLocation === "#/anyOf") {
+      const alternatives = action.inputSchema.anyOf;
+      if (!Array.isArray(alternatives) || alternatives.length === 0) continue;
+      const required = alternatives.map((branch) => branch?.required);
+      if (required.every((names) => Array.isArray(names) && names.length === 1 && fields.includes(names[0]))) {
+        hints.add(`provide a valid ${required.map((names) => names[0]).join(" or ")}`);
+      }
+    }
+  }
+  return hints.size ? `Invalid action input: ${[...hints].slice(0, 5).join("; ")}.`.slice(0, 512) : undefined;
 }
 
 /** Only explicit, sanitized upstream messages are eligible for diagnostic logs. */
@@ -61,23 +107,16 @@ export function safeProviderFailureDiagnostic(error: ExecutionResult["error"]): 
   if (details === null || typeof details !== "object") {
     return undefined;
   }
-  const status = (details as Record<string, unknown>).status;
   const providerDetails = (details as Record<string, unknown>).details;
-  if (
-    typeof status !== "number" ||
-    !Number.isInteger(status) ||
-    status < 400 ||
-    status > 599 ||
-    providerDetails === null ||
-    typeof providerDetails !== "object"
-  ) {
+  if (providerDetails === null || typeof providerDetails !== "object") {
     return undefined;
   }
-  const upstreamMessage = (providerDetails as Record<string, unknown>).upstreamMessage;
-  if (typeof upstreamMessage !== "string") {
+  const upstream = providerDetails as Record<string, unknown>;
+  const status = upstream.upstreamStatus ?? (details as Record<string, unknown>).status;
+  if (typeof status !== "number" || typeof upstream.upstreamMessage !== "string") {
     return undefined;
   }
-  return createProviderFailureDiagnostic(status, upstreamMessage);
+  return createProviderFailureDiagnostic(status, upstream.upstreamMessage, upstream.upstreamCode);
 }
 
 function summarize(value: unknown, path: string[], depth: number, state: SummaryState): unknown {

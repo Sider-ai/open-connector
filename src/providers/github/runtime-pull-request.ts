@@ -8,6 +8,7 @@ import {
   optionalRecord,
   optionalString,
 } from "../../core/cast.ts";
+import { ProviderRequestError } from "../provider-runtime.ts";
 import {
   buildGitHubUrl,
   compactObject,
@@ -656,8 +657,18 @@ async function listWorkflowRuns(input: Record<string, unknown>, accessToken: str
 }
 
 async function listWorkflowRunJobs(input: Record<string, unknown>, accessToken: string, fetcher: typeof fetch) {
+  if (input.runId !== undefined && input.run_id !== undefined && input.runId !== input.run_id) {
+    throw new ProviderRequestError(400, "runId and run_id must match when both are supplied.");
+  }
+  const runId = input.runId ?? input.run_id;
+  if (typeof runId !== "number" || !Number.isSafeInteger(runId) || runId <= 0) {
+    throw new ProviderRequestError(
+      400,
+      "Provide a positive integer runId from the id field returned by list_workflow_runs.",
+    );
+  }
   const response = await githubRequestJson<Record<string, unknown>>({
-    path: `/repos/${encodeURIComponent(String(input.owner))}/${encodeURIComponent(String(input.repo))}/actions/runs/${String(input.runId)}/jobs`,
+    path: `/repos/${encodeURIComponent(String(input.owner))}/${encodeURIComponent(String(input.repo))}/actions/runs/${runId}/jobs`,
     query: compactObject({
       filter: optionalString(input.filter),
       per_page: optionalInteger(input.perPage),

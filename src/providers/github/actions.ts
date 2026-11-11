@@ -73,7 +73,7 @@ const githubRequiredInputFields: Record<string, string[]> = {
   list_repository_workflows: ["owner", "repo"],
   list_workflow_runs: ["owner", "repo"],
   get_workflow_run: ["owner", "repo", "runId"],
-  list_workflow_run_jobs: ["owner", "repo", "runId"],
+  list_workflow_run_jobs: ["owner", "repo"],
   rerun_workflow: ["owner", "repo", "runId"],
   list_releases: ["owner", "repo"],
   create_release: ["owner", "repo", "tagName"],
@@ -1437,15 +1437,24 @@ export const githubActions: ActionDefinition[] = [
   }),
   action({
     name: "list_workflow_run_jobs",
-    description: "List jobs for a GitHub workflow run.",
+    description:
+      "List jobs for a GitHub workflow run. Get runId from the id field returned by list_workflow_runs. The run_id alias is also accepted; when both are supplied they must match.",
     requiredScopes: githubRepoScopes,
-    inputSchema: s.object({
-      owner: nonEmptyString,
-      repo: nonEmptyString,
-      runId: s.integer({ minimum: 1 }),
-      filter: s.stringEnum(["latest", "all"]),
-      ...optionalPaginationFields,
-    }),
+    inputSchema: {
+      ...s.object({
+        owner: nonEmptyString,
+        repo: nonEmptyString,
+        runId: s.positiveInteger("The workflow run id returned by list_workflow_runs.", {
+          maximum: Number.MAX_SAFE_INTEGER,
+        }),
+        run_id: s.positiveInteger("Alias for runId. Must match runId when both are supplied.", {
+          maximum: Number.MAX_SAFE_INTEGER,
+        }),
+        filter: s.stringEnum(["latest", "all"]),
+        ...optionalPaginationFields,
+      }),
+      anyOf: [{ required: ["runId"] }, { required: ["run_id"] }],
+    },
     outputSchema: s.object({
       total_count: s.integer(),
       jobs: s.array(githubWorkflowJobSchema),
@@ -1819,18 +1828,23 @@ export const githubActions: ActionDefinition[] = [
   action({
     name: "create_or_update_file",
     description:
-      "Create or update a repository file through the GitHub contents API. Writing under .github/workflows may require GitHub workflow scope.",
+      "Create or update a repository file through the GitHub contents API. Explicitly provide content or contentBase64, using an empty string only for an empty file. To update an existing file, first get_file_contents on the same branch and supply its latest sha. Writing under .github/workflows may require GitHub workflow scope.",
     requiredScopes: githubRepoScopes,
-    inputSchema: s.object({
-      owner: nonEmptyString,
-      repo: nonEmptyString,
-      path: nonEmptyString,
-      message: nonEmptyString,
-      content: s.string(),
-      contentBase64: s.string(),
-      sha: s.string(),
-      branch: s.string(),
-    }),
+    inputSchema: {
+      ...s.object({
+        owner: nonEmptyString,
+        repo: nonEmptyString,
+        path: nonEmptyString,
+        message: nonEmptyString,
+        content: s.string("UTF-8 file contents. An explicit empty string creates or replaces an empty file."),
+        contentBase64: s.string(
+          "Base64-encoded contents. Non-empty contentBase64 takes precedence when both forms are supplied.",
+        ),
+        sha: s.nonWhitespaceString("Latest blob sha from get_file_contents; required when updating an existing file."),
+        branch: s.nonWhitespaceString("Target branch. Defaults to the repository's default branch when omitted."),
+      }),
+      anyOf: [{ required: ["content"] }, { required: ["contentBase64"] }],
+    },
     outputSchema: githubContentsWriteResultSchema,
   }),
   action({

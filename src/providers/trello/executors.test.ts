@@ -136,3 +136,62 @@ describe("Trello action errors", () => {
     ).toMatchObject({ ok: false, error: { code: "invalid_input", details: { status: 400 } } });
   });
 });
+
+describe("Trello search responses", () => {
+  const searchContext = (payload: unknown) => ({
+    authType: "oauth2" as const,
+    accessToken: "mock-token",
+    fetcher: async () => Response.json(payload),
+  });
+
+  it("flattens grouped results and retains their model type", async () => {
+    const payload = {
+      options: { modelTypes: ["boards", "cards", "members", "organizations", "actions"] },
+      boards: [{ id: "board-1", name: "Project" }],
+      cards: [{ id: "card-1", name: "Task" }],
+      members: [{ id: "member-1" }],
+      organizations: [{ id: "workspace-1" }],
+      actions: [{ id: "action-1" }],
+    };
+    await expect(trelloActionHandlers.search({ query: "project" }, searchContext(payload))).resolves.toEqual({
+      results: [
+        { id: "action-1", modelType: "action" },
+        { id: "board-1", name: "Project", modelType: "board" },
+        { id: "card-1", name: "Task", modelType: "card" },
+        { id: "member-1", modelType: "member" },
+        { id: "workspace-1", modelType: "organization" },
+      ],
+    });
+  });
+
+  it.each([{ cards: [], options: { modelTypes: ["cards"] } }, { cards: [], boards: [] }, []])(
+    "accepts empty results: %j",
+    async (payload) => {
+      await expect(trelloActionHandlers.search({ query: "absent" }, searchContext(payload))).resolves.toEqual({
+        results: [],
+      });
+    },
+  );
+
+  it("keeps the legacy array response unchanged", async () => {
+    const payload = [{ id: "card-1", name: "Task" }];
+    await expect(trelloActionHandlers.search({ query: "Task" }, searchContext(payload))).resolves.toEqual({
+      results: payload,
+    });
+  });
+
+  it.each([
+    null,
+    {},
+    { message: "unexpected failure" },
+    { cards: null },
+    { cards: {} },
+    { cards: [null] },
+    { cards: ["bad"] },
+    [1],
+  ])("rejects malformed successful responses: %j", async (payload) => {
+    await expect(trelloActionHandlers.search({ query: "Task" }, searchContext(payload))).rejects.toMatchObject({
+      status: 502,
+    });
+  });
+});

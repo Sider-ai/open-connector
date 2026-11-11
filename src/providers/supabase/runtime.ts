@@ -15,6 +15,7 @@ import {
   requiredString,
   stringArray,
 } from "../../core/cast.ts";
+import { createProviderErrorDetails } from "../../core/provider-error-diagnostic.ts";
 import { jsonObject, readBoundedResponseBytes } from "../../core/request.ts";
 import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 import { supabaseProviderScopes } from "./scopes.ts";
@@ -737,7 +738,13 @@ async function requestSupabaseJson(options: {
   }
 
   const body = await response.text().catch(() => "");
-  const payload = parseJsonBody(body, options.responseMode === "optional_json");
+  let payload: unknown;
+  try {
+    payload = parseJsonBody(body, options.responseMode === "optional_json");
+  } catch (error) {
+    if (response.ok) throw error;
+    payload = { message: "supabase returned a non-JSON error response" };
+  }
   if (!response.ok) {
     throw createSupabaseError(response, payload, options.phase ?? "execute");
   }
@@ -782,22 +789,27 @@ function createSupabaseError(response: Response, payload: unknown, phase: Supaba
       optionalString(detail.error_description) ??
       `supabase request failed with ${response.status}`)
     : `supabase request failed with ${response.status}`;
+  const diagnostics = createProviderErrorDetails(response.status, message, code);
 
   if (response.status === 401 || response.status === 403) {
-    return new ProviderRequestError(phase === "validate" ? 400 : response.status, message, detail);
+    return new ProviderRequestError(
+      phase === "validate" ? 400 : response.status,
+      diagnostics.upstreamMessage,
+      diagnostics,
+    );
   }
   if (response.status === 429) {
-    return new ProviderRequestError(429, message, detail);
+    return new ProviderRequestError(429, diagnostics.upstreamMessage, diagnostics);
   }
   if ([400, 404, 409, 422].includes(response.status)) {
     return new ProviderRequestError(
       400,
-      code === "invalid_grant" ? "supabase grant is invalid or expired" : message,
-      detail,
+      code === "invalid_grant" ? "supabase grant is invalid or expired" : diagnostics.upstreamMessage,
+      diagnostics,
     );
   }
 
-  return new ProviderRequestError(response.status, message, detail);
+  return new ProviderRequestError(response.status, diagnostics.upstreamMessage, diagnostics);
 }
 
 function normalizeOrganizationList(payload: unknown): SupabaseOrganizationSummary[] {

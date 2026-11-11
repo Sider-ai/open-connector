@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { validateActionInput } from "../../core/validation.ts";
+import { githubActions } from "../../providers/github/actions.ts";
 import { safeProviderFailureDiagnostic, safeRunLogError, summarizeForRunLog } from "./run-log-summary.ts";
 
 describe("summarizeForRunLog", () => {
@@ -174,6 +176,38 @@ describe("summarizeForRunLog", () => {
 });
 
 describe("safeRunLogError", () => {
+  it("retains schema field hints without rejected values or unknown field names", () => {
+    const action = githubActions.find((action) => action.name === "list_workflow_run_jobs")!;
+    const validation = validateActionInput(action, {
+      owner: "example",
+      repo: "project",
+      runId: "private-value",
+      "private-unknown-field": "private-secret",
+    });
+    const summary = safeRunLogError(
+      { code: "invalid_input", message: "Invalid input", details: validation.errors },
+      action,
+    );
+    expect(summary.errorMessage).toContain("runId (type)");
+    expect(summary.errorMessage).toContain("unexpected input field");
+    expect(JSON.stringify(summary)).not.toContain("private-");
+  });
+
+  it("describes alternative required fields without implying both are required", () => {
+    const action = githubActions.find((action) => action.name === "create_or_update_file")!;
+    const validation = validateActionInput(action, {
+      owner: "example",
+      repo: "project",
+      path: "file",
+      message: "Update",
+    });
+    const summary = safeRunLogError(
+      { code: "invalid_input", message: "Invalid input", details: validation.errors },
+      action,
+    );
+    expect(summary.errorMessage).toBe("Invalid action input: provide a valid content or contentBase64.");
+  });
+
   it("does not retain provider error messages", () => {
     expect(
       safeRunLogError({ code: "provider_error", message: "provider returned secret-token", details: { raw: true } }),
@@ -182,6 +216,35 @@ describe("safeRunLogError", () => {
 });
 
 describe("safeProviderFailureDiagnostic", () => {
+  it("uses the original upstream status instead of the normalized execution status", () => {
+    const error = {
+      code: "invalid_input",
+      message: "Validation failed",
+      details: {
+        status: 400,
+        details: { upstreamStatus: 422, upstreamMessage: "Missing file sha", upstreamCode: "missing_field" },
+      },
+    };
+    expect(safeProviderFailureDiagnostic(error)).toEqual({
+      providerHttpStatus: 422,
+      providerErrorMessage: "Missing file sha",
+      providerErrorCode: "missing_field",
+    });
+    expect(safeRunLogError(error)).toEqual({
+      errorCode: "invalid_input",
+      errorMessage: "missing_field: Missing file sha",
+    });
+  });
+
+  it("does not fall back to a normalized status when explicit upstream metadata is invalid", () => {
+    expect(
+      safeProviderFailureDiagnostic({
+        code: "provider_error",
+        message: "Failure",
+        details: { status: 500, details: { upstreamStatus: 200, upstreamMessage: "Not a failure" } },
+      }),
+    ).toBeUndefined();
+  });
   it("keeps the upstream status and reason while redacting credentials", () => {
     expect(
       safeProviderFailureDiagnostic({

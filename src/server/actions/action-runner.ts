@@ -135,7 +135,7 @@ export class ActionRunner {
     }
     const completedAtMs = Date.now();
     const durationMs = completedAtMs - startedAtMs;
-    const auditError = safeRunLogError(result.error);
+    const auditError = safeRunLogError(result.error, action);
     const providerFailure = safeProviderFailureDiagnostic(result.error);
     const runLog: RunLog = {
       id: executionId,
@@ -179,7 +179,10 @@ export class ActionRunner {
     } else if (result.error?.code === "execution_cancelled") {
       this.options.logger?.info(completedLogContext, "action run cancelled");
     } else {
-      this.options.logger?.warn({ ...completedLogContext, ...providerFailure }, "action run failed");
+      this.options.logger?.warn(
+        { ...completedLogContext, errorMessage: auditError.errorMessage, ...providerFailure },
+        "action run failed",
+      );
     }
 
     return { executionId, auditPersisted, result, connection: connection?.summary, providerFailure };

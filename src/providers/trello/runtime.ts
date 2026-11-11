@@ -452,7 +452,7 @@ export const trelloActionHandlers: ProviderActionHandlers<"trello", TrelloAction
     };
   },
   async search(input, context) {
-    const payload = await trelloRequest<unknown[]>({
+    const payload = await trelloRequest<unknown>({
       credential: context,
       fetcher: context.fetcher,
       path: "/search",
@@ -465,14 +465,43 @@ export const trelloActionHandlers: ProviderActionHandlers<"trello", TrelloAction
       ],
       phase: "execute",
     });
-    if (!Array.isArray(payload)) {
-      throw new ProviderRequestError(502, "Trello search response was not an array");
-    }
     return {
-      results: payload.map((result) => asObjectPayload(result)),
+      results: normalizeSearchResults(payload),
     };
   },
 };
+
+function normalizeSearchResults(payload: unknown): Record<string, unknown>[] {
+  if (Array.isArray(payload)) {
+    return payload.map((result) => asObjectPayload(result));
+  }
+  const groups = optionalRecord(payload);
+  const results: Record<string, unknown>[] = [];
+  let foundGroup = false;
+  for (const [key, modelType] of Object.entries({
+    actions: "action",
+    boards: "board",
+    cards: "card",
+    members: "member",
+    organizations: "organization",
+  })) {
+    if (!groups || !Object.hasOwn(groups, key)) {
+      continue;
+    }
+    foundGroup = true;
+    const items = groups[key];
+    if (!Array.isArray(items)) {
+      throw new ProviderRequestError(502, `Trello search ${key} response was not an array`);
+    }
+    for (const item of items) {
+      results.push({ ...asObjectPayload(item), modelType });
+    }
+  }
+  if (!foundGroup) {
+    throw new ProviderRequestError(502, "Trello search response did not contain result groups");
+  }
+  return results;
+}
 
 export async function validateTrelloCredential(
   input: { values: Record<string, string> },

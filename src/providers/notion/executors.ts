@@ -7,6 +7,7 @@ import type {
 import type { ProviderActionHandlers } from "../provider-runtime.ts";
 
 import { compactObject } from "../../core/cast.ts";
+import { createProviderErrorDetails } from "../../core/provider-error-diagnostic.ts";
 import {
   createProviderFetch,
   createProviderProxyUrl,
@@ -709,21 +710,26 @@ async function assertNotionResponse(response: Response) {
   }
 
   const errorBody = await parseNotionErrorBody(response);
-  const message = errorBody.message || `notion request failed with ${response.status}`;
+  const details = createProviderErrorDetails(
+    response.status,
+    errorBody.message || `notion request failed with ${response.status}`,
+    errorBody.code,
+  );
+  const message = details.upstreamMessage;
   if (response.status === 400 && errorBody.code === "validation_error") {
-    throw new ProviderRequestError(400, message);
+    throw new ProviderRequestError(400, message, details);
   }
   if (response.status === 401) {
-    throw new ProviderRequestError(401, message);
+    throw new ProviderRequestError(401, message, details);
   }
   if (response.status === 403) {
-    throw new ProviderRequestError(403, message);
+    throw new ProviderRequestError(403, message, details);
   }
   if (response.status === 429) {
-    throw new ProviderRequestError(429, message);
+    throw new ProviderRequestError(429, message, details);
   }
 
-  throw new ProviderRequestError(response.status, message);
+  throw new ProviderRequestError(response.status, message, details);
 }
 
 async function parseNotionErrorBody(response: Response) {
@@ -733,14 +739,11 @@ async function parseNotionErrorBody(response: Response) {
   }
 
   try {
-    const parsed = JSON.parse(text) as {
-      code?: string;
-      message?: string;
-      error?: string;
-    };
+    const payload: unknown = JSON.parse(text);
+    const parsed = asObject(payload);
     return {
-      code: parsed.code ?? "",
-      message: parsed.message ?? parsed.error ?? text,
+      code: asNonEmptyString(parsed?.code) ?? "",
+      message: asNonEmptyString(parsed?.message) ?? asNonEmptyString(parsed?.error) ?? asNonEmptyString(payload) ?? "",
     };
   } catch {
     return {

@@ -160,7 +160,44 @@ describe("ActionRunner", () => {
       }),
       message: "action run failed",
     });
-    expect(runs.items[0]).toMatchObject({ errorMessage: "The provider rejected authorization." });
+    expect(runs.items[0]).toMatchObject({ errorMessage: "unauthorized org access" });
+  });
+
+  it("returns original upstream diagnostics and persists the useful reason after error normalization", async () => {
+    const runs = new MemoryRunLogStore();
+    const { entries, logger } = createTestLogger();
+    const runner = createRunner({
+      runs,
+      logger,
+      providerLoader: new TestProviderLoader(async () => ({
+        ok: false,
+        error: {
+          code: "invalid_input",
+          message: "Validation failed",
+          details: {
+            status: 400,
+            details: {
+              upstreamStatus: 422,
+              upstreamCode: "missing_field",
+              upstreamMessage: "Missing sha; token=private-secret",
+            },
+          },
+        },
+      })),
+    });
+    const run = await runner.run({ actionId: "example.echo", input: {}, caller: "mcp" });
+    expect(run?.providerFailure).toEqual({
+      providerHttpStatus: 422,
+      providerErrorCode: "missing_field",
+      providerErrorMessage: "Missing sha; token=[redacted]",
+    });
+    expect(runs.items[0]?.errorMessage).toBe("missing_field: Missing sha; token=[redacted]");
+    expect(entries).toContainEqual({
+      message: "action run failed",
+      fields: expect.objectContaining({ providerHttpStatus: 422, providerErrorCode: "missing_field" }),
+    });
+    expect(JSON.stringify(entries)).not.toContain("private-secret");
+    expect(JSON.stringify(runs.items)).not.toContain("private-secret");
   });
 
   it("propagates cancellation to the execution context and records it without a warning", async () => {

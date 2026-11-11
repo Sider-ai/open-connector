@@ -1,4 +1,5 @@
-import { compactObject, optionalInteger, optionalString, optionalRawString } from "../../core/cast.ts";
+import { compactObject, optionalInteger, optionalRawString, optionalString } from "../../core/cast.ts";
+import { createProviderErrorDetails } from "../../core/provider-error-diagnostic.ts";
 import { ProviderRequestError } from "../provider-runtime.ts";
 
 export { compactObject };
@@ -117,27 +118,32 @@ export function normalizeGitHubError(
   payload: unknown,
   fallbackMessage: string,
 ): ProviderRequestError {
-  const message = readGitHubErrorMessage(payload) ?? `${fallbackMessage} with ${response.status}`;
+  const details = createProviderErrorDetails(
+    response.status,
+    readGitHubErrorMessage(payload) ?? `${fallbackMessage} with ${response.status}`,
+    payload && typeof payload === "object" ? (payload as Record<string, unknown>).code : undefined,
+  );
+  const message = details.upstreamMessage;
   if (response.status === 401) {
-    return new ProviderRequestError(401, message);
+    return new ProviderRequestError(401, message, details);
   }
   if (response.status === 403 && isRateLimited(response, payload)) {
-    return new ProviderRequestError(429, message);
+    return new ProviderRequestError(429, message, details);
   }
   if (response.status === 403) {
-    return new ProviderRequestError(403, message);
+    return new ProviderRequestError(403, message, details);
   }
   if (response.status === 429) {
-    return new ProviderRequestError(429, message);
+    return new ProviderRequestError(429, message, details);
   }
   if (response.status === 404) {
-    return new ProviderRequestError(404, message);
+    return new ProviderRequestError(404, message, details);
   }
   if (response.status === 400 || response.status === 422) {
-    return new ProviderRequestError(400, message);
+    return new ProviderRequestError(400, message, details);
   }
 
-  return new ProviderRequestError(500, message, response.status);
+  return new ProviderRequestError(500, message, details);
 }
 
 function readGitHubErrorMessage(payload: unknown): string | null {
@@ -175,12 +181,20 @@ export function decodeGitHubContent(contentBase64: string, encoding?: string): s
 }
 
 export function resolveGitHubWriteContent(input: Record<string, unknown>): string {
-  const contentBase64 = optionalRawString(input.contentBase64);
-  if (contentBase64) {
-    return contentBase64.replace(/[\r\n]/g, "");
+  for (const field of ["content", "contentBase64"]) {
+    if (input[field] !== undefined && typeof input[field] !== "string") {
+      throw new ProviderRequestError(400, `${field} must be a string`);
+    }
   }
-
-  return Buffer.from(String(input.content ?? ""), "utf8").toString("base64");
+  const content = optionalRawString(input.content);
+  const contentBase64 = optionalRawString(input.contentBase64);
+  if (content === undefined && contentBase64 === undefined) {
+    throw new ProviderRequestError(
+      400,
+      "Provide content or contentBase64. Use an explicit empty string for an empty file.",
+    );
+  }
+  return contentBase64 ? contentBase64.replace(/[\r\n]/g, "") : Buffer.from(content ?? "", "utf8").toString("base64");
 }
 
 export function mapReviewComment(comment: unknown): Record<string, unknown> {
