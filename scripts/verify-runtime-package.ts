@@ -9,9 +9,11 @@ const rootDir = fileURLToPath(new URL("../", import.meta.url));
 const temporaryRoot = await mkdtemp(join(tmpdir(), "sider-open-connector-runtime-"));
 
 try {
+  // Keep lifecycle build output separate from npm pack's machine-readable JSON.
+  await run("npm", ["run", "build:runtime-package"], rootDir);
   const packOutput = await runAndCapture(
     "npm",
-    ["pack", "--workspace", packageName, "--json", "--silent", "--pack-destination", temporaryRoot],
+    ["pack", "--workspace", packageName, "--ignore-scripts", "--json", "--silent", "--pack-destination", temporaryRoot],
     rootDir,
   );
   const [pack] = JSON.parse(packOutput) as [PackResult];

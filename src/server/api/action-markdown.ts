@@ -49,6 +49,13 @@ export function renderActionMarkdown(action: ActionDefinition, context: ActionMa
       ),
       heading(2, "Input Parameters"),
       ...describeParameters(action.inputSchema),
+      ...(action.followUpActions?.length
+        ? [
+            heading(2, "Follow-up Actions"),
+            textParagraph("Read these actions' guides when they are needed for the user's request."),
+            ...describeStringList(action.followUpActions, ""),
+          ]
+        : []),
       heading(2, "Required Scopes"),
       ...describeStringList(action.requiredScopes, "No provider scopes are required."),
       heading(2, "Provider Permissions"),
@@ -59,6 +66,7 @@ export function renderActionMarkdown(action: ActionDefinition, context: ActionMa
       ...describeConnection(context.connection),
       heading(2, "Notes For Agents"),
       list([
+        textParagraph("Replace example placeholders with task values and values returned by earlier actions."),
         textParagraph("Use the local runtime endpoint above; do not call provider APIs directly unless the user asks."),
         paragraph(["Send JSON with a top-level ", inlineCode("input"), " object."]),
         textParagraph("Check the current connection and provider scopes before choosing actions on the user's behalf."),
@@ -132,8 +140,16 @@ function describeParameters(schema: JsonSchema): BlockContent[] {
   }
 
   const required = new Set(readRequired(schema));
+  const alternatives = readRequiredAlternatives(schema);
+  const conditional = new Set(alternatives.flat());
   return [
-    parameterTable(entries, required),
+    parameterTable(entries, required, conditional),
+    ...(alternatives.length
+      ? [
+          textParagraph("Provide every field in at least one of these input groups:"),
+          list(alternatives.map((names) => paragraph(joinPhrasing(names.map(inlineCode), " + ")))),
+        ]
+      : []),
     listItems(
       entries.map(([name, property]) =>
         listItem([paragraph([inlineCode(name)]), ...markdownBlockContent(readDescription(property))]),
@@ -142,7 +158,11 @@ function describeParameters(schema: JsonSchema): BlockContent[] {
   ];
 }
 
-function parameterTable(entries: Array<[string, JsonSchema]>, required: Set<string>): BlockContent {
+function parameterTable(
+  entries: Array<[string, JsonSchema]>,
+  required: Set<string>,
+  conditional: Set<string>,
+): BlockContent {
   return {
     type: "table",
     align: [null, null, null],
@@ -151,7 +171,7 @@ function parameterTable(entries: Array<[string, JsonSchema]>, required: Set<stri
       ...entries.map(([name, property]) =>
         tableRow([
           inlineCodeTableCell(name),
-          textTableCell(required.has(name) ? "Yes" : "No"),
+          textTableCell(required.has(name) ? "Yes" : conditional.has(name) ? "Conditional" : "No"),
           inlineCodeTableCell(describeType(property)),
         ]),
       ),
@@ -266,8 +286,13 @@ type DocumentContent = BlockContent | DefinitionContent;
 function buildExampleInput(schema: JsonSchema): Record<string, unknown> {
   const properties = readProperties(schema);
   const input: Record<string, unknown> = {};
-  for (const name of readRequired(schema)) {
-    input[name] = exampleValue(properties[name]);
+  const required = new Set(readRequired(schema));
+  const alternatives = readRequiredAlternatives(schema);
+  if (alternatives.length && !alternatives.some((names) => names.every((name) => required.has(name)))) {
+    for (const name of alternatives[0]!) required.add(name);
+  }
+  for (const name of required) {
+    input[name] = exampleValue(properties[name], name);
   }
   return input;
 }
@@ -282,6 +307,25 @@ function readRequired(schema: JsonSchema): string[] {
   return Array.isArray(schema.required)
     ? schema.required.filter((value): value is string => typeof value === "string")
     : [];
+}
+
+/** Recognize field-presence alternatives without discarding other branch constraints. */
+function readRequiredAlternatives(schema: JsonSchema): string[][] {
+  if (!Array.isArray(schema.anyOf)) return [];
+  const properties = readProperties(schema);
+  const alternatives: string[][] = [];
+  for (const branch of schema.anyOf) {
+    if (!branch || typeof branch !== "object" || Object.keys(branch).some((key) => key !== "required")) return [];
+    const required = readRequired(branch);
+    if (
+      !required.length ||
+      required.length !== branch.required.length ||
+      required.some((name) => !Object.hasOwn(properties, name))
+    )
+      return [];
+    alternatives.push(required);
+  }
+  return alternatives;
 }
 
 function describeType(schema: JsonSchema | undefined): string {
@@ -304,7 +348,7 @@ function readDescription(schema: JsonSchema | undefined): string {
   return schema && typeof schema.description === "string" ? schema.description : "";
 }
 
-function exampleValue(schema: JsonSchema | undefined): unknown {
+function exampleValue(schema: JsonSchema | undefined, name: string): unknown {
   if (!schema) {
     return "";
   }
@@ -329,5 +373,5 @@ function exampleValue(schema: JsonSchema | undefined): unknown {
   if (schema.type === "object") {
     return {};
   }
-  return "";
+  return `<${name}>`;
 }

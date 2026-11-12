@@ -8,7 +8,7 @@ import {
   optionalRecord,
   optionalString,
 } from "../../core/cast.ts";
-import { ProviderRequestError } from "../provider-runtime.ts";
+import { ProviderInputError } from "../provider-runtime.ts";
 import {
   buildGitHubUrl,
   compactObject,
@@ -658,12 +658,12 @@ async function listWorkflowRuns(input: Record<string, unknown>, accessToken: str
 
 async function listWorkflowRunJobs(input: Record<string, unknown>, accessToken: string, fetcher: typeof fetch) {
   if (input.runId !== undefined && input.run_id !== undefined && input.runId !== input.run_id) {
-    throw new ProviderRequestError(400, "runId and run_id must match when both are supplied.");
+    throw new ProviderInputError("conflicting_aliases", "runId and run_id must match when both are supplied.");
   }
   const runId = input.runId ?? input.run_id;
   if (typeof runId !== "number" || !Number.isSafeInteger(runId) || runId <= 0) {
-    throw new ProviderRequestError(
-      400,
+    throw new ProviderInputError(
+      "invalid_workflow_run_id",
       "Provide a positive integer runId from the id field returned by list_workflow_runs.",
     );
   }

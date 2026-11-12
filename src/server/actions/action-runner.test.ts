@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCatalogStore } from "../../catalog-store.ts";
 import { ConnectionService } from "../../connection-service.ts";
 import { ActionPolicyService } from "../../core/action-policy.ts";
+import { ProviderInputError, toProviderExecutionError } from "../../providers/provider-runtime.ts";
 import { ActionRunner } from "./action-runner.ts";
 import * as runLogSummary from "./run-log-summary.ts";
 
@@ -48,6 +49,30 @@ afterEach(() => {
 });
 
 describe("ActionRunner", () => {
+  it("keeps the local input reason in logs and audit without presenting it as an upstream failure", async () => {
+    const runs = new MemoryRunLogStore();
+    const { entries, logger } = createTestLogger();
+    const runner = createRunner({
+      runs,
+      logger,
+      providerLoader: new TestProviderLoader(async () =>
+        toProviderExecutionError(new ProviderInputError("path_is_directory", "private-path"), "fallback"),
+      ),
+    });
+    const run = await runner.run({ actionId: "example.echo", input: {}, caller: "mcp" });
+    expect(run?.result).toMatchObject({ error: { code: "invalid_input" } });
+    expect(run?.providerFailure).toBeUndefined();
+    expect(runs.items[0]).toMatchObject({
+      errorCode: "invalid_input",
+      errorMessage: "path_is_directory: The path resolves to a directory. Use the directory listing action.",
+    });
+    const logged = entries.find((entry) => entry.message === "action run failed");
+    expect(logged?.fields.errorMessage).toBe(runs.items[0]?.errorMessage);
+    expect(logged?.fields).not.toHaveProperty("providerHttpStatus");
+    expect(JSON.stringify(entries)).not.toContain("private-path");
+    expect(JSON.stringify(runs.items)).not.toContain("private-path");
+  });
+
   it("uses one execution id across logs, storage, and the result", async () => {
     const runs = new MemoryRunLogStore();
     const { entries, logger } = createTestLogger();

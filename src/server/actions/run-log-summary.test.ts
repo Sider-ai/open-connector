@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { validateActionInput } from "../../core/validation.ts";
 import { githubActions } from "../../providers/github/actions.ts";
+import { ProviderInputError, toProviderExecutionError } from "../../providers/provider-runtime.ts";
 import { safeProviderFailureDiagnostic, safeRunLogError, summarizeForRunLog } from "./run-log-summary.ts";
 
 describe("summarizeForRunLog", () => {
@@ -176,6 +177,27 @@ describe("summarizeForRunLog", () => {
 });
 
 describe("safeRunLogError", () => {
+  it("uses an allowlisted local reason instead of copying rejected values from the error message", () => {
+    const result = toProviderExecutionError(new ProviderInputError("path_is_directory", "private-path"), "fallback");
+    expect(safeRunLogError(result.error)).toEqual({
+      errorCode: "invalid_input",
+      errorMessage: "path_is_directory: The path resolves to a directory. Use the directory listing action.",
+    });
+    expect(safeProviderFailureDiagnostic(result.error)).toBeUndefined();
+  });
+
+  it.each(["unknown-private-reason", "__proto__", "constructor", { secret: "private-value" }])(
+    "ignores unrecognized local reason codes: %j",
+    (inputErrorCode) => {
+      const summary = safeRunLogError({
+        code: "invalid_input",
+        message: "private-error-message",
+        details: { status: 400, details: { inputErrorCode, inputErrorMessage: "private-value" } },
+      });
+      expect(summary).toEqual({ errorCode: "invalid_input", errorMessage: "The action input was invalid." });
+    },
+  );
+
   it("retains schema field hints without rejected values or unknown field names", () => {
     const action = githubActions.find((action) => action.name === "list_workflow_run_jobs")!;
     const validation = validateActionInput(action, {

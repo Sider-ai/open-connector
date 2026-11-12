@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { executeAction } from "../../core/execution.ts";
 import { validateActionInput } from "../../core/validation.ts";
 import { safeProviderFailureDiagnostic, safeRunLogError } from "../../server/actions/run-log-summary.ts";
+import { renderActionMarkdown } from "../../server/api/action-markdown.ts";
 import { toProviderExecutionError } from "../provider-runtime.ts";
 import { githubActions } from "./actions.ts";
 import { pullRequestActionHandlers } from "./runtime-pull-request.ts";
@@ -10,6 +11,8 @@ import { normalizeGitHubError } from "./runtime-shared.ts";
 
 const jobsAction = githubActions.find((action) => action.name === "list_workflow_run_jobs")!;
 const writeAction = githubActions.find((action) => action.name === "create_or_update_file")!;
+const updateAction = githubActions.find((action) => action.name === "update_file")!;
+const readAction = githubActions.find((action) => action.name === "get_file_contents")!;
 const repo = { owner: "example", repo: "project" };
 const file = { ...repo, path: "file.txt", message: "Update file" };
 
@@ -108,6 +111,177 @@ describe("GitHub file write input", () => {
     });
     await repositoryActionHandlers.create_or_update_file!(value, { accessToken: "mock-token", fetcher });
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("GitHub file update workflow", () => {
+  it("exposes the read-to-update workflow and required sha in action guides", () => {
+    expect(readAction.followUpActions).toContain(updateAction.id);
+    expect(renderActionMarkdown(readAction)).toContain("github.update_file");
+    const guide = renderActionMarkdown(updateAction);
+    expect(guide.replaceAll("\\_", "_")).toContain("github.get_file_contents");
+    expect(guide).toContain("same branch");
+    expect(guide).toContain("at least one of these input groups");
+    const example = JSON.parse(guide.match(/-d '([^'\n]+)'/u)![1]!).input;
+    expect(example.content).toBe("<content>");
+    expect(validateActionInput(updateAction, example).valid).toBe(true);
+    expect(updateAction.inputSchema.required).toContain("sha");
+    expect(writeAction.inputSchema.required).not.toContain("sha");
+    expect(writeAction.description).toContain("Prefer github.update_file");
+  });
+
+  it.each([undefined, null, "", " ", 123])("rejects an invalid update sha before execution: %j", async (sha) => {
+    const executor = vi.fn(async () => ({ ok: true, output: {} }));
+    const input = { ...file, content: "updated", ...(sha === undefined ? {} : { sha }) };
+    const result = await executeAction(updateAction, executor, input, { getCredential: async () => undefined });
+    expect(result).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+    expect(safeRunLogError(result.error, updateAction).errorMessage).toContain("sha");
+    expect(executor).not.toHaveBeenCalled();
+  });
+
+  it.each([{}, { content: null }, { contentBase64: 123 }])(
+    "requires explicit string contents even when an update sha is present: %j",
+    async (fields) => {
+      const executor = vi.fn(async () => ({ ok: true, output: {} }));
+      const result = await executeAction(
+        updateAction,
+        executor,
+        { ...file, sha: "current-sha", ...fields },
+        { getCredential: async () => undefined },
+      );
+      expect(result).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+      expect(executor).not.toHaveBeenCalled();
+    },
+  );
+
+  it("guards the update precondition when the handler is called directly", () => {
+    const fetcher = vi.fn<typeof fetch>();
+    expect(() =>
+      repositoryActionHandlers.update_file!({ ...file, content: "updated" }, { accessToken: "mock-token", fetcher }),
+    ).toThrow("Provide sha from github.get_file_contents");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, "feature/docs"])("reads and updates the same branch: %j", async (branch) => {
+    const sha = "a".repeat(40);
+    const fetcher = vi.fn<typeof fetch>(async (url, init) => {
+      expect(new URL(String(url)).pathname).toBe("/repos/example/project/contents/file.txt");
+      if (init?.method === "GET") {
+        expect(new URL(String(url)).searchParams.get("ref")).toBe(branch ?? null);
+        return Response.json({
+          type: "file",
+          sha,
+          encoding: "base64",
+          content: Buffer.from("original").toString("base64"),
+        });
+      }
+      expect(init?.method).toBe("PUT");
+      expect(JSON.parse(String(init?.body))).toEqual({
+        message: file.message,
+        content: Buffer.from("original\n更新 🙂").toString("base64"),
+        sha,
+        ...(branch === undefined ? {} : { branch }),
+      });
+      return Response.json({ commit: { sha: "new-commit" } });
+    });
+    const context = { accessToken: "mock-token", fetcher };
+    const read = (await repositoryActionHandlers.get_file_contents!(
+      { ...repo, path: file.path, ref: branch },
+      context,
+    )) as Record<string, unknown>;
+    const input = {
+      ...file,
+      content: `${read.decoded_content}\n更新 🙂`,
+      sha: read.sha,
+      ...(branch === undefined ? {} : { branch }),
+    };
+    expect(validateActionInput(updateAction, input).valid).toBe(true);
+    await expect(repositoryActionHandlers.update_file!(input, context)).resolves.toEqual({
+      commit: { sha: "new-commit" },
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([{ content: "" }, { contentBase64: "" }])("allows an explicit empty update: %j", async (contents) => {
+    const input = { ...file, sha: "current-sha", ...contents };
+    expect(validateActionInput(updateAction, input).valid).toBe(true);
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+      expect(JSON.parse(String(init?.body))).toMatchObject({ content: "", sha: "current-sha" });
+      return Response.json({ commit: { sha: "new-commit" } });
+    });
+    await repositoryActionHandlers.update_file!(input, { accessToken: "mock-token", fetcher });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves legacy creation without a sha or an implicit read", async () => {
+    const input = { ...file, content: "new file" };
+    expect(validateActionInput(writeAction, input).valid).toBe(true);
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+      expect(init?.method).toBe("PUT");
+      expect(JSON.parse(String(init?.body))).not.toHaveProperty("sha");
+      return Response.json({ commit: { sha: "new-commit" } }, { status: 201 });
+    });
+    await repositoryActionHandlers.create_or_update_file!(input, { accessToken: "mock-token", fetcher });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns a stale-sha conflict without fetching a new sha or retrying the write", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+      expect(init?.method).toBe("PUT");
+      expect(JSON.parse(String(init?.body)).sha).toBe("stale-sha");
+      return Response.json({ message: "File sha does not match" }, { status: 409 });
+    });
+    await expect(
+      repositoryActionHandlers.update_file!(
+        { ...file, content: "updated", sha: "stale-sha" },
+        { accessToken: "mock-token", fetcher },
+      ),
+    ).rejects.toMatchObject({ details: { upstreamStatus: 409 } });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("GitHub local input diagnostics", () => {
+  it.each([
+    { handler: repositoryActionHandlers.get_file_contents!, payload: [], reason: "path_is_directory" },
+    {
+      handler: repositoryActionHandlers.get_file_contents!,
+      payload: { type: "symlink" },
+      reason: "path_not_regular_file",
+    },
+    {
+      handler: repositoryActionHandlers.list_directory_contents!,
+      payload: { type: "file" },
+      reason: "path_not_directory",
+    },
+  ])("records $reason without an upstream failure status", async ({ handler, payload, reason }) => {
+    const result = await handler(
+      { ...repo, path: "private-path" },
+      { accessToken: "mock-token", fetcher: async () => Response.json(payload) },
+    ).then(
+      () => {
+        throw new Error("Expected local input rejection");
+      },
+      (error: unknown) => toProviderExecutionError(error, "fallback"),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "invalid_input", details: { status: 400, details: { inputErrorCode: reason } } },
+    });
+    const audit = safeRunLogError(result.error);
+    expect(audit.errorMessage).toContain(`${reason}: `);
+    expect(audit.errorMessage).not.toContain("private-path");
+    expect(safeProviderFailureDiagnostic(result.error)).toBeUndefined();
+  });
+
+  it("records conflicting workflow aliases without making a provider request", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const result = await pullRequestActionHandlers.list_workflow_run_jobs!(
+      { ...repo, runId: 123, run_id: 456 },
+      { accessToken: "mock-token", fetcher },
+    ).catch((error: unknown) => toProviderExecutionError(error, "fallback"));
+    expect(result).toMatchObject({ error: { details: { details: { inputErrorCode: "conflicting_aliases" } } } });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });
 

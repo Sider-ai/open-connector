@@ -1,6 +1,7 @@
 import type { ProviderFailureDiagnostic } from "../../core/provider-error-diagnostic.ts";
 import type { ActionDefinition, ExecutionResult } from "../../core/types.ts";
 
+import { inputErrorMessage } from "../../core/input-error-diagnostic.ts";
 import { createProviderFailureDiagnostic } from "../../core/provider-error-diagnostic.ts";
 
 const maxNodes = 256;
@@ -59,8 +60,20 @@ export function safeRunLogError(
       ? diagnostic.providerErrorCode
         ? `${diagnostic.providerErrorCode}: ${diagnostic.providerErrorMessage}`
         : diagnostic.providerErrorMessage
-      : (safeInputValidationMessage(error, action) ?? safeErrorMessages[error.code] ?? "Action execution failed."),
+      : (safeLocalInputMessage(error) ??
+        safeInputValidationMessage(error, action) ??
+        safeErrorMessages[error.code] ??
+        "Action execution failed."),
   };
+}
+
+function safeLocalInputMessage(error: NonNullable<ExecutionResult["error"]>): string | undefined {
+  if (error.code !== "invalid_input" || !error.details || typeof error.details !== "object") return undefined;
+  const outer = error.details as Record<string, unknown>;
+  if (outer.status !== 400 || !outer.details || typeof outer.details !== "object") return undefined;
+  const code = (outer.details as Record<string, unknown>).inputErrorCode;
+  const message = inputErrorMessage(code);
+  return message ? `${code}: ${message}` : undefined;
 }
 
 /** Use only schema-owned field names and constraints, never rejected input values or unknown keys. */

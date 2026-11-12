@@ -1,8 +1,8 @@
 import type { ProviderActionHandlerSubset } from "../provider-runtime.ts";
-import type { GitHubActionHandler } from "./runtime-shared.ts";
+import type { GitHubActionContext, GitHubActionHandler } from "./runtime-shared.ts";
 
 import { optionalBoolean, optionalInteger, optionalRawString, optionalString } from "../../core/cast.ts";
-import { ProviderRequestError } from "../provider-runtime.ts";
+import { ProviderInputError, ProviderRequestError } from "../provider-runtime.ts";
 import {
   buildGitHubUrl,
   buildRepoContentsPath,
@@ -150,19 +150,16 @@ export const repositoryActionHandlers: ProviderActionHandlerSubset<"github", Git
     });
   },
 
-  create_or_update_file(input, { accessToken, fetcher }) {
-    return githubRequestJson<Record<string, unknown>>({
-      method: "PUT",
-      path: buildRepoContentsPath(String(input.owner), String(input.repo), String(input.path)),
-      body: compactObject({
-        message: String(input.message),
-        content: resolveGitHubWriteContent(input),
-        sha: optionalString(input.sha),
-        branch: optionalString(input.branch),
-      }),
-      accessToken,
-      fetcher,
-    });
+  create_or_update_file: writeRepositoryFile,
+
+  update_file(input, context) {
+    if (!optionalString(input.sha)) {
+      throw new ProviderInputError(
+        "file_revision_required",
+        "Provide sha from github.get_file_contents for the same owner, repo, path and target branch before updating.",
+      );
+    }
+    return writeRepositoryFile(input, context);
   },
 
   delete_file(input, { accessToken, fetcher }) {
@@ -416,6 +413,24 @@ async function compareCommits(input: Record<string, unknown>, accessToken: strin
   };
 }
 
+function writeRepositoryFile(
+  input: Record<string, unknown>,
+  { accessToken, fetcher }: GitHubActionContext,
+): Promise<Record<string, unknown>> {
+  return githubRequestJson<Record<string, unknown>>({
+    method: "PUT",
+    path: buildRepoContentsPath(String(input.owner), String(input.repo), String(input.path)),
+    body: compactObject({
+      message: String(input.message),
+      content: resolveGitHubWriteContent(input),
+      sha: optionalString(input.sha),
+      branch: optionalString(input.branch),
+    }),
+    accessToken,
+    fetcher,
+  });
+}
+
 async function listDirectoryContents(input: Record<string, unknown>, accessToken: string, fetcher: typeof fetch) {
   const response = await githubRequestJson<unknown>({
     path: buildRepoContentsPath(String(input.owner), String(input.repo), optionalString(input.path)),
@@ -427,7 +442,7 @@ async function listDirectoryContents(input: Record<string, unknown>, accessToken
   });
 
   if (!Array.isArray(response)) {
-    throw new ProviderRequestError(400, "path does not resolve to a directory");
+    throw new ProviderInputError("path_not_directory", "path does not resolve to a directory");
   }
 
   return {
@@ -446,10 +461,10 @@ async function getFileContents(input: Record<string, unknown>, accessToken: stri
   });
 
   if (Array.isArray(response)) {
-    throw new ProviderRequestError(400, "path resolves to a directory, not a file");
+    throw new ProviderInputError("path_is_directory", "path resolves to a directory, not a file");
   }
   if (response.type !== "file") {
-    throw new ProviderRequestError(400, "path does not resolve to a regular file");
+    throw new ProviderInputError("path_not_regular_file", "path does not resolve to a regular file");
   }
 
   const encoding = optionalString(response.encoding);

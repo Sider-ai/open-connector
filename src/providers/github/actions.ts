@@ -101,6 +101,7 @@ const githubRequiredInputFields: Record<string, string[]> = {
   search_labels: ["repositoryId", "query"],
   search_topics: ["query"],
   create_or_update_file: ["owner", "repo", "path", "message"],
+  update_file: ["owner", "repo", "path", "message", "sha"],
   delete_file: ["owner", "repo", "path", "message", "sha"],
   update_repository: ["owner", "repo"],
   fork_repository: ["owner", "repo"],
@@ -509,6 +510,26 @@ const githubCodeSearchItemSchema = s.looseObject({
     owner: githubUserSummarySchema,
   }),
 });
+
+const githubFileWriteInputSchema: JsonSchema = {
+  ...s.object({
+    owner: nonEmptyString,
+    repo: nonEmptyString,
+    path: nonEmptyString,
+    message: nonEmptyString,
+    content: s.string("UTF-8 file contents. An explicit empty string creates or replaces an empty file."),
+    contentBase64: s.string(
+      "Base64-encoded contents. Non-empty contentBase64 takes precedence when both forms are supplied.",
+    ),
+    sha: s.nonWhitespaceString(
+      "Current blob sha returned by github.get_file_contents for the same owner, repo, path and branch. Required for updates.",
+    ),
+    branch: s.nonWhitespaceString(
+      "Target branch, matching ref used in github.get_file_contents. Omit both to use the repository's default branch.",
+    ),
+  }),
+  anyOf: [{ required: ["content"] }, { required: ["contentBase64"] }],
+};
 
 const githubContentsWriteResultSchema = s.object({
   content: githubContentEntrySchema,
@@ -1682,15 +1703,17 @@ export const githubActions: ActionDefinition[] = [
   }),
   action({
     name: "get_file_contents",
-    description: "Read a repository file and return both base64 and decoded text when available.",
+    description:
+      "Read a repository file and return its blob sha, base64 content and decoded text when available. For an authorized update, read with ref set to the target branch, then pass the returned sha and the same branch to github.update_file. Use list_directory_contents for directories.",
     requiredScopes: githubRepoScopes,
     inputSchema: s.object({
       owner: nonEmptyString,
       repo: nonEmptyString,
       path: nonEmptyString,
-      ref: s.string(),
+      ref: s.string("Branch, tag or commit to read. For an update, use the same branch as github.update_file.branch."),
     }),
     outputSchema: githubFileContentSchema,
+    followUpActions: ["github.update_file"],
   }),
   action({
     name: "merge_branch",
@@ -1828,23 +1851,17 @@ export const githubActions: ActionDefinition[] = [
   action({
     name: "create_or_update_file",
     description:
-      "Create or update a repository file through the GitHub contents API. Explicitly provide content or contentBase64, using an empty string only for an empty file. To update an existing file, first get_file_contents on the same branch and supply its latest sha. Writing under .github/workflows may require GitHub workflow scope.",
+      "Create a new repository file, or update a file through the compatible contents API. Prefer github.update_file for editing existing files: first read github.get_file_contents on the target branch and supply its current sha. Explicitly provide content or contentBase64, using an empty string only for an empty file. Writing under .github/workflows may require GitHub workflow scope.",
     requiredScopes: githubRepoScopes,
-    inputSchema: {
-      ...s.object({
-        owner: nonEmptyString,
-        repo: nonEmptyString,
-        path: nonEmptyString,
-        message: nonEmptyString,
-        content: s.string("UTF-8 file contents. An explicit empty string creates or replaces an empty file."),
-        contentBase64: s.string(
-          "Base64-encoded contents. Non-empty contentBase64 takes precedence when both forms are supplied.",
-        ),
-        sha: s.nonWhitespaceString("Latest blob sha from get_file_contents; required when updating an existing file."),
-        branch: s.nonWhitespaceString("Target branch. Defaults to the repository's default branch when omitted."),
-      }),
-      anyOf: [{ required: ["content"] }, { required: ["contentBase64"] }],
-    },
+    inputSchema: githubFileWriteInputSchema,
+    outputSchema: githubContentsWriteResultSchema,
+  }),
+  action({
+    name: "update_file",
+    description:
+      "Update an existing repository file. Prefer this action for editing files. First call github.get_file_contents with the same owner, repo, path and ref set to the target branch. Apply the intended changes to the returned contents, then supply its blob sha and the same branch here. sha and explicit content or contentBase64 are required. On a stale-sha conflict, reread the file and reapply the changes before retrying. Writing under .github/workflows may require GitHub workflow scope.",
+    requiredScopes: githubRepoScopes,
+    inputSchema: githubFileWriteInputSchema,
     outputSchema: githubContentsWriteResultSchema,
   }),
   action({
@@ -2635,6 +2652,7 @@ interface GitHubActionInput {
   requiredScopes: string[];
   inputSchema: JsonSchema;
   outputSchema: JsonSchema;
+  followUpActions?: string[];
 }
 
 function action(input: GitHubActionInput): ActionDefinition {

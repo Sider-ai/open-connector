@@ -1,3 +1,4 @@
+import type { InputErrorCode } from "../core/input-error-diagnostic.ts";
 import type {
   ActionExecutor,
   ExecutionContext,
@@ -15,6 +16,7 @@ import type { ProviderActionNames } from "./action-contracts.generated.ts";
 import { Buffer } from "node:buffer";
 import { CastError, optionalRecord, optionalScalarString, optionalString, requiredString } from "../core/cast.ts";
 import { createGuardedFetch } from "../core/guarded-fetch.ts";
+import { inputErrorMessage } from "../core/input-error-diagnostic.ts";
 import { readBoundedResponseBytes } from "../core/request.ts";
 
 /**
@@ -244,6 +246,13 @@ export class ProviderRequestError extends Error {
     super(message);
     this.status = status;
     this.details = details;
+  }
+}
+
+/** A local input rejection with an allowlisted audit reason, independent of upstream HTTP failures. */
+export class ProviderInputError extends ProviderRequestError {
+  constructor(code: InputErrorCode, message?: string) {
+    super(400, message ?? inputErrorMessage(code) ?? "Invalid action input.", { inputErrorCode: code });
   }
 }
 

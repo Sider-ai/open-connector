@@ -1,6 +1,6 @@
 import { compactObject, optionalInteger, optionalRawString, optionalString } from "../../core/cast.ts";
 import { createProviderErrorDetails } from "../../core/provider-error-diagnostic.ts";
-import { ProviderRequestError } from "../provider-runtime.ts";
+import { ProviderInputError, ProviderRequestError } from "../provider-runtime.ts";
 
 export { compactObject };
 
@@ -183,14 +183,14 @@ export function decodeGitHubContent(contentBase64: string, encoding?: string): s
 export function resolveGitHubWriteContent(input: Record<string, unknown>): string {
   for (const field of ["content", "contentBase64"]) {
     if (input[field] !== undefined && typeof input[field] !== "string") {
-      throw new ProviderRequestError(400, `${field} must be a string`);
+      throw new ProviderInputError("invalid_file_content_type", `${field} must be a string`);
     }
   }
   const content = optionalRawString(input.content);
   const contentBase64 = optionalRawString(input.contentBase64);
   if (content === undefined && contentBase64 === undefined) {
-    throw new ProviderRequestError(
-      400,
+    throw new ProviderInputError(
+      "file_content_required",
       "Provide content or contentBase64. Use an explicit empty string for an empty file.",
     );
   }
