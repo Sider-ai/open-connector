@@ -4,6 +4,7 @@ import type { IOAuthClientConfigStore, OAuthClientConfig } from "./oauth-client-
 import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCatalogStore } from "../catalog-store.ts";
+import { provider as mondayProvider } from "../providers/monday/definition.ts";
 import { OAuthAuthorizationService } from "./oauth-authorization-service.ts";
 import { OAuthClientConfigService } from "./oauth-client-config-service.ts";
 
@@ -125,6 +126,52 @@ describe("OAuthAuthorizationService", () => {
     expect((body as URLSearchParams).get("code_verifier")).toBe(prepared.pending.pkceCodeVerifier);
   });
 
+  it("uses monday's install-first OAuth flow without explicit scope or response_type parameters", async () => {
+    const authorizations = await createAuthorizationService({}, mondayProvider);
+
+    const prepared = await authorizations.prepareAuthorization({ service: "monday" });
+    const url = new URL(prepared.authorizationUrl);
+
+    expect(url.origin + url.pathname).toBe("https://auth.monday.com/oauth2/authorize");
+    expect(url.searchParams.get("force_install_if_needed")).toBe("true");
+    expect(url.searchParams.has("scope")).toBe(false);
+    expect(url.searchParams.has("response_type")).toBe(false);
+    expect(url.searchParams.get("client_id")).toBe("client-id");
+    expect(url.searchParams.get("redirect_uri")).toBe("https://integrations.example.com/oauth/callback");
+    expect(url.searchParams.get("state")).toBe(prepared.pending.state);
+    expect(prepared.authorizationUrl).not.toContain("client-secret");
+  });
+
+  it("rejects stored scope overrides when the provider cannot send them during authorization", async () => {
+    const authorizations = await createAuthorizationService({ requestedScopes: ["me:read"] }, mondayProvider);
+
+    await expect(authorizations.prepareAuthorization({ service: "monday" })).rejects.toMatchObject({
+      code: "invalid_input",
+      message: expect.stringContaining("does not support requestedScopes overrides"),
+    });
+  });
+
+  it("rejects custom client scope overrides when the provider cannot send them during authorization", async () => {
+    const authorizations = await createAuthorizationService(
+      { isCustomClientConfigAllowed: (service) => service === "monday" },
+      mondayProvider,
+    );
+
+    await expect(
+      authorizations.prepareAuthorization({
+        service: "monday",
+        clientConfig: {
+          clientId: "custom-client-id",
+          clientSecret: "custom-client-secret",
+          requestedScopes: ["me:read"],
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "invalid_input",
+      message: expect.stringContaining("does not support requestedScopes overrides"),
+    });
+  });
+
   it("leaves custom OAuth client state encryption to an explicitly opted-in host", async () => {
     const authorizations = await createAuthorizationService({
       isCustomClientConfigAllowed: (service) => service === "hosted_oauth",
@@ -221,6 +268,7 @@ describe("OAuthAuthorizationService", () => {
 
 interface CreateAuthorizationServiceOptions {
   isCustomClientConfigAllowed?: (service: string) => boolean;
+  requestedScopes?: string[];
 }
 
 async function createAuthorizationService(
@@ -236,6 +284,7 @@ async function createAuthorizationService(
     service: provider.service,
     clientId: "client-id",
     clientSecret: "client-secret",
+    requestedScopes: options.requestedScopes,
   });
   return new OAuthAuthorizationService({
     clientConfigs,

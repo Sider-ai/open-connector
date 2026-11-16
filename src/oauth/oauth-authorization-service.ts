@@ -13,6 +13,7 @@ import {
   verifyShopifyOAuthCallback,
 } from "../providers/shopify_admin/oauth.ts";
 import { normalizeSlackAuthorizationCredential } from "../providers/slack/oauth.ts";
+import { OAuthClientConfigError } from "./oauth-client-config-service.ts";
 import { requestAuthorizationCodeToken } from "./oauth-token.ts";
 
 type OAuthCredential = Extract<ResolvedCredential, { authType: "oauth2" }>;
@@ -89,6 +90,12 @@ export class OAuthAuthorizationService {
       : await this.clientConfigs.getConfig(service);
     if (!config) {
       throw new OAuthFlowError("oauth_client_config_required", `Configure an OAuth client for ${service} first.`);
+    }
+    if (auth.authorizationRequestFields?.scope === false && config.requestedScopes !== undefined) {
+      throw new OAuthClientConfigError(
+        "invalid_input",
+        `${service} does not support requestedScopes overrides. Configure scopes in the provider app settings instead.`,
+      );
     }
 
     const state = randomUUID();

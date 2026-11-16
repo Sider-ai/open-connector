@@ -20,6 +20,11 @@ export const provider: ProviderDefinition = {
       authorizationParams: {
         force_install_if_needed: "true",
       },
+      // Automatic installation requires app-configured scopes and the default response type.
+      authorizationRequestFields: {
+        responseType: false,
+        scope: false,
+      },
     },
     {
       type: "api_key",
