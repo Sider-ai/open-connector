@@ -17,6 +17,9 @@ export const provider: ProviderDefinition = {
       tokenUrl: "https://auth.monday.com/oauth2/token",
       scopes: getMondayAuthorizationScopes(),
       tokenEndpointAuthMethod: "client_secret_post",
+      authorizationParams: {
+        force_install_if_needed: "true",
+      },
     },
     {
       type: "api_key",
