@@ -4,6 +4,7 @@ import type { IOAuthClientConfigStore, OAuthClientConfig } from "./oauth-client-
 import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCatalogStore } from "../catalog-store.ts";
+import { provider as calendlyProvider } from "../providers/calendly/definition.ts";
 import { provider as mondayProvider } from "../providers/monday/definition.ts";
 import { OAuthAuthorizationService } from "./oauth-authorization-service.ts";
 import { OAuthClientConfigService } from "./oauth-client-config-service.ts";
@@ -124,6 +125,33 @@ describe("OAuthAuthorizationService", () => {
     expect(body).toBeInstanceOf(URLSearchParams);
     expect((body as URLSearchParams).get("code")).toBe("authorization-code");
     expect((body as URLSearchParams).get("code_verifier")).toBe(prepared.pending.pkceCodeVerifier);
+  });
+
+  it("explicitly requests Calendly read scopes alongside write scopes", async () => {
+    const authorizations = await createAuthorizationService({}, calendlyProvider);
+
+    const prepared = await authorizations.prepareAuthorization({ service: "calendly" });
+    const url = new URL(prepared.authorizationUrl);
+    const scopes = url.searchParams.get("scope")?.split(" ");
+
+    for (const domain of ["availability", "scheduled_events", "organizations", "webhooks"]) {
+      expect(scopes).toContain(`${domain}:read`);
+      expect(scopes).toContain(`${domain}:write`);
+    }
+    expect(url.origin + url.pathname).toBe("https://auth.calendly.com/oauth/authorize");
+    expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(url.searchParams.get("state")).toBe(prepared.pending.state);
+  });
+
+  it("supports a Calendly client limited to reading scheduled events", async () => {
+    const authorizations = await createAuthorizationService(
+      { requestedScopes: ["users:read", "scheduled_events:read"] },
+      calendlyProvider,
+    );
+
+    const prepared = await authorizations.prepareAuthorization({ service: "calendly" });
+
+    expect(new URL(prepared.authorizationUrl).searchParams.get("scope")).toBe("users:read scheduled_events:read");
   });
 
   it("uses monday's install-first OAuth flow without explicit scope or response_type parameters", async () => {

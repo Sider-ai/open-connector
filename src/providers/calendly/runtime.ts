@@ -1,3 +1,4 @@
+import type { CredentialValidationResult } from "../../core/types.ts";
 import type { ProviderActionHandlers } from "../provider-runtime.ts";
 import type { BearerProviderContext } from "../provider-runtime.ts";
 
@@ -143,10 +144,7 @@ export async function validateCalendlyCredential(
   accessToken: string,
   fetcher: typeof fetch,
   signal?: AbortSignal,
-): Promise<{
-  profile: { accountId: string; displayName: string; grantedScopes: string[] };
-  metadata: Record<string, unknown>;
-}> {
+): Promise<CredentialValidationResult> {
   const payload = await requestCalendlyJson({
     path: calendlyValidationPath,
     accessToken: accessToken,
@@ -157,11 +155,11 @@ export async function validateCalendlyCredential(
   const user = readResourceObject(payload, "current user");
   const userUri = requireString(user.uri, "uri");
 
+  // Leave scopes unspecified so OAuth token metadata remains authoritative.
   return {
     profile: {
       accountId: extractCalendlyIdFromUri(userUri, "users"),
       displayName: optionalString(user.name) ?? optionalString(user.email) ?? "Calendly User",
-      grantedScopes: [],
     },
     metadata: compactObject({
       apiBaseUrl: calendlyApiOrigin,

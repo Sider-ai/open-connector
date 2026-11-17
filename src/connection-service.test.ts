@@ -8,6 +8,8 @@ import { createCatalogStore } from "./catalog-store.ts";
 import { ConnectionService } from "./connection-service.ts";
 import { OAuthClientConfigService } from "./oauth/oauth-client-config-service.ts";
 import { OAuthCredentialRefreshService } from "./oauth/oauth-credential-refresh-service.ts";
+import { provider as calendlyProvider } from "./providers/calendly/definition.ts";
+import { credentialValidators as calendlyCredentialValidators } from "./providers/calendly/executors.ts";
 import { ProviderRequestError } from "./providers/provider-runtime.ts";
 
 const hackernewsProvider: ProviderDefinition = {
@@ -464,6 +466,37 @@ describe("ConnectionService", () => {
       providerFailure: { providerHttpStatus: 400, providerErrorMessage: "invalid token" },
     });
     await expect(service.listConnections()).resolves.toEqual([]);
+  });
+
+  it("preserves Calendly OAuth scopes when the identity endpoint does not report permissions", async () => {
+    const fetcher = vi.fn(async () =>
+      Response.json({ resource: { uri: "https://api.calendly.com/users/user-1", name: "Calendly User" } }),
+    );
+    const service = createService([{ ...calendlyProvider, actions: [] }], {
+      providerLoader: new FakeProviderLoader({
+        async oauth2(input, options) {
+          return calendlyCredentialValidators.oauth2?.(input, { ...options, fetcher });
+        },
+      }),
+    });
+
+    const summary = await service.setOAuthCredential("calendly", {
+      authType: "oauth2",
+      accessToken: "calendly-access-token",
+      tokenType: "Bearer",
+      profile: testProfile,
+      metadata: { scope: "users:read scheduled_events:read" },
+    });
+
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(summary.profile).toMatchObject({
+      accountId: "user-1",
+      grantedScopes: ["users:read", "scheduled_events:read"],
+    });
+    await expect(service.getCredential("calendly")).resolves.toMatchObject({
+      profile: { grantedScopes: ["users:read", "scheduled_events:read"] },
+      metadata: { scope: "users:read scheduled_events:read" },
+    });
   });
 
   it("refreshes expired OAuth credentials before returning them", async () => {

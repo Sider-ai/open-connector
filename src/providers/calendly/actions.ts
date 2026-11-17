@@ -147,15 +147,19 @@ export type CalendlyActionName =
   | "list_user_busy_times";
 
 export const calendlyProviderScopes: string[] = [
+  "availability:read",
   "availability:write",
   "event_types:read",
   "locations:read",
   "routing_forms:read",
   "shares:write",
+  "scheduled_events:read",
   "scheduled_events:write",
   "scheduling_links:write",
+  "organizations:read",
   "organizations:write",
   "users:read",
+  "webhooks:read",
   "webhooks:write",
 ];
 
@@ -182,7 +186,7 @@ export const calendlyActions: ActionDefinition[] = [
     "Retrieve one Calendly organization by organization URI.",
     input({ organizationUri }, ["organizationUri"]),
     resourceOutput("organization", "A Calendly organization resource."),
-    ["organizations:write"],
+    ["organizations:read"],
   ),
   action(
     "list_organization_memberships",
@@ -195,14 +199,14 @@ export const calendlyActions: ActionDefinition[] = [
       pageToken,
     }),
     listOutput("organizationMemberships", "The organization memberships returned by Calendly."),
-    ["organizations:write"],
+    ["organizations:read"],
   ),
   action(
     "get_organization_membership",
     "Retrieve one Calendly organization membership by membership URI.",
     input({ organizationMembershipUri }, ["organizationMembershipUri"]),
     resourceOutput("organizationMembership", "A Calendly organization membership resource."),
-    ["organizations:write"],
+    ["organizations:read"],
   ),
   action(
     "delete_organization_membership",
@@ -228,7 +232,7 @@ export const calendlyActions: ActionDefinition[] = [
       ["organizationUri"],
     ),
     listOutput("organizationInvitations", "The organization invitations returned by Calendly."),
-    ["organizations:write"],
+    ["organizations:read"],
   ),
   action(
     "create_organization_invitation",
@@ -355,7 +359,7 @@ export const calendlyActions: ActionDefinition[] = [
       },
       "The response wrapper for event-type available times.",
     ),
-    ["availability:write"],
+    ["event_types:read"],
   ),
   action(
     "list_event_type_availability_schedules",
@@ -371,7 +375,7 @@ export const calendlyActions: ActionDefinition[] = [
       },
       "The official response wrapper for event type availability schedules.",
     ),
-    ["availability:write"],
+    ["availability:read"],
   ),
   action(
     "update_event_type_availability_schedule",
@@ -408,14 +412,14 @@ export const calendlyActions: ActionDefinition[] = [
       }),
     }),
     listOutput("scheduledEvents", "The scheduled events returned by Calendly."),
-    ["scheduled_events:write"],
+    ["scheduled_events:read"],
   ),
   action(
     "get_scheduled_event",
     "Retrieve one Calendly scheduled event by scheduled-event URI.",
     input({ scheduledEventUri }, ["scheduledEventUri"]),
     resourceOutput("scheduledEvent", "A Calendly scheduled event resource."),
-    ["scheduled_events:write"],
+    ["scheduled_events:read"],
   ),
   action(
     "cancel_scheduled_event",
@@ -449,14 +453,14 @@ export const calendlyActions: ActionDefinition[] = [
       ["scheduledEventUri"],
     ),
     listOutput("invitees", "The invitees returned by Calendly."),
-    ["scheduled_events:write"],
+    ["scheduled_events:read"],
   ),
   action(
     "get_event_invitee",
     "Retrieve one Calendly invitee by invitee URI.",
     input({ scheduledEventUri, inviteeUri }, ["scheduledEventUri", "inviteeUri"]),
     resourceOutput("invitee", "A Calendly invitee resource."),
-    ["scheduled_events:write"],
+    ["scheduled_events:read"],
   ),
   action(
     "create_invitee_no_show",
@@ -470,7 +474,7 @@ export const calendlyActions: ActionDefinition[] = [
     "Retrieve one Calendly invitee no-show by no-show URI.",
     input({ inviteeNoShowUri }, ["inviteeNoShowUri"]),
     resourceOutput("inviteeNoShow", "A Calendly invitee no-show resource."),
-    ["scheduled_events:write"],
+    ["scheduled_events:read"],
   ),
   action(
     "delete_invitee_no_show",
@@ -578,14 +582,14 @@ export const calendlyActions: ActionDefinition[] = [
       ["scope", "organizationUri"],
     ),
     listOutput("webhookSubscriptions", "The webhook subscriptions returned by Calendly."),
-    ["webhooks:write"],
+    ["webhooks:read"],
   ),
   action(
     "get_webhook_subscription",
     "Retrieve one Calendly webhook subscription by URI.",
     input({ webhookSubscriptionUri }, ["webhookSubscriptionUri"]),
     resourceOutput("webhookSubscription", "One Calendly webhook subscription returned by the API."),
-    ["webhooks:write"],
+    ["webhooks:read"],
   ),
   action(
     "delete_webhook_subscription",
@@ -599,14 +603,14 @@ export const calendlyActions: ActionDefinition[] = [
     "List user availability schedules for one Calendly user.",
     input({ userUri }, ["userUri"]),
     listOutput("availabilitySchedules", "The availability schedules returned by Calendly."),
-    ["availability:write"],
+    ["availability:read"],
   ),
   action(
     "get_user_availability_schedule",
     "Retrieve one Calendly user availability schedule by schedule URI.",
     input({ availabilityScheduleUri }, ["availabilityScheduleUri"]),
     resourceOutput("availabilitySchedule", "A Calendly user availability schedule resource."),
-    ["availability:write"],
+    ["availability:read"],
   ),
   action(
     "list_user_busy_times",
@@ -626,7 +630,7 @@ export const calendlyActions: ActionDefinition[] = [
       },
       "The response wrapper for Calendly busy-time results.",
     ),
-    ["availability:write"],
+    ["availability:read"],
   ),
 ];
 
