@@ -18,6 +18,7 @@ import {
   listHuggingfaceDatasets,
 } from "./runtime.datasets.ts";
 import { getHuggingfaceTrending, listHuggingfaceEndpoints } from "./runtime.discovery.ts";
+import { createPersonalRepo, uploadPersonalRepoFile } from "./runtime.repo-writes.ts";
 import {
   generateHuggingfaceChatCompletion,
   generateHuggingfaceEmbeddings,
@@ -62,6 +63,8 @@ export const huggingfaceActionHandlers: ProviderActionHandlers<"huggingface", Hu
   list_repo_files(input, context) {
     return listHuggingfaceRepoFiles(input, context);
   },
+  create_repo: createPersonalRepo,
+  upload_file: uploadPersonalRepoFile,
   get_trending(input, context) {
     return getHuggingfaceTrending(input, context);
   },

@@ -3,13 +3,19 @@ import type { ActionDefinition } from "../../core/types.ts";
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
 import {
+  huggingfaceContributeReposScope,
   huggingfaceInferenceScope,
   huggingfaceOpenIdScope,
   huggingfaceProfileScope,
   huggingfaceReadReposScope,
+  huggingfaceWriteReposScope,
 } from "./scopes.ts";
 
 const service = "huggingface";
+const writableRepoType = s.stringEnum("Hub repository type.", ["model", "dataset", "space"]);
+const personalRepoId = s.nonWhitespaceString(
+  "Personal repository ID in username/repo-name form. Organization repositories are not supported.",
+);
 
 const jsonObjectSchema = s.record(s.unknown("Any JSON value."), {
   description: "A JSON-like object with arbitrary string keys.",
@@ -432,6 +438,54 @@ export const huggingfaceActions: ActionDefinition[] = [
       { optional: ["revision"] },
     ),
     outputSchema: spaceSummarySchema,
+  }),
+  defineProviderAction(service, {
+    name: "create_repo",
+    description:
+      "Create a model, dataset, or Space repository in the connected user's personal namespace. Defaults to private; use public only when explicitly requested.",
+    requiredScopes: [huggingfaceContributeReposScope],
+    inputSchema: s.requiredObject("New personal repository.", {
+      repoId: personalRepoId,
+      repoType: writableRepoType,
+      visibility: s.optional(
+        s.stringEnum(["private", "public"], { description: "Visibility of the new repository.", default: "private" }),
+      ),
+      spaceSdk: s.optional(s.stringEnum("Spaces only. Defaults to static.", ["static", "gradio", "docker"])),
+    }),
+    outputSchema: s.requiredObject("New repository.", {
+      repoId: personalRepoId,
+      repoUrl: s.url("URL of the created repository."),
+    }),
+  }),
+  defineProviderAction(service, {
+    name: "upload_file",
+    description:
+      "Commit one new or updated file to an existing personal Hub repository. Replaces the entire file at path; use parentCommit for conflict detection. Accepts UTF-8 text or a downloadable file URL, up to 32 MiB.",
+    requiredScopes: [huggingfaceWriteReposScope],
+    inputSchema: {
+      ...s.requiredObject("Repository, destination and exactly one file source.", {
+        repoId: personalRepoId,
+        repoType: writableRepoType,
+        path: s.nonWhitespaceString("Destination path relative to the repository root, e.g. docs/notes.md."),
+        content: s.optional(s.string("Exact UTF-8 text to write; an empty string creates an empty file.")),
+        fileUrl: s.optional(s.url("Public HTTP(S) download URL of the file; no HF credential is sent to this URL.")),
+        branch: s.optional(s.nonWhitespaceString("Existing branch to commit to; defaults to main.")),
+        commitMessage: s.optional(s.nonWhitespaceString("Commit summary.")),
+        parentCommit: s.optional(
+          s.string({
+            pattern: "^[0-9a-fA-F]{40}$",
+            description: "Expected branch HEAD SHA; the write fails if the branch has changed.",
+          }),
+        ),
+      }),
+      oneOf: [{ required: ["content"] }, { required: ["fileUrl"] }],
+    },
+    outputSchema: s.requiredObject("Resulting file commit.", {
+      repoId: personalRepoId,
+      path: s.string("Path committed."),
+      commitOid: s.nonEmptyString("Commit SHA."),
+      commitUrl: s.url("URL of the resulting commit."),
+    }),
   }),
   defineProviderAction(service, {
     name: "list_repo_files",

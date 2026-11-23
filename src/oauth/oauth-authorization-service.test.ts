@@ -5,6 +5,7 @@ import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCatalogStore } from "../catalog-store.ts";
 import { provider as calendlyProvider } from "../providers/calendly/definition.ts";
+import { provider as huggingfaceProvider } from "../providers/huggingface/definition.ts";
 import { provider as mondayProvider } from "../providers/monday/definition.ts";
 import { OAuthAuthorizationService } from "./oauth-authorization-service.ts";
 import { OAuthClientConfigService } from "./oauth-client-config-service.ts";
@@ -125,6 +126,20 @@ describe("OAuthAuthorizationService", () => {
     expect(body).toBeInstanceOf(URLSearchParams);
     expect((body as URLSearchParams).get("code")).toBe("authorization-code");
     expect((body as URLSearchParams).get("code_verifier")).toBe(prepared.pending.pkceCodeVerifier);
+  });
+
+  it("requests Hugging Face personal repository creation and file writes without repository management", async () => {
+    const service = await createAuthorizationService({}, huggingfaceProvider);
+    const { authorizationUrl } = await service.prepareAuthorization({ service: "huggingface" });
+    const scopes = new URL(authorizationUrl).searchParams.get("scope")?.split(" ");
+    expect(scopes?.sort()).toEqual([
+      "contribute-repos",
+      "inference-api",
+      "openid",
+      "profile",
+      "read-repos",
+      "write-repos",
+    ]);
   });
 
   it("explicitly requests Calendly read scopes alongside write scopes", async () => {

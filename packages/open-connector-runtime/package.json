@@ -1,6 +1,6 @@
 {
   "name": "@liushuangls/open-connector-runtime",
-  "version": "1.4.0-sider.21",
+  "version": "1.4.0-sider.22",
   "description": "OpenConnector providers, actions, OAuth primitives, and execution runtime for Node.js",
   "license": "Apache-2.0",
   "repository": {
@@ -126,6 +126,7 @@
     "@aws-sdk/client-s3": "^3.1111.0",
     "@cfworker/json-schema": "^4.1.1",
     "@hono/node-server": "^2.0.10",
+    "@huggingface/hub": "2.17.11",
     "@modelcontextprotocol/client": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "@scalar/hono-api-reference": "^0.11.7",
