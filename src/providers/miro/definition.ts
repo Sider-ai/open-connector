@@ -11,7 +11,7 @@ const service = "miro";
 export const provider: ProviderDefinition = {
   service,
   displayName: "Miro",
-  description: "Read Miro boards and create lightweight board content.",
+  description: "Read and copy Miro boards, organize items in frames, and draw connected diagrams.",
   categories: ["Design", "Productivity"],
   authTypes: ["oauth2"],
   auth: [

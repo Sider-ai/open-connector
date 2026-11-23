@@ -43,9 +43,9 @@ interface MiroRequestOptions {
   path: string;
   phase: MiroRequestPhase;
   signal?: AbortSignal;
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "PUT" | "PATCH";
   query?: Record<string, string>;
-  body?: Record<string, unknown>;
+  body?: Record<string, unknown> | Record<string, unknown>[];
 }
 
 export const miroActionHandlers: ProviderActionHandlers<"miro", MiroActionHandler> = {
@@ -113,6 +113,57 @@ export const miroActionHandlers: ProviderActionHandlers<"miro", MiroActionHandle
       ),
     };
   },
+  async copy_board({ boardId, name, description, teamId, policy }, context): Promise<unknown> {
+    const board = await requestMiroJson({
+      ...context,
+      method: "PUT",
+      path: "/v2/boards",
+      phase: "execute",
+      query: { copy_from: requireInputString(boardId, "boardId") },
+      body: { name, description, teamId, policy },
+    });
+    return { board: requireMiroObject(board, "copy board response") };
+  },
+  async create_frame({ boardId, data, style, position, geometry }, context): Promise<unknown> {
+    return { item: await postBoardResource(boardId, "frames", { data, style, position, geometry }, context) };
+  },
+  async move_item({ boardId, itemId, parent, position }, context): Promise<unknown> {
+    const item = await requestMiroJson({
+      ...context,
+      method: "PATCH",
+      phase: "execute",
+      path: `/v2/boards/${encodeURIComponent(requireInputString(boardId, "boardId"))}/items/${encodeURIComponent(requireInputString(itemId, "itemId"))}`,
+      body: { parent, position },
+    });
+    return { item: requireMiroObject(item, "move item response") };
+  },
+  async create_items_bulk({ boardId, items }, context): Promise<unknown> {
+    const payload = await postBoardResource(
+      boardId,
+      "items/bulk",
+      objectArray(items, "items", providerInputError),
+      context,
+    );
+    return { items: objectArray(payload.data, "Miro bulk item", providerResponseError) };
+  },
+  async create_shape({ boardId, data, style, position, geometry, parent }, context): Promise<unknown> {
+    return { item: await postBoardResource(boardId, "shapes", { data, style, position, geometry, parent }, context) };
+  },
+  async create_connector({ boardId, startItem, endItem, shape, style, captions }, context): Promise<unknown> {
+    const start = requiredRecord(startItem, "startItem", providerInputError);
+    const end = requiredRecord(endItem, "endItem", providerInputError);
+    if (requireInputString(start.id, "startItem.id") === requireInputString(end.id, "endItem.id")) {
+      throw providerInputError("startItem.id and endItem.id must refer to different items");
+    }
+    return {
+      connector: await postBoardResource(
+        boardId,
+        "connectors",
+        { startItem, endItem, shape, style, captions },
+        context,
+      ),
+    };
+  },
   async list_items(input, context): Promise<unknown> {
     const boardId = requireInputString(input.boardId, "boardId");
     const payload = requireMiroObject(
@@ -150,10 +201,10 @@ export const miroActionHandlers: ProviderActionHandlers<"miro", MiroActionHandle
     };
   },
   async create_sticky_note(input, context): Promise<unknown> {
-    return createBoardItem(input, context, "sticky_notes", "sticky note");
+    return createBoardItem(input, context, "sticky_notes");
   },
   async create_text(input, context): Promise<unknown> {
-    return createBoardItem(input, context, "texts", "text item");
+    return createBoardItem(input, context, "texts");
   },
 };
 
@@ -189,9 +240,7 @@ async function createBoardItem(
   input: Record<string, unknown>,
   context: OAuthProviderContext,
   endpoint: "sticky_notes" | "texts",
-  resourceName: string,
 ): Promise<{ item: Record<string, unknown> }> {
-  const boardId = requireInputString(input.boardId, "boardId");
   const data = requiredRecord(input.data, "data", providerInputError);
   requiredString(data.content, "data.content", providerInputError);
   const geometry = optionalRecord(input.geometry);
@@ -202,23 +251,37 @@ async function createBoardItem(
     throw new ProviderRequestError(400, "geometry.height is not supported for text items");
   }
 
-  const item = requireMiroObject(
+  const item = await postBoardResource(
+    input.boardId,
+    endpoint,
+    {
+      data,
+      style: optionalRecord(input.style),
+      position: optionalRecord(input.position),
+      geometry,
+      parent: optionalRecord(input.parent),
+    },
+    context,
+  );
+  return { item };
+}
+
+async function postBoardResource(
+  boardId: unknown,
+  resource: "frames" | "shapes" | "items/bulk" | "connectors" | "sticky_notes" | "texts",
+  body: NonNullable<MiroRequestOptions["body"]>,
+  context: OAuthProviderContext,
+): Promise<Record<string, unknown>> {
+  return requireMiroObject(
     await requestMiroJson({
       ...context,
       method: "POST",
-      path: `/v2/boards/${encodeURIComponent(boardId)}/${endpoint}`,
       phase: "execute",
-      body: compactObject({
-        data,
-        style: optionalRecord(input.style),
-        position: optionalRecord(input.position),
-        geometry,
-        parent: optionalRecord(input.parent),
-      }),
+      path: `/v2/boards/${encodeURIComponent(requireInputString(boardId, "boardId"))}/${resource}`,
+      body,
     }),
-    `create ${resourceName} response`,
+    `create ${resource} response`,
   );
-  return { item };
 }
 
 async function requestMiroJson(input: MiroRequestOptions): Promise<unknown> {

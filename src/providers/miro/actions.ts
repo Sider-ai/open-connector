@@ -120,6 +120,71 @@ const itemParentSchema = s.looseObject("Optional parent frame for the item.", {
   id: s.nonEmptyString("Identifier of the parent frame."),
 });
 
+const parentFrame = s.requiredObject("Attach to a frame by ID, or set id to null for the board canvas.", {
+  id: s.nullable(s.nonEmptyString("Parent frame ID.")),
+});
+const coordinates = s.requireAnyProperty(
+  s.object({
+    x: s.number("Horizontal coordinate in board units."),
+    y: s.number("Vertical coordinate in board units."),
+  }),
+  ["x", "y"],
+);
+const itemSize = {
+  width: s.number("Width in board units.", { exclusiveMinimum: 0 }),
+  height: s.number("Height in board units.", { exclusiveMinimum: 0 }),
+};
+const geometry = s.object({ ...itemSize, rotation: s.number("Clockwise rotation in degrees.") });
+const shapeData = s.object({
+  content: s.string("Text displayed inside the shape."),
+  shape: s.stringEnum("Shape (default: rectangle).", [
+    "rectangle",
+    "round_rectangle",
+    "circle",
+    "triangle",
+    "rhombus",
+    "parallelogram",
+    "trapezoid",
+    "pentagon",
+    "hexagon",
+    "octagon",
+    "wedge_round_rectangle_callout",
+    "star",
+    "flow_chart_predefined_process",
+    "cloud",
+    "cross",
+    "can",
+    "right_arrow",
+    "left_arrow",
+    "left_right_arrow",
+    "left_brace",
+    "right_brace",
+  ]),
+});
+const connectorEnd = s.requiredObject("Item attachment. Frames cannot be connected.", {
+  id: itemIdSchema,
+  snapTo: s.optional(s.stringEnum("Side to attach to (default: auto).", ["auto", "top", "right", "bottom", "left"])),
+});
+const bulkItem = s.requiredObject("One item in the batch; data and style depend on its type.", {
+  type: s.stringEnum("Type to create.", [
+    "app_card",
+    "text",
+    "shape",
+    "sticky_note",
+    "image",
+    "document",
+    "card",
+    "frame",
+    "embed",
+  ]),
+  data: s.optional(s.unknownObject("Type-specific Miro data, e.g. {content: 'Review'} for a sticky note.")),
+  style: s.optional(s.unknownObject("Type-specific Miro style.")),
+  position: s.optional(coordinates),
+  geometry: s.optional(geometry),
+  parent: s.optional(parentFrame),
+});
+const writtenItem = s.requiredObject("The resulting item; use item.id for subsequent actions.", { item: itemSchema });
+
 export const miroActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "list_boards",
@@ -172,6 +237,98 @@ export const miroActions: ActionDefinition[] = [
       { optional: ["description", "teamId", "projectId", "policy"] },
     ),
     outputSchema: s.object("The created Miro board.", { board: boardSchema }),
+  }),
+  defineProviderAction(service, {
+    name: "copy_board",
+    description: "Copy an existing Miro board as a new board. Use the returned board.id to edit the copy.",
+    requiredScopes: [miroBoardsWriteScope],
+    inputSchema: s.requiredObject("Source board and optional overrides for the copy.", {
+      boardId: boardIdSchema,
+      name: s.optional(s.nonWhitespaceString("New board name.", { maxLength: 60 })),
+      description: s.optional(s.string("New board description.", { maxLength: 300 })),
+      teamId: s.optional(s.nonEmptyString("Destination team ID.")),
+      policy: s.optional(s.unknownObject("Sharing and permissions policy for the new board.")),
+    }),
+    outputSchema: s.requiredObject("The copied board.", { board: boardSchema }),
+  }),
+  defineProviderAction(service, {
+    name: "create_frame",
+    description: "Create a frame to organize board items. Use the returned item.id as their parent frame ID.",
+    requiredScopes: [miroBoardsWriteScope],
+    inputSchema: s.requiredObject("Board and frame properties.", {
+      boardId: boardIdSchema,
+      data: s.object({ title: s.string("Title displayed above the frame.") }),
+      style: s.optional(s.object({ fillColor: s.string("Frame background color, e.g. #ffffff.") })),
+      position: s.optional(coordinates),
+      geometry: s.optional(s.object(itemSize)),
+    }),
+    outputSchema: writtenItem,
+  }),
+  defineProviderAction(service, {
+    name: "move_item",
+    description:
+      "Reposition an existing board item or move it into a frame without recreating it. Use parent.id = null to detach it.",
+    requiredScopes: [miroBoardsWriteScope],
+    inputSchema: s.requireAnyProperty(
+      s.requiredObject("Item to move and its new position or parent.", {
+        boardId: boardIdSchema,
+        itemId: itemIdSchema,
+        parent: s.optional(parentFrame),
+        position: s.optional(coordinates),
+      }),
+      ["parent", "position"],
+    ),
+    outputSchema: writtenItem,
+  }),
+  defineProviderAction(service, {
+    name: "create_items_bulk",
+    description: "Create 1–20 Miro board items in one atomic request. If any item fails, none of the batch is created.",
+    requiredScopes: [miroBoardsWriteScope],
+    inputSchema: s.requiredObject("Board and items to create together.", {
+      boardId: boardIdSchema,
+      items: s.array(bulkItem, { minItems: 1, maxItems: 20 }),
+    }),
+    outputSchema: s.requiredObject("Items created by the batch.", { items: s.array(itemSchema) }),
+  }),
+  defineProviderAction(service, {
+    name: "create_shape",
+    description:
+      "Add a shape such as a rectangle or decision diamond to a board. Use its item.id to connect it to another shape.",
+    requiredScopes: [miroBoardsWriteScope],
+    inputSchema: s.requiredObject("Board and optional shape properties.", {
+      boardId: boardIdSchema,
+      data: s.optional(shapeData),
+      style: s.optional(s.unknownObject("Miro shape style, e.g. fillColor, borderColor, or fontSize.")),
+      position: s.optional(coordinates),
+      geometry: s.optional(geometry),
+      parent: s.optional(parentFrame),
+    }),
+    outputSchema: writtenItem,
+  }),
+  defineProviderAction(service, {
+    name: "create_connector",
+    description:
+      "Connect two different existing items on the same board by ID. Create the shapes first when drawing a new diagram.",
+    requiredScopes: [miroBoardsWriteScope],
+    inputSchema: s.requiredObject("Start and end items, with optional connector appearance.", {
+      boardId: boardIdSchema,
+      startItem: connectorEnd,
+      endItem: connectorEnd,
+      shape: s.optional(s.stringEnum("Connector routing.", ["straight", "elbowed", "curved"])),
+      style: s.optional(s.unknownObject("Miro connector style, e.g. endStrokeCap: 'arrow'.")),
+      captions: s.optional(
+        s.array(
+          s.requiredObject("Connector label.", {
+            content: s.nonEmptyString("Caption text."),
+            position: s.optional(s.string("Position along the connector as a percentage, e.g. 50%.")),
+            textAlignVertical: s.optional(s.stringEnum("Vertical alignment.", ["top", "middle", "bottom"])),
+          }),
+        ),
+      ),
+    }),
+    outputSchema: s.requiredObject("The created connector.", {
+      connector: s.looseRequiredObject("Miro connector.", { id: itemIdSchema }),
+    }),
   }),
   defineProviderAction(service, {
     name: "list_items",
