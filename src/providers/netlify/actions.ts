@@ -10,6 +10,7 @@ export type NetlifyActionName =
   | "list_accounts"
   | "get_account"
   | "list_sites"
+  | "create_site"
   | "get_site"
   | "list_site_deploys"
   | "get_deploy"
@@ -55,6 +56,22 @@ const listSitesInputSchema = s.object(
   },
   { description: "Input parameters for listing Netlify sites." },
 );
+
+const createSiteInputSchema = s.object({
+  name: s.nonWhitespaceString("Optional site name for the netlify.app subdomain. Omit to let Netlify generate a name."),
+  accountSlug: s.string({
+    pattern: "^[a-zA-Z0-9_-]+$",
+    description: "Target team slug from list_accounts. Omit to create the site in the user's default personal team.",
+  }),
+});
+
+const createdSiteOutputSchema = s.requiredObject("The newly created site, without a deploy.", {
+  site: s.requiredObject("Use this site's id as siteId in subsequent deploy actions.", {
+    id: s.nonEmptyString("The new Netlify site ID."),
+    name: s.optional(s.string("The name assigned to the new site.")),
+    ssl_url: s.optional(s.string("The site's HTTPS URL, if assigned.")),
+  }),
+});
 
 const siteInputSchema = s.object(
   {
@@ -435,6 +452,14 @@ const actionSources: readonly NetlifyActionSource[] = [
     requiredScopes: [],
     inputSchema: listSitesInputSchema,
     outputSchema: sitesOutputSchema,
+  },
+  {
+    name: "create_site",
+    description:
+      "Create a new empty Netlify site. To publish files, pass the returned site.id as siteId to create_site_deploy_from_zip_url.",
+    requiredScopes: [],
+    inputSchema: createSiteInputSchema,
+    outputSchema: createdSiteOutputSchema,
   },
   {
     name: "get_site",

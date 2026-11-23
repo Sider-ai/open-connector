@@ -76,6 +76,26 @@ export const netlifyActionHandlers: ProviderActionHandlers<"netlify", NetlifyAct
     return { sites, count: sites.length };
   },
 
+  async create_site(input: Record<string, unknown>, context: NetlifyActionContext): Promise<unknown> {
+    const accountSlug =
+      input.accountSlug === undefined ? undefined : readRequiredString(input.accountSlug, "accountSlug");
+    const name = input.name === undefined ? undefined : readRequiredString(input.name, "name");
+    const site = objectPayload(
+      await netlifyRequestJson({
+        accessToken: context.accessToken,
+        method: "POST",
+        path: accountSlug ? `/${encodeURIComponent(accountSlug)}/sites` : "/sites",
+        body: JSON.stringify({ name }),
+        contentType: "application/json",
+        fetcher: context.fetcher,
+        phase: "execute",
+      }),
+    );
+    const id = optionalString(site.id);
+    if (!id) throw new ProviderRequestError(502, "netlify create site response did not contain a site ID");
+    return { site: compactObject({ id, name: optionalString(site.name), ssl_url: optionalString(site.ssl_url) }) };
+  },
+
   async get_site(input: Record<string, unknown>, context: NetlifyActionContext): Promise<unknown> {
     return {
       site: objectPayload(
