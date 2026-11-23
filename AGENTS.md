@@ -69,5 +69,7 @@
 
 ## Runtime Releases
 
+- By default, finish a change to the published Runtime package (including provider actions, scopes, catalog, or dependencies) by releasing a new prerelease and upgrading Integrations. Documentation-only, test-only, and tooling-only changes that do not affect the shipped package do not require a release.
+- After the release, pin the exact published version of `@liushuangls/open-connector-runtime` in Integrations' `package.json` and `package-lock.json` on `main`, verify the consumer and commit the dependency update. Do not push Integrations' `main` or trigger its production build unless explicitly requested.
 - Publish Runtime prereleases with npm web authentication. Bump the package version, build and verify the Runtime package, create the tarball, then publish that tarball with `--tag next --access public --auth-type=web`. Press Enter when the CLI presents its authentication URL and complete the confirmation in the already signed-in browser; do not fall back to asking for an OTP in chat.
 - After publishing, verify the exact registry version and both `next` and `latest` dist-tags. Keep `latest` unchanged unless the release request explicitly includes promoting it.
