@@ -1,14 +1,11 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
-  ProviderRequestError,
-  providerUserAgent,
-} from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerInputError, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "anthropic_admin";
 const anthropicAdminApiBaseUrl = "https://api.anthropic.com";
@@ -79,7 +76,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: organizationId ?? "anthropic_admin_api_key",
         displayName: organizationName ?? "Anthropic Admin",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: anthropicAdminApiBaseUrl,
         organizationId: organizationId ?? null,
@@ -175,8 +171,4 @@ async function readAnthropicAdminError(response: Response) {
       message: raw || `anthropic_admin request failed with ${response.status}`,
     };
   }
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

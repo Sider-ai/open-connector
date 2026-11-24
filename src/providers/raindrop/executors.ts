@@ -1,12 +1,12 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
   isAbortSignalError,
   providerUserAgent,
   ProviderRequestError,
@@ -15,7 +15,6 @@ import {
 
 const service = "raindrop";
 const raindropApiBaseUrl = "https://api.raindrop.io/rest/v1";
-const requestTimeoutMs = 30_000;
 
 type RequestPhase = "validate" | "execute";
 
@@ -139,7 +138,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: accountId ?? displayName,
         displayName,
       },
-      grantedScopes: [],
       metadata: { apiBaseUrl: raindropApiBaseUrl, validationEndpoint: "/user" },
     };
   },
@@ -150,17 +148,7 @@ export const proxy: ProviderProxyExecutor = defineProviderProxy({
   baseUrl: raindropApiBaseUrl,
   auth: { type: "api_key_authorization", prefix: "Bearer " },
   skipDnsValidation: true,
-  customizeRequest({ headers }) {
-    if (!headers.has("accept")) {
-      headers.set("accept", "application/json");
-    }
-    if (!headers.has("content-type")) {
-      headers.set("content-type", "application/json");
-    }
-    if (!headers.has("user-agent")) {
-      headers.set("user-agent", providerUserAgent);
-    }
-  },
+  defaultHeaders: { "accept": "application/json", "content-type": "application/json", "user-agent": providerUserAgent },
 });
 
 function collectionBody(input: Record<string, unknown>): Record<string, unknown> {
@@ -195,7 +183,7 @@ async function requestJson(
   context: RequestContext,
   phase: RequestPhase,
 ): Promise<unknown> {
-  const timeout = createProviderTimeout(context.signal, requestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   const url = new URL(`${raindropApiBaseUrl}${path}`);
   for (const [name, value] of Object.entries(init.query ?? {})) {
     if (value !== undefined) {
@@ -207,8 +195,8 @@ async function requestJson(
     const response = await context.fetcher(url, {
       method: init.method,
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${context.apiKey}`,
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },

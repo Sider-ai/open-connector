@@ -1,5 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { optionalRecord, optionalString } from "../../core/cast.ts";
 import {
@@ -7,6 +7,7 @@ import {
   providerUserAgent,
   ProviderRequestError,
   readProviderTextBody,
+  providerResponseError,
 } from "../provider-runtime.ts";
 
 export const npmRegistryBaseUrl = "https://registry.npmjs.org";
@@ -37,7 +38,6 @@ interface DownloadPoint {
 
 const downloadPeriodPresets = new Set(["last-day", "last-week", "last-month", "last-year"]);
 const npmMaxResponseBytes = 10 * 1024 * 1024;
-const npmRequestTimeoutMs = 30_000;
 
 export const npmActionHandlers: ProviderActionHandlers<"npm", NpmActionHandler> = {
   async get_current_user(_input, context) {
@@ -257,7 +257,6 @@ export async function validateNpmCredential(
       accountId: `npm:${user.username}`,
       displayName: user.username,
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: npmRegistryBaseUrl,
       validationEndpoint: npmValidationPath,
@@ -278,7 +277,7 @@ async function requestNpmJson(input: {
   signal?: AbortSignal;
 }) {
   const headers = new Headers({
-    accept: input.accept ?? "application/json",
+    "accept": input.accept ?? "application/json",
     "user-agent": providerUserAgent,
   });
   if (input.apiKey) {
@@ -288,7 +287,7 @@ async function requestNpmJson(input: {
     headers.set("content-type", "application/json");
   }
 
-  const timeout = createProviderTimeout(input.signal, npmRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   try {
     const response = await input.fetcher(new URL(input.path, input.baseUrl ?? npmRegistryBaseUrl), {
       method: input.method ?? "GET",
@@ -347,7 +346,7 @@ function createNpmError(response: Response, payload: unknown, phase: NpmRequestP
   if (response.status === 429) {
     return new ProviderRequestError(429, message);
   }
-  return new ProviderRequestError(502, message);
+  return providerResponseError(message);
 }
 
 function extractNpmErrorMessage(payload: unknown) {
@@ -563,14 +562,14 @@ async function mapWithConcurrency<T, R>(items: T[], concurrency: number, worker:
 function requireObject(value: unknown, message: string): Record<string, unknown> {
   const object = optionalRecord(value);
   if (!object) {
-    throw new ProviderRequestError(502, message);
+    throw providerResponseError(message);
   }
   return object;
 }
 
 function requireArray(value: unknown, message: string): unknown[] {
   if (!Array.isArray(value)) {
-    throw new ProviderRequestError(502, message);
+    throw providerResponseError(message);
   }
   return value;
 }

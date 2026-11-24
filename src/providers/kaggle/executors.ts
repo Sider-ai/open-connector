@@ -4,29 +4,19 @@ import type {
   ExecutionContext,
   ProviderExecutors,
   ProviderProxyExecutor,
-  ProxyExecutionResult,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
 import { optionalBoolean, optionalInteger, optionalRecord, optionalString, requiredRecord } from "../../core/cast.ts";
-import {
-  createProviderFetch,
-  createProviderProxyUrl,
-  defineProviderExecutors,
-  normalizeProviderProxyHeaders,
-  ProviderRequestError,
-  providerUserAgent,
-  readProviderProxyErrorMessage,
-  readProviderProxyResponse,
-  requireApiKeyCredential,
-  toProviderProxyError,
-} from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "kaggle";
 const kaggleApiBaseUrl = "https://www.kaggle.com/api/v1";
 const kaggleValidationPath = "/competitions/list";
-const kaggleFetch = createProviderFetch({ skipDnsValidation: true });
 
 type KaggleRequestPhase = "validate" | "execute";
 type QueryValue = string | number | boolean | undefined;
@@ -84,35 +74,23 @@ export const executors: ProviderExecutors = defineProviderExecutors<KaggleContex
   },
 });
 
-export const proxy: ProviderProxyExecutor = async (input, context): Promise<ProxyExecutionResult> => {
-  try {
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  async baseUrl(context) {
+    // Reject an unusable credential before header normalization, keeping the 401/400 precedence.
+    const credential = await requireApiKeyCredential(context, service);
+    normalizeKaggleUsername(credential.values.username ?? credential.metadata.username);
+    return kaggleApiBaseUrl;
+  },
+  auth: { type: "none" },
+  async customizeRequest({ context, headers }) {
     const credential = await requireApiKeyCredential(context, service);
     const username = normalizeKaggleUsername(credential.values.username ?? credential.metadata.username);
-    const url = createProviderProxyUrl(kaggleApiBaseUrl, input.endpoint, input.query);
-    const headers = normalizeProviderProxyHeaders(input.headers);
     headers.set("accept", "application/json");
     headers.set("authorization", buildBasicAuthHeader(username, credential.apiKey));
-    headers.set("user-agent", providerUserAgent);
-    if (input.body !== undefined && !headers.has("content-type") && typeof input.body !== "string") {
-      headers.set("content-type", "application/json");
-    }
-
-    const response = await kaggleFetch(url, {
-      method: input.method,
-      headers,
-      body:
-        input.body === undefined ? undefined : typeof input.body === "string" ? input.body : JSON.stringify(input.body),
-      signal: context.signal,
-    });
-    if (!response.ok) {
-      const text = await readProviderProxyErrorMessage(response, "");
-      throw new ProviderRequestError(response.status, text || `provider request failed with HTTP ${response.status}`);
-    }
-    return { ok: true, response: await readProviderProxyResponse(response) };
-  } catch (error) {
-    return toProviderProxyError(error, "provider request failed");
-  }
-};
+  },
+  skipDnsValidation: true,
+});
 
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }): Promise<CredentialValidationResult> {
@@ -139,7 +117,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: `kaggle:${username}`,
         displayName: `Kaggle (${username})`,
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: kaggleApiBaseUrl,
         username,
@@ -262,8 +239,8 @@ async function kaggleRequestJson(input: KaggleRequestInput, context: KaggleConte
     response = await context.fetcher(buildKaggleUrl(input), {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: buildBasicAuthHeader(context.username, context.apiKey),
+        "accept": "application/json",
+        "authorization": buildBasicAuthHeader(context.username, context.apiKey),
         "user-agent": providerUserAgent,
       },
       signal: context.signal,

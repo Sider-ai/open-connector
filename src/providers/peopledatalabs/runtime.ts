@@ -1,11 +1,12 @@
 import type { CredentialValidationResult, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { ProviderRequestError, providerUserAgent, requiredResponseRecord } from "../provider-runtime.ts";
 
-const peopledatalabsApiBaseUrl = "https://api.peopledatalabs.com";
+export const peopledatalabsApiBaseUrl = "https://api.peopledatalabs.com";
 const validationSearchPath = "/v5/person/search";
 const validationSql = "SELECT * FROM person WHERE job_company_name='__oomol_connector_validation__'";
 
@@ -50,7 +51,7 @@ export async function validatePeopledatalabsCredential(
   input: Record<string, string>,
   fetcher: typeof fetch,
 ): Promise<CredentialValidationResult> {
-  const payload = requirePdlObject(
+  const payload = requiredResponseRecord(
     await requestPdl({
       path: validationSearchPath,
       method: "POST",
@@ -69,7 +70,6 @@ export async function validatePeopledatalabsCredential(
     profile: {
       accountId: "peopledatalabs-api-key",
       displayName: "People Data Labs API Key",
-      grantedScopes: [],
     },
     metadata: compactObject({
       apiBaseUrl: peopledatalabsApiBaseUrl,
@@ -86,7 +86,7 @@ async function enrichPdlRecord(
   input: Record<string, unknown>,
   context: ApiKeyProviderContext,
 ): Promise<unknown> {
-  const payload = requirePdlObject(
+  const payload = requiredResponseRecord(
     await requestPdl({
       path,
       method: "GET",
@@ -116,7 +116,7 @@ async function searchPdlRecords(
   input: Record<string, unknown>,
   context: ApiKeyProviderContext,
 ): Promise<unknown> {
-  const payload = requirePdlObject(
+  const payload = requiredResponseRecord(
     await requestPdl({
       path,
       method: "POST",
@@ -154,7 +154,7 @@ async function requestPdl(input: PdlRequestInput): Promise<unknown> {
     response = await input.fetcher(url.toString(), {
       method: input.method,
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
         "x-api-key": input.apiKey,
         "user-agent": providerUserAgent,
@@ -229,14 +229,6 @@ function readPdlErrorMessage(payload: unknown, status: number): string {
     optionalString(record?.detail) ??
     `People Data Labs request failed with ${status}`
   );
-}
-
-function requirePdlObject(value: unknown, label: string): Record<string, unknown> {
-  const record = optionalRecord(value);
-  if (!record) {
-    throw new ProviderRequestError(502, `${label} must be an object`);
-  }
-  return record;
 }
 
 function readRequiredInteger(value: unknown, fieldName: string): number {

@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { queryParams } from "../../core/request.ts";
@@ -9,10 +9,10 @@ import {
   ProviderRequestError,
   providerUserAgent,
   readProviderJsonBody,
+  providerInputError,
 } from "../provider-runtime.ts";
 
 export const trawlingwebApiBaseUrl = "https://api.trawlingweb.com";
-const timeoutMs = 30_000;
 
 export const trawlingwebActionHandlers: ProviderActionHandlers<
   "trawlingweb",
@@ -35,7 +35,6 @@ export async function validateTrawlingwebCredential(
   );
   return {
     profile: { displayName: "TrawlingWeb API Key" },
-    grantedScopes: [],
     metadata: { apiBaseUrl: trawlingwebApiBaseUrl, validationEndpoint: "/" },
   };
 }
@@ -61,10 +60,10 @@ async function requestNews(
   const url = new URL("/", trawlingwebApiBaseUrl);
   url.searchParams.set("token", context.apiKey);
   for (const [name, value] of Object.entries(query)) url.searchParams.set(name, value);
-  const timeout = createProviderTimeout(context.signal, timeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const response = await context.fetcher(url, {
-      headers: { accept: "application/json", "user-agent": providerUserAgent },
+      headers: { "accept": "application/json", "user-agent": providerUserAgent },
       signal: timeout.signal,
     });
     const payload = await readProviderJsonBody(response, {
@@ -128,6 +127,6 @@ function trawlingwebError(status: number, payload: unknown, phase: "validate" | 
     `TrawlingWeb request failed with HTTP ${status}`;
   if (status === 429) return new ProviderRequestError(429, message);
   if (status === 401 || status === 403) return new ProviderRequestError(phase === "validate" ? 400 : status, message);
-  if (status === 400 || status === 404 || status === 422) return new ProviderRequestError(400, message);
+  if (status === 400 || status === 404 || status === 422) return providerInputError(message);
   return new ProviderRequestError(status >= 500 ? 502 : status, message);
 }

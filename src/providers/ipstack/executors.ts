@@ -1,16 +1,16 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "ipstack";
 const ipstackApiBaseUrl = "https://api.ipstack.com";
 
 type IpstackRequestPhase = "validate" | "execute";
-type IpstackActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type IpstackActionHandler = (input: Record<string, unknown>, context: IpstackActionContext) => Promise<unknown>;
+type IpstackActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 export const ipstackActionHandlers: ProviderActionHandlers<"ipstack", IpstackActionHandler> = {
   lookup_current_ip(input, context) {
@@ -47,6 +47,16 @@ export const ipstackActionHandlers: ProviderActionHandlers<"ipstack", IpstackAct
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, ipstackActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: ipstackApiBaseUrl,
+  auth: { type: "api_key_query", name: "access_key" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = await requestIpstackLookup(
@@ -68,7 +78,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "api_key",
         displayName: "ipstack API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         validationEndpoint: "/check",
         apiBaseUrl: ipstackApiBaseUrl,
@@ -85,7 +94,7 @@ async function requestIpstackLookup(
     phase: IpstackRequestPhase;
     fields?: string[];
   },
-  context: IpstackActionContext,
+  context: ApiKeyProviderContext,
 ): Promise<unknown> {
   const url = new URL(input.path, ipstackApiBaseUrl);
   url.searchParams.set("access_key", context.apiKey);
@@ -99,7 +108,7 @@ async function requestIpstackLookup(
     response = await context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
       signal: context.signal,

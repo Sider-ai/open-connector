@@ -1,13 +1,16 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { optionalBoolean, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { createProviderTimeout, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import {
+  createProviderTimeout,
+  providerUserAgent,
+  ProviderRequestError,
+  providerInputError,
+} from "../provider-runtime.ts";
 
 export const dropcontactApiBaseUrl = "https://api.dropcontact.com";
 
-const requestTimeoutMs = 30_000;
 const textContactFields = [
   "email",
   "first_name",
@@ -46,11 +49,7 @@ export const dropcontactActionHandlers: ProviderActionHandlers<"dropcontact", Dr
   },
 
   async get_enrichment_result(input, context): Promise<unknown> {
-    const requestId = requiredString(
-      input.request_id,
-      "request_id",
-      (message) => new ProviderRequestError(400, message),
-    );
+    const requestId = requiredString(input.request_id, "request_id", providerInputError);
     const payload = await requestDropcontactJson(
       {
         method: "GET",
@@ -76,7 +75,6 @@ export async function validateDropcontactCredential(
       accountId: "dropcontact:api-key",
       displayName: "Dropcontact API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: dropcontactApiBaseUrl,
       validationEndpoint: "/v1/enrich/webhook",
@@ -91,7 +89,7 @@ async function requestDropcontactJson(
     query?: Array<[string, string]>;
     body?: Record<string, unknown>;
   },
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   mode: RequestMode,
 ): Promise<unknown> {
   const url = new URL(input.path, dropcontactApiBaseUrl);
@@ -99,12 +97,12 @@ async function requestDropcontactJson(
     url.searchParams.set(name, value);
   }
 
-  const timeout = createProviderTimeout(context.signal, requestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const response = await context.fetcher(url, {
       method: input.method,
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
         "x-access-token": context.apiKey,
         "user-agent": providerUserAgent,
@@ -163,7 +161,7 @@ function mapDropcontactError(status: number, payload: unknown, mode: RequestMode
     return new ProviderRequestError(mode === "validate" ? 400 : 401, message);
   }
   if (status >= 400 && status < 500) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   return new ProviderRequestError(status >= 500 ? 502 : status, message);
 }

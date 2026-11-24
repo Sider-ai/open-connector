@@ -5,17 +5,18 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineProviderExecutors,
-  defineProviderProxy,
   isAbortLikeError,
+  providerInputError,
   ProviderRequestError,
   providerUserAgent,
-  requireApiKeyCredential,
 } from "../provider-runtime.ts";
 
 const service = "contentful_graphql";
@@ -23,7 +24,6 @@ const contentfulGraphqlGlobalApiBaseUrl = "https://graphql.contentful.com";
 const contentfulGraphqlEuApiBaseUrl = "https://graphql.eu.contentful.com";
 const contentfulGraphqlDefaultEnvironmentId = "master";
 const contentfulGraphqlDefaultRegion = "global";
-const contentfulGraphqlDefaultTimeoutMs = 30_000;
 
 type ContentfulGraphqlRegion = "global" | "eu";
 type ContentfulGraphqlPhase = "validate" | "execute";
@@ -119,7 +119,6 @@ async function validateContentfulGraphqlCredential(
     profile: {
       accountId: `${target.region}:${target.spaceId}:${target.environmentId}`,
       displayName: formatContentfulGraphqlAccountLabel(target),
-      grantedScopes: [],
     },
     metadata: compactObject({
       apiBaseUrl: getContentfulGraphqlApiBaseUrl(target.region),
@@ -180,15 +179,15 @@ async function requestContentfulGraphql(input: {
   region: ContentfulGraphqlRegion;
   signal?: AbortSignal;
 }): Promise<ContentfulGraphqlResponse> {
-  const timeout = createProviderTimeout(input.signal, contentfulGraphqlDefaultTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   let response: Response;
   let payload: unknown;
   try {
     response = await input.fetcher(buildContentfulGraphqlEndpoint(input), {
       method: "POST",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${input.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${input.apiKey}`,
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },
@@ -375,10 +374,6 @@ function getContentfulGraphqlApiBaseUrl(region: ContentfulGraphqlRegion): string
 function formatContentfulGraphqlAccountLabel(input: ContentfulGraphqlTarget): string {
   const regionLabel = input.region === "eu" ? " EU" : "";
   return `Contentful GraphQL${regionLabel} ${input.spaceId}/${input.environmentId}`;
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }
 
 export const proxy: ProviderProxyExecutor = defineProviderProxy({

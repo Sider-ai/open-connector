@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import {
@@ -12,7 +12,6 @@ import {
 
 export const unioneApiBaseUrl = "https://api.unione.io/en/transactional/api/v1";
 
-const unioneRequestTimeoutMs = 30_000;
 const unioneValidationPath = "/system/info.json";
 
 type UnionePhase = "validate" | "execute";
@@ -26,7 +25,7 @@ interface ValidateUnioneCredentialInput {
 }
 
 interface UnioneRequestOptions {
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   path: string;
   phase: UnionePhase;
   body?: Record<string, unknown>;
@@ -106,9 +105,7 @@ export async function validateUnioneCredential(
     profile: {
       accountId: projectId ? `unione:project:${projectId}` : userId !== undefined ? `unione:user:${userId}` : "unione",
       displayName: projectName ?? email ?? "UniOne API Key",
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: {
       validationEndpoint: unioneValidationPath,
       userId,
@@ -121,7 +118,7 @@ export async function validateUnioneCredential(
 
 async function requestUnioneJson(options: UnioneRequestOptions): Promise<UnioneJsonObject> {
   const url = new URL(options.path, unioneApiBaseUrl);
-  const timeout = createProviderTimeout(options.context.signal, unioneRequestTimeoutMs);
+  const timeout = createProviderTimeout(options.context.signal);
   let response: Response;
   try {
     response = await options.context.fetcher(url, {
@@ -155,7 +152,7 @@ async function requestUnioneJson(options: UnioneRequestOptions): Promise<UnioneJ
 
 function unioneHeaders(apiKey: string): Record<string, string> {
   return {
-    accept: "application/json",
+    "accept": "application/json",
     "content-type": "application/json",
     "user-agent": providerUserAgent,
     "X-API-KEY": apiKey,

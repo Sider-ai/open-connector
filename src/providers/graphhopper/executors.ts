@@ -1,10 +1,11 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { createHash } from "node:crypto";
 import { compactObject, optionalBoolean, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "graphhopper";
 const graphhopperApiBaseUrl = "https://graphhopper.com/api/1";
@@ -36,6 +37,16 @@ export const graphhopperActionHandlers: ProviderActionHandlers<"graphhopper", Gr
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, graphhopperActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: graphhopperApiBaseUrl,
+  auth: { type: "api_key_query", name: "key" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = await graphhopperGetJson(
@@ -54,7 +65,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: `graphhopper:api_key:${createHash("sha256").update(input.apiKey).digest("hex").slice(0, 16)}`,
         displayName: "GraphHopper API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: graphhopperApiBaseUrl,
         validationEndpoint: "/profiles",
@@ -67,7 +77,7 @@ export const credentialValidators: CredentialValidators = {
 async function graphhopperGetJson(
   path: string,
   query: GraphhopperQuery,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: GraphhopperRequestPhase,
 ): Promise<unknown> {
   const url = buildGraphhopperUrl(path, query, context.apiKey);
@@ -77,7 +87,7 @@ async function graphhopperGetJson(
     response = await context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
       signal: context.signal,
@@ -120,24 +130,24 @@ function buildGraphhopperUrl(path: string, query: GraphhopperQuery, apiKey: stri
 
 function buildRouteQuery(input: Record<string, unknown>): GraphhopperQuery {
   return compactObject({
-    point: readStringArray(input.point),
-    profile: optionalString(input.profile),
-    locale: optionalString(input.locale),
-    point_hint: readStringArray(input.pointHint),
-    snap_prevention: readStringArray(input.snapPrevention),
-    curbside: readStringArray(input.curbside),
-    details: readStringArray(input.details),
-    optimize: optionalBoolean(input.optimize),
-    instructions: optionalBoolean(input.instructions),
-    calc_points: optionalBoolean(input.calcPoints),
-    points_encoded: optionalBoolean(input.pointsEncoded),
-    elevation: optionalBoolean(input.elevation),
-    debug: optionalBoolean(input.debug),
+    "point": readStringArray(input.point),
+    "profile": optionalString(input.profile),
+    "locale": optionalString(input.locale),
+    "point_hint": readStringArray(input.pointHint),
+    "snap_prevention": readStringArray(input.snapPrevention),
+    "curbside": readStringArray(input.curbside),
+    "details": readStringArray(input.details),
+    "optimize": optionalBoolean(input.optimize),
+    "instructions": optionalBoolean(input.instructions),
+    "calc_points": optionalBoolean(input.calcPoints),
+    "points_encoded": optionalBoolean(input.pointsEncoded),
+    "elevation": optionalBoolean(input.elevation),
+    "debug": optionalBoolean(input.debug),
     "ch.disable": optionalBoolean(input.chDisable),
-    heading: readNumberArray(input.heading),
-    heading_penalty: optionalNumber(input.headingPenalty),
-    pass_through: optionalBoolean(input.passThrough),
-    algorithm: optionalString(input.algorithm),
+    "heading": readNumberArray(input.heading),
+    "heading_penalty": optionalNumber(input.headingPenalty),
+    "pass_through": optionalBoolean(input.passThrough),
+    "algorithm": optionalString(input.algorithm),
     "round_trip.distance": optionalNumber(input.roundTripDistance),
     "round_trip.seed": optionalNumber(input.roundTripSeed),
     "alternative_route.max_paths": optionalNumber(input.alternativeRouteMaxPaths),

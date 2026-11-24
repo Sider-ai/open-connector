@@ -1,13 +1,19 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { BearerProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { BearerProviderContext } from "../provider-executors.ts";
 
 import { createHash } from "node:crypto";
-import { compactObject, objectArray, optionalBoolean, optionalInteger, optionalString } from "../../core/cast.ts";
-import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import {
+  compactObject,
+  objectArray,
+  optionalBoolean,
+  optionalInteger,
+  optionalNumber,
+  optionalString,
+} from "../../core/cast.ts";
+import { providerInputError, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
-const ticktickApiBaseUrl = "https://api.ticktick.com";
-const ticktickProviderScopes = ["ticktick.read", "ticktick.write"] as const;
+export const ticktickApiBaseUrl = "https://api.ticktick.com";
 
 type TicktickPayload = Record<string, unknown>;
 type TicktickRequestPhase = "validate" | "execute";
@@ -299,7 +305,6 @@ function validationResult(
       accountId: `ticktick:${hashAccessToken(accessToken)}`,
       displayName,
     },
-    grantedScopes: [...ticktickProviderScopes],
     metadata: compactObject({
       apiBaseUrl: ticktickApiBaseUrl,
       validationEndpoint: "/open/v1/project",
@@ -415,8 +420,8 @@ async function requestTicktickJson<T>(
 
 function buildTicktickHeaders(accessToken: string, body: unknown): HeadersInit {
   return compactObject({
-    authorization: `Bearer ${accessToken}`,
-    accept: "application/json",
+    "authorization": `Bearer ${accessToken}`,
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     "content-type": body != null ? "application/json" : undefined,
   }) as HeadersInit;
@@ -670,10 +675,6 @@ function requireInteger(value: unknown, fieldName: string): number {
   return parsed;
 }
 
-function optionalNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
 function requireObjectPayload(value: unknown, fieldName: string): TicktickPayload {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new ProviderRequestError(502, `${fieldName} must be an object`);
@@ -688,10 +689,6 @@ function requireObjectArrayPayload(value: unknown, fieldName: string): TicktickP
 
 function optionalObjectArrayPayload(value: unknown): TicktickPayload[] {
   return value == null ? [] : requireObjectArrayPayload(value, "ticktick nested array response");
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }
 
 function hashAccessToken(accessToken: string): string {

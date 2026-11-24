@@ -118,8 +118,9 @@ const branchOrDirectoryFields = {
 export const crowdinActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "list_projects",
+    operationType: "read",
     description: "List Crowdin projects.",
-    requiredScopes: ["crowdin.projects.read"],
+    requiredScopes: ["project.settings"],
     inputSchema: s.object(pageFields, {
       optional: ["limit", "offset"],
       description: "The input payload for this action.",
@@ -131,8 +132,9 @@ export const crowdinActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_branches",
+    operationType: "read",
     description: "List Crowdin project branches.",
-    requiredScopes: ["crowdin.source.read"],
+    requiredScopes: ["project.source"],
     inputSchema: s.object(
       {
         projectId: s.positiveInteger("The project ID to list branches for."),
@@ -152,8 +154,9 @@ export const crowdinActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_branch",
+    operationType: "write",
     description: "Create a Crowdin project branch.",
-    requiredScopes: ["crowdin.source.write"],
+    requiredScopes: ["project.source"],
     inputSchema: s.object(
       {
         projectId: s.positiveInteger("The project ID to create the branch in."),
@@ -172,8 +175,9 @@ export const crowdinActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_directories",
+    operationType: "read",
     description: "List Crowdin directories.",
-    requiredScopes: ["crowdin.source.read"],
+    requiredScopes: ["project.source"],
     inputSchema: s.object(
       {
         projectId: s.positiveInteger("The project ID to list directories for."),
@@ -198,8 +202,9 @@ export const crowdinActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_directory",
+    operationType: "write",
     description: "Create a Crowdin directory.",
-    requiredScopes: ["crowdin.source.write"],
+    requiredScopes: ["project.source"],
     inputSchema: s.object(
       {
         projectId: s.positiveInteger("The project ID to create the directory in."),
@@ -219,8 +224,9 @@ export const crowdinActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_files",
+    operationType: "read",
     description: "List Crowdin source files.",
-    requiredScopes: ["crowdin.source.read"],
+    requiredScopes: ["project.source"],
     inputSchema: s.object(
       {
         projectId: s.positiveInteger("The project ID to list files for."),
@@ -242,8 +248,9 @@ export const crowdinActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "upload_file",
+    operationType: "write",
     description: "Upload a source file to Crowdin.",
-    requiredScopes: ["crowdin.source.write"],
+    requiredScopes: ["project.source"],
     inputSchema: s.object(
       {
         projectId: s.positiveInteger("The project ID to upload the file to."),

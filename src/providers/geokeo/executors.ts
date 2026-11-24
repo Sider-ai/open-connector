@@ -1,16 +1,16 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerInputError, providerResponseError } from "../provider-runtime.ts";
 
 const service = "geokeo";
 const geokeoApiBaseUrl = "https://geokeo.com";
 const geokeoValidationQuery = "ZZQXV NO MATCH PLACE 19700101";
 
-type GeokeoActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type GeokeoActionHandler = (input: Record<string, unknown>, context: GeokeoActionContext) => Promise<unknown>;
+type GeokeoActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 export const geokeoActionHandlers: ProviderActionHandlers<"geokeo", GeokeoActionHandler> = {
   geocode_forward(input, context) {
@@ -38,6 +38,13 @@ export const geokeoActionHandlers: ProviderActionHandlers<"geokeo", GeokeoAction
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, geokeoActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: geokeoApiBaseUrl,
+  auth: { type: "api_key_query", name: "api" },
+  skipDnsValidation: true,
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = optionalRecord(
@@ -62,7 +69,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "geokeo-api-key",
         displayName: "Geokeo API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         validationEndpoint: "/geocode/v1/search.php",
         apiBaseUrl: geokeoApiBaseUrl,
@@ -77,7 +83,7 @@ export const credentialValidators: CredentialValidators = {
 async function geokeoRequest(
   path: string,
   query: Record<string, string | number | undefined>,
-  context: GeokeoActionContext,
+  context: ApiKeyProviderContext,
 ): Promise<unknown> {
   const url = new URL(path, geokeoApiBaseUrl);
   url.searchParams.set("api", context.apiKey);
@@ -146,14 +152,14 @@ function createGeokeoStatusError(status: string): ProviderRequestError {
   }
 
   if (status === "INVALID_REQUEST") {
-    return new ProviderRequestError(400, status);
+    return providerInputError(status);
   }
 
   if (status === "ACCESS_DENIED") {
-    return new ProviderRequestError(400, status);
+    return providerInputError(status);
   }
 
-  return new ProviderRequestError(502, status);
+  return providerResponseError(status);
 }
 
 function readGeokeoStatus(payload: Record<string, unknown> | undefined): string | undefined {

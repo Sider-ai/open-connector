@@ -1,6 +1,5 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -10,18 +9,18 @@ import {
   optionalString,
   requiredString,
 } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
   providerUserAgent,
   ProviderRequestError,
   readProviderJsonBody,
+  requiredResponseRecord,
 } from "../provider-runtime.ts";
 
 const service = "daily";
 const dailyApiBaseUrl = "https://api.daily.co/v1";
-const requestTimeoutMs = 30_000;
 
 type DailyRequestPhase = "validate" | "execute";
 
@@ -160,7 +159,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: domainId ?? "api_key",
         displayName: domainName ?? "Daily API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: dailyApiBaseUrl,
         validationEndpoint: "/",
@@ -178,7 +176,7 @@ async function dailyRequestObject(
     query?: Record<string, string | number | boolean | undefined>;
     body?: Record<string, unknown>;
   },
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: DailyRequestPhase,
 ): Promise<Record<string, unknown>> {
   const url = buildDailyUrl(request.path);
@@ -188,7 +186,7 @@ async function dailyRequestObject(
     }
   }
 
-  const timeout = createProviderTimeout(context.signal, requestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   let response: Response;
   try {
     response = await context.fetcher(url, {
@@ -205,7 +203,7 @@ async function dailyRequestObject(
     if (!response.ok) {
       throw createDailyError(response, payload, phase);
     }
-    return readDailyObject(payload, "Daily response");
+    return requiredResponseRecord(payload, "Daily response");
   } catch (error) {
     if (error instanceof ProviderRequestError) {
       throw error;
@@ -224,8 +222,8 @@ async function dailyRequestObject(
 
 function dailyHeaders(apiKey: string, hasBody: boolean): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "user-agent": providerUserAgent,
   };
   if (hasBody) {
@@ -263,17 +261,9 @@ function createDailyError(response: Response, payload: unknown, phase: DailyRequ
   return new ProviderRequestError(response.status || 502, message);
 }
 
-function readDailyObject(value: unknown, fieldName: string): Record<string, unknown> {
-  const object = optionalRecord(value);
-  if (!object) {
-    throw new ProviderRequestError(502, `${fieldName} must be an object`);
-  }
-  return object;
-}
-
 function readDailyArray(value: unknown, fieldName: string): Array<Record<string, unknown>> {
   if (!Array.isArray(value)) {
     throw new ProviderRequestError(502, `${fieldName} must be an array`);
   }
-  return value.map((item, index) => readDailyObject(item, `${fieldName}[${index}]`));
+  return value.map((item, index) => requiredResponseRecord(item, `${fieldName}[${index}]`));
 }

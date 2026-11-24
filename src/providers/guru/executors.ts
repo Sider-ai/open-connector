@@ -5,22 +5,20 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
 import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { jsonObject } from "../../core/request.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
 import {
-  createProviderFetch,
   createProviderProxyUrl,
-  defineProviderExecutors,
   normalizeProviderProxyHeaders,
-  ProviderRequestError,
-  providerUserAgent,
   readProviderProxyResponse,
-  requireApiKeyCredential,
   toProviderProxyError,
-} from "../provider-runtime.ts";
+} from "../provider-proxy.ts";
+import { createProviderFetch, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "guru";
 const guruApiBaseUrl = "https://api.getguru.com";
@@ -174,7 +172,6 @@ async function validateGuruCredential(
       accountId: teamId ?? collectionId ?? userId ?? "guru-api-token",
       displayName: teamName ?? collectionName ?? userEmail ?? "Guru API Token",
     },
-    grantedScopes: [],
     metadata: jsonObject({
       apiBaseUrl: guruApiBaseUrl,
       validationEndpoint: guruValidationPath,
@@ -254,8 +251,8 @@ async function guruGetJson(path: string, context: GuruActionContext, phase: Guru
 
 function guruHeaders(context: GuruActionContext): Record<string, string> {
   return {
-    accept: "application/json",
-    authorization: `Basic ${Buffer.from(`${context.username}:${context.apiKey}`).toString("base64")}`,
+    "accept": "application/json",
+    "authorization": `Basic ${Buffer.from(`${context.username}:${context.apiKey}`).toString("base64")}`,
     "user-agent": providerUserAgent,
   };
 }

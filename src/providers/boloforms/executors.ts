@@ -1,6 +1,6 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -12,10 +12,12 @@ import {
   requiredRecord,
   requiredString,
 } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
+  providerInputError,
   ProviderRequestError,
+  providerResponseError,
   providerUserAgent,
 } from "../provider-runtime.ts";
 
@@ -63,7 +65,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: service,
         displayName: "BoloForms API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: boloformsApiBaseUrl,
         validationEndpoint: boloformsValidationPath,
@@ -123,10 +124,10 @@ async function sendTemplateForSigning(
   input: Record<string, unknown>,
   context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
-  const signers = objectArray(input.signers, "signers", invalidInputError).map((item) =>
+  const signers = objectArray(input.signers, "signers", providerInputError).map((item) =>
     compactObject({
-      name: requiredString(item.name, "signers.name", invalidInputError),
-      email: requiredString(item.email, "signers.email", invalidInputError),
+      name: requiredString(item.name, "signers.name", providerInputError),
+      email: requiredString(item.email, "signers.email", providerInputError),
       subject: optionalString(item.subject),
       message: optionalString(item.message),
       roleTitle: optionalString(item.roleTitle),
@@ -137,8 +138,8 @@ async function sendTemplateForSigning(
     method: "POST",
     path: "/signature/pdf-template-lambda",
     body: compactObject({
-      documentId: requiredString(input.documentId, "documentId", invalidInputError),
-      signingType: requiredString(input.signingType, "signingType", invalidInputError),
+      documentId: requiredString(input.documentId, "documentId", providerInputError),
+      signingType: requiredString(input.signingType, "signingType", providerInputError),
       mailData:
         optionalString(input.mailSubject) || optionalString(input.mailMessage)
           ? compactObject({
@@ -178,7 +179,7 @@ async function listTemplateRespondents(
     method: "GET",
     path: "/signature/get-template-respondent",
     query: compactObject({
-      templateId: requiredString(input.templateId, "templateId", invalidInputError),
+      templateId: requiredString(input.templateId, "templateId", providerInputError),
       page: optionalInteger(input.page),
       limit: optionalInteger(input.limit),
     }),
@@ -208,7 +209,7 @@ async function getFormResponses(
     method: "GET",
     path: "/signature/get-form-responses",
     query: compactObject({
-      formId: requiredString(input.formId, "formId", invalidInputError),
+      formId: requiredString(input.formId, "formId", providerInputError),
       page: optionalInteger(input.page),
       limit: optionalInteger(input.limit),
     }),
@@ -252,7 +253,7 @@ async function boloformsRequest(input: {
   let payload: unknown;
   try {
     const headers = new Headers({
-      accept: "application/json",
+      "accept": "application/json",
       "user-agent": providerUserAgent,
       "x-api-key": input.apiKey,
     });
@@ -394,7 +395,7 @@ function readRecordArray(value: unknown): Array<Record<string, unknown>> {
   if (!Array.isArray(value)) {
     return [];
   }
-  return value.map((item) => requiredRecord(item, "BoloForms array item", providerDataError));
+  return value.map((item) => requiredRecord(item, "BoloForms array item", providerResponseError));
 }
 
 function readRequiredString(value: unknown, fieldName: string): string {
@@ -403,14 +404,6 @@ function readRequiredString(value: unknown, fieldName: string): string {
     throw new ProviderRequestError(502, `BoloForms response missing string field: ${fieldName}`);
   }
   return parsed;
-}
-
-function invalidInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
-}
-
-function providerDataError(message: string): ProviderRequestError {
-  return new ProviderRequestError(502, message);
 }
 
 export const proxy: ProviderProxyExecutor = defineProviderProxy({

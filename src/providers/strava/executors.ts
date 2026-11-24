@@ -1,16 +1,19 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { OAuthProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, OAuthProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
   optionalBoolean,
   optionalInteger,
+  optionalNumber,
   optionalRecord,
   optionalString,
   requiredRecord,
 } from "../../core/cast.ts";
-import { defineOAuthProviderExecutors, ProviderRequestError, readTransitFileInput } from "../provider-runtime.ts";
+import { defineOAuthProviderExecutors } from "../provider-executors.ts";
+import { readTransitFileInput } from "../provider-files.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerInputError, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "strava";
 const stravaApiBaseUrl = "https://www.strava.com/api/v3/";
@@ -124,6 +127,16 @@ export const stravaActionHandlers: ProviderActionHandlers<"strava", StravaAction
 
 export const executors: ProviderExecutors = defineOAuthProviderExecutors(service, stravaActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: stravaApiBaseUrl,
+  auth: { type: "oauth_bearer" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async oauth2(input, { fetcher, signal }) {
     const payload = await stravaJsonRequest<Record<string, unknown>>("/athlete", {
@@ -197,7 +210,7 @@ async function stravaGetActivity(input: Record<string, unknown>, context: OAuthP
 }
 
 async function stravaUpdateActivity(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
-  const activity = requiredRecord(input.activity, "activity", invalidInputError);
+  const activity = requiredRecord(input.activity, "activity", providerInputError);
   return stravaJsonRequest(`/activities/${requireId(input.activityId, "activityId")}`, {
     ...context,
     method: "PUT",
@@ -488,7 +501,7 @@ async function stravaGetSegmentEffortStreams(
   return { streams: payload };
 }
 
-interface StravaRequestInput extends Pick<OAuthProviderContext, "accessToken" | "fetcher" | "signal"> {
+interface StravaRequestInput extends OAuthProviderContext {
   method?: "GET" | "POST" | "PUT";
   query?: Record<string, unknown>;
   body?: BodyInit;
@@ -631,10 +644,6 @@ function requireNumber(value: unknown, fieldName: string): number {
   throw new ProviderRequestError(400, `${fieldName} must be a number`);
 }
 
-function optionalNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
 function requireInteger(value: unknown, fieldName: string): number {
   if (typeof value === "number" && Number.isInteger(value)) {
     return value;
@@ -709,8 +718,4 @@ function parseScopeList(value: unknown): string[] {
     .split(/[,\s]+/)
     .map((scope) => scope.trim())
     .filter(Boolean);
-}
-
-function invalidInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

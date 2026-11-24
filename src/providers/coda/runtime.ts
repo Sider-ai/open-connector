@@ -1,6 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -12,9 +11,15 @@ import {
   requiredRecord,
   requiredString,
 } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import {
+  providerInputError,
+  providerResponseError,
+  providerUserAgent,
+  ProviderRequestError,
+  requiredInputString,
+} from "../provider-runtime.ts";
 
-const codaApiBaseUrl = "https://coda.io/apis/v1";
+export const codaApiBaseUrl = "https://coda.io/apis/v1";
 const codaWhoamiPath = "/whoami";
 
 interface CodaCredentialInput {
@@ -23,7 +28,6 @@ interface CodaCredentialInput {
 
 type CodaRequestMode = "validate" | "execute";
 type CodaQueryValue = string | number | boolean | string[] | undefined;
-type CodaRuntimeContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
 type CodaActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 export const codaActionHandlers: ProviderActionHandlers<"coda", CodaActionHandler> = {
@@ -59,7 +63,7 @@ export const codaActionHandlers: ProviderActionHandlers<"coda", CodaActionHandle
   async get_doc(input, context) {
     const doc = await requestCodaObject({
       context,
-      path: `/docs/${encodeURIComponent(requireInputString(input.docId, "docId"))}`,
+      path: `/docs/${encodeURIComponent(requiredInputString(input.docId, "docId"))}`,
       mode: "execute",
       notFoundAsInvalidInput: true,
     });
@@ -69,7 +73,7 @@ export const codaActionHandlers: ProviderActionHandlers<"coda", CodaActionHandle
   async list_pages(input, context) {
     return requestCodaList({
       context,
-      path: `/docs/${encodeURIComponent(requireInputString(input.docId, "docId"))}/pages`,
+      path: `/docs/${encodeURIComponent(requiredInputString(input.docId, "docId"))}/pages`,
       query: compactObject({
         limit: readOptionalPositiveInteger(input.limit, "limit"),
         pageToken: optionalString(input.pageToken),
@@ -82,7 +86,7 @@ export const codaActionHandlers: ProviderActionHandlers<"coda", CodaActionHandle
   async create_page(input, context) {
     const payload = await requestCodaObject({
       context,
-      path: `/docs/${encodeURIComponent(requireInputString(input.docId, "docId"))}/pages`,
+      path: `/docs/${encodeURIComponent(requiredInputString(input.docId, "docId"))}/pages`,
       method: "POST",
       body: compactObject({
         name: optionalString(input.name),
@@ -105,7 +109,7 @@ export const codaActionHandlers: ProviderActionHandlers<"coda", CodaActionHandle
   async list_tables(input, context) {
     return requestCodaList({
       context,
-      path: `/docs/${encodeURIComponent(requireInputString(input.docId, "docId"))}/tables`,
+      path: `/docs/${encodeURIComponent(requiredInputString(input.docId, "docId"))}/tables`,
       query: compactObject({
         limit: readOptionalPositiveInteger(input.limit, "limit"),
         pageToken: optionalString(input.pageToken),
@@ -120,8 +124,8 @@ export const codaActionHandlers: ProviderActionHandlers<"coda", CodaActionHandle
   async get_table(input, context) {
     const table = await requestCodaObject({
       context,
-      path: `/docs/${encodeURIComponent(requireInputString(input.docId, "docId"))}/tables/${encodeURIComponent(
-        requireInputString(input.tableIdOrName, "tableIdOrName"),
+      path: `/docs/${encodeURIComponent(requiredInputString(input.docId, "docId"))}/tables/${encodeURIComponent(
+        requiredInputString(input.tableIdOrName, "tableIdOrName"),
       )}`,
       query: compactObject({
         useUpdatedTableLayouts: optionalBoolean(input.useUpdatedTableLayouts),
@@ -135,8 +139,8 @@ export const codaActionHandlers: ProviderActionHandlers<"coda", CodaActionHandle
   async list_columns(input, context) {
     return requestCodaList({
       context,
-      path: `/docs/${encodeURIComponent(requireInputString(input.docId, "docId"))}/tables/${encodeURIComponent(
-        requireInputString(input.tableIdOrName, "tableIdOrName"),
+      path: `/docs/${encodeURIComponent(requiredInputString(input.docId, "docId"))}/tables/${encodeURIComponent(
+        requiredInputString(input.tableIdOrName, "tableIdOrName"),
       )}/columns`,
       query: compactObject({
         limit: readOptionalPositiveInteger(input.limit, "limit"),
@@ -151,8 +155,8 @@ export const codaActionHandlers: ProviderActionHandlers<"coda", CodaActionHandle
   async list_rows(input, context) {
     const payload = await requestCodaObject({
       context,
-      path: `/docs/${encodeURIComponent(requireInputString(input.docId, "docId"))}/tables/${encodeURIComponent(
-        requireInputString(input.tableIdOrName, "tableIdOrName"),
+      path: `/docs/${encodeURIComponent(requiredInputString(input.docId, "docId"))}/tables/${encodeURIComponent(
+        requiredInputString(input.tableIdOrName, "tableIdOrName"),
       )}/rows`,
       query: compactObject({
         query: optionalString(input.query),
@@ -179,8 +183,8 @@ export const codaActionHandlers: ProviderActionHandlers<"coda", CodaActionHandle
   async upsert_rows(input, context) {
     const payload = await requestCodaObject({
       context,
-      path: `/docs/${encodeURIComponent(requireInputString(input.docId, "docId"))}/tables/${encodeURIComponent(
-        requireInputString(input.tableIdOrName, "tableIdOrName"),
+      path: `/docs/${encodeURIComponent(requiredInputString(input.docId, "docId"))}/tables/${encodeURIComponent(
+        requiredInputString(input.tableIdOrName, "tableIdOrName"),
       )}/rows`,
       method: "POST",
       query: compactObject({
@@ -203,7 +207,7 @@ export const codaActionHandlers: ProviderActionHandlers<"coda", CodaActionHandle
   async get_mutation_status(input, context) {
     const payload = await requestCodaObject({
       context,
-      path: `/mutationStatus/${encodeURIComponent(requireInputString(input.requestId, "requestId"))}`,
+      path: `/mutationStatus/${encodeURIComponent(requiredInputString(input.requestId, "requestId"))}`,
       mode: "execute",
       notFoundAsInvalidInput: true,
     });
@@ -218,7 +222,7 @@ export async function validateCodaApiKey(
   input: CodaCredentialInput,
   options: { fetcher: typeof fetch; signal?: AbortSignal },
 ): Promise<CredentialValidationResult> {
-  const context: CodaRuntimeContext = {
+  const context: ApiKeyProviderContext = {
     apiKey: input.apiKey,
     fetcher: options.fetcher,
     signal: options.signal,
@@ -242,7 +246,6 @@ export async function validateCodaApiKey(
       accountId,
       displayName,
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: codaApiBaseUrl,
       validationEndpoint: codaWhoamiPath,
@@ -256,7 +259,7 @@ export async function validateCodaApiKey(
 }
 
 async function requestCodaList(input: {
-  context: CodaRuntimeContext;
+  context: ApiKeyProviderContext;
   path: string;
   query?: Record<string, CodaQueryValue>;
   mode: CodaRequestMode;
@@ -278,7 +281,7 @@ async function requestCodaList(input: {
 }
 
 async function requestCodaObject(input: {
-  context: CodaRuntimeContext;
+  context: ApiKeyProviderContext;
   path: string;
   method?: "GET" | "POST";
   query?: Record<string, CodaQueryValue>;
@@ -291,7 +294,7 @@ async function requestCodaObject(input: {
 }
 
 async function requestCodaJson(input: {
-  context: CodaRuntimeContext;
+  context: ApiKeyProviderContext;
   path: string;
   method?: "GET" | "POST";
   query?: Record<string, CodaQueryValue>;
@@ -334,8 +337,8 @@ async function requestCodaJson(input: {
 
 function codaHeaders(apiKey: string, contentType?: string): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "user-agent": providerUserAgent,
   };
   if (contentType) {
@@ -413,7 +416,7 @@ function readOptionalPositiveInteger(value: unknown, fieldName: string): number 
   if (value == null || value === "") {
     return undefined;
   }
-  return positiveInteger(value, fieldName, invalidInputError);
+  return positiveInteger(value, fieldName, providerInputError);
 }
 
 function readOptionalStringArray(value: unknown): string[] | undefined {
@@ -424,34 +427,22 @@ function readOptionalStringArray(value: unknown): string[] | undefined {
 }
 
 function readRowsUpsert(value: unknown): Array<Record<string, unknown>> {
-  const rows = objectArray(value, "rows", invalidInputError);
+  const rows = objectArray(value, "rows", providerInputError);
   if (rows.length === 0) {
     throw new ProviderRequestError(400, "rows is required");
   }
 
   return rows.map((row, rowIndex) => {
-    const cells = objectArray(row.cells, `rows[${rowIndex}].cells`, invalidInputError);
+    const cells = objectArray(row.cells, `rows[${rowIndex}].cells`, providerInputError);
     if (cells.length === 0) {
       throw new ProviderRequestError(400, `rows[${rowIndex}].cells is required`);
     }
 
     return {
       cells: cells.map((cell, cellIndex) => ({
-        column: requiredString(cell.column, `rows[${rowIndex}].cells[${cellIndex}].column`, invalidInputError),
+        column: requiredString(cell.column, `rows[${rowIndex}].cells[${cellIndex}].column`, providerInputError),
         value: cell.value,
       })),
     };
   });
-}
-
-function requireInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, invalidInputError);
-}
-
-function invalidInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
-}
-
-function providerResponseError(message: string): ProviderRequestError {
-  return new ProviderRequestError(502, message);
 }

@@ -8,10 +8,6 @@ const service = "grafana_cloud";
 const nonEmptyString = (description: string) => s.nonEmptyString(description);
 const rawObjectSchema = s.looseObject("The raw Grafana Cloud API object.");
 
-const pageSizeSchema = s.integer("The number of records to request from Grafana Cloud.", {
-  minimum: 1,
-});
-
 const regionSchema = s.object("A normalized Grafana Cloud stack region.", {
   id: s.nullable(s.integer("The Grafana Cloud region ID.")),
   slug: s.nullable(s.string("The Grafana Cloud region slug.")),
@@ -50,6 +46,7 @@ const billedUsageSchema = s.object("A normalized Grafana Cloud billed usage item
 export const grafanaCloudActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "list_regions",
+    operationType: "read",
     description: "List Grafana Cloud stack regions that can host Grafana Cloud stacks.",
     requiredScopes: [],
     inputSchema: s.object("Input for listing Grafana Cloud stack regions.", {}),
@@ -60,27 +57,18 @@ export const grafanaCloudActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_stacks",
-    description: "List Grafana Cloud stacks in the connected organization.",
+    operationType: "read",
+    description: "List every Grafana Cloud stack in the connected organization in one response.",
     requiredScopes: [],
-    inputSchema: s.object(
-      "Input for listing Grafana Cloud stacks.",
-      {
-        pageSize: pageSizeSchema,
-        pageCursor: nonEmptyString("The Grafana Cloud pagination cursor from a previous response."),
-      },
-      { optional: ["pageSize", "pageCursor"] },
-    ),
+    inputSchema: s.object("Input for listing Grafana Cloud stacks.", {}),
     outputSchema: s.object("Grafana Cloud stacks response.", {
       stacks: s.array("Stacks returned by Grafana Cloud.", stackSchema),
-      nextPageCursor: s.nullable(
-        s.string("The cursor to pass as pageCursor for the next Grafana Cloud stacks request."),
-      ),
-      nextPage: s.nullable(s.string("The next page URL returned by Grafana Cloud, if present.")),
       raw: rawObjectSchema,
     }),
   }),
   defineProviderAction(service, {
     name: "get_stack_connectivity",
+    operationType: "read",
     description: "Get private connectivity information for a Grafana Cloud stack.",
     requiredScopes: [],
     inputSchema: s.object("Input for retrieving Grafana Cloud stack connectivity.", {
@@ -92,6 +80,7 @@ export const grafanaCloudActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_billed_usage",
+    operationType: "read",
     description: "Get Grafana Cloud billed usage for the connected organization by month.",
     requiredScopes: [],
     inputSchema: s.object("Input for retrieving Grafana Cloud billed usage.", {

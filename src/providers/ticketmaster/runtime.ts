@@ -1,7 +1,8 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
+import { optionalBoolean, optionalNumber } from "../../core/cast.ts";
 import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const ticketmasterDiscoveryBaseUrl = "https://app.ticketmaster.com/discovery/v2";
@@ -90,7 +91,6 @@ export async function validateTicketmasterCredential(
 
   return {
     profile: { accountId: "ticketmaster:api-key", displayName: "Ticketmaster API Key" },
-    grantedScopes: [],
     metadata: {
       validationEndpoint: "/discovery/v2/events.json",
       apiBaseUrl: "https://app.ticketmaster.com",
@@ -389,7 +389,7 @@ async function getSectionMapImage(input: Record<string, unknown>, context: Ticke
 
   const response = await context.fetcher(url.toString(), {
     headers: {
-      accept: "image/*, application/json",
+      "accept": "image/*, application/json",
       "user-agent": providerUserAgent,
     },
     signal: context.signal,
@@ -431,9 +431,9 @@ async function executeSeasonTicketingCommand(input: Record<string, unknown>, con
       {
         method: "POST",
         headers: {
-          accept: "application/json",
+          "accept": "application/json",
           "content-type": "application/json",
-          apikey: context.apiKey,
+          "apikey": context.apiKey,
           "user-agent": providerUserAgent,
           ...(Object.keys(cookieJar).length > 0 ? { cookie: buildCookieHeader(cookieJar) } : {}),
         },
@@ -486,7 +486,7 @@ async function ticketmasterGetJson(
 
   const response = await fetcher(requestUrl.toString(), {
     headers: {
-      accept: "application/json",
+      "accept": "application/json",
       "user-agent": providerUserAgent,
     },
     signal,
@@ -508,18 +508,14 @@ function mapTicketmasterErrorFromPayload(status: number, payload: Record<string,
   const message = extractTicketmasterErrorMessage(payload) ?? fallbackMessage;
 
   if (status === 429) {
-    return ticketmasterError("rate_limited", message, 429);
+    return new ProviderRequestError(429, message);
   }
 
   if ([400, 401, 403, 404].includes(status)) {
-    return ticketmasterError("invalid_input", message, status === 404 ? 400 : status);
+    return new ProviderRequestError(status === 404 ? 400 : status, message);
   }
 
-  return ticketmasterError("provider_error", message, status >= 500 ? 500 : status);
-}
-
-function ticketmasterError(_code: string, message: string, status = 500): ProviderRequestError {
-  return new ProviderRequestError(status, message);
+  return new ProviderRequestError(status >= 500 ? 500 : status, message);
 }
 
 async function readJsonBody(response: Response) {
@@ -578,10 +574,10 @@ function mapPage(value: unknown) {
   }
 
   return {
-    size: asNumber(page.size) ?? 0,
-    totalElements: asNumber(page.totalElements) ?? 0,
-    totalPages: asNumber(page.totalPages) ?? 0,
-    number: asNumber(page.number) ?? 0,
+    size: optionalNumber(page.size) ?? 0,
+    totalElements: optionalNumber(page.totalElements) ?? 0,
+    totalPages: optionalNumber(page.totalPages) ?? 0,
+    number: optionalNumber(page.number) ?? 0,
   };
 }
 
@@ -664,7 +660,7 @@ function mapClassification(value: Record<string, unknown>) {
     id: asString(value.id) ?? "",
     name: asString(value.name) ?? null,
     locale: asString(value.locale) ?? null,
-    primary: asBoolean(value.primary) ?? null,
+    primary: optionalBoolean(value.primary) ?? null,
     segment: mapEntityReference(value.segment),
     genre: mapEntityReference(value.genre),
     subGenre: mapEntityReference(value.subGenre),
@@ -680,7 +676,7 @@ function mapClassificationList(value: unknown) {
     .map((item) => mapObject(item))
     .filter((item): item is Record<string, unknown> => Boolean(item))
     .map((item) => ({
-      primary: asBoolean(item.primary) ?? null,
+      primary: optionalBoolean(item.primary) ?? null,
       segment: mapEntityReference(item.segment),
       genre: mapEntityReference(item.genre),
       subGenre: mapEntityReference(item.subGenre),
@@ -698,9 +694,9 @@ function mapImages(value: unknown) {
     .map((item) => ({
       url: asString(item.url) ?? "",
       ratio: asString(item.ratio) ?? null,
-      width: asNumber(item.width) ?? null,
-      height: asNumber(item.height) ?? null,
-      fallback: asBoolean(item.fallback) ?? null,
+      width: optionalNumber(item.width) ?? null,
+      height: optionalNumber(item.height) ?? null,
+      fallback: optionalBoolean(item.fallback) ?? null,
       attribution: asString(item.attribution) ?? null,
     }));
 }
@@ -831,14 +827,6 @@ function mapStringRecord(value: unknown) {
 
 function asString(value: unknown) {
   return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function asNumber(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function asBoolean(value: unknown) {
-  return typeof value === "boolean" ? value : undefined;
 }
 
 function asPositiveInteger(value: unknown) {

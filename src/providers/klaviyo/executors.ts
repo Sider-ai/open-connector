@@ -4,21 +4,24 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString, requiredRecord } from "../../core/cast.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
 import {
-  createProviderFetch,
   createProviderProxyUrl,
-  defineApiKeyProviderExecutors,
   normalizeProviderProxyHeaders,
-  ProviderRequestError,
-  providerUserAgent,
   readProviderProxyErrorMessage,
   readProviderProxyResponse,
-  requireApiKeyCredential,
   toProviderProxyError,
+} from "../provider-proxy.ts";
+import {
+  createProviderFetch,
+  providerInputError,
+  ProviderRequestError,
+  providerUserAgent,
 } from "../provider-runtime.ts";
 
 const service = "klaviyo";
@@ -117,7 +120,6 @@ async function validateKlaviyoCredential(
       accountId: accountId ?? "api_key",
       displayName: accountId ? `Klaviyo ${accountId}` : "Klaviyo Account",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: klaviyoApiBaseUrl,
       apiRevision: klaviyoApiRevision,
@@ -250,9 +252,9 @@ async function requestKlaviyo(
   }
 
   const headers: Record<string, string> = {
-    authorization: `Klaviyo-API-Key ${input.apiKey}`,
-    accept: "application/vnd.api+json",
-    revision: klaviyoApiRevision,
+    "authorization": `Klaviyo-API-Key ${input.apiKey}`,
+    "accept": "application/vnd.api+json",
+    "revision": klaviyoApiRevision,
     "user-agent": providerUserAgent,
   };
   if (input.body) {
@@ -286,7 +288,7 @@ function buildPaginationSearchParams(input: Record<string, unknown>): URLSearchP
 }
 
 function buildCreateEventPayload(input: Record<string, unknown>): Record<string, unknown> {
-  const profileInput = requiredRecord(input.profile, "profile", inputError);
+  const profileInput = requiredRecord(input.profile, "profile", providerInputError);
   const profileAttributes = compactObject({
     email: profileInput.email,
     phone_number: profileInput.phoneNumber,
@@ -354,7 +356,7 @@ function mapKlaviyoHttpError(
     return new ProviderRequestError(phase === "validate" ? 400 : 401, message);
   }
   if (status === 400 || status === 404 || status === 422) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (status === 429) {
     return new ProviderRequestError(429, message);
@@ -416,10 +418,6 @@ function readRequiredInputString(value: unknown, fieldName: string): string {
     throw new ProviderRequestError(400, `${fieldName} is required`);
   }
   return text;
-}
-
-function inputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }
 
 function responseError(message: string): ProviderRequestError {

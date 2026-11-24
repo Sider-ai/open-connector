@@ -1,27 +1,29 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
 import {
-  createProviderFetch,
   createProviderProxyUrl,
-  createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  isAbortLikeError,
   normalizeProviderProxyHeaders,
   normalizeProviderProxyQuery,
-  ProviderRequestError,
-  providerUserAgent,
   readProviderProxyErrorMessage,
   readProviderProxyResponse,
-  requireApiKeyCredential,
   toProviderProxyError,
+} from "../provider-proxy.ts";
+import {
+  createProviderFetch,
+  createProviderTimeout,
+  isAbortLikeError,
+  ProviderRequestError,
+  providerUserAgent,
+  requiredResponseRecord,
+  defaultProviderRequestTimeoutMs,
 } from "../provider-runtime.ts";
 
 const service = "uptimerobot";
 const uptimerobotApiBaseUrl = "https://api.uptimerobot.com/v2";
-const uptimerobotDefaultRequestTimeoutMs = 30_000;
 
 // Fixed-host proxy egress (uptimerobotApiBaseUrl); DNS-rebinding check is redundant here.
 const uptimerobotProxyFetch = createProviderFetch({ skipDnsValidation: true });
@@ -32,7 +34,7 @@ type UptimerobotActionHandler = (input: Record<string, unknown>, context: ApiKey
 export const uptimerobotActionHandlers: ProviderActionHandlers<"uptimerobot", UptimerobotActionHandler> = {
   async get_account_details(_input, context) {
     const payload = await requestUptimerobotJson({ context, endpoint: "getAccountDetails", phase: "execute" });
-    return { account: requireObjectPayload(payload.account, "uptimerobot account details response") };
+    return { account: requiredResponseRecord(payload.account, "uptimerobot account details response") };
   },
   async list_alert_contacts(_input, context) {
     const payload = await requestUptimerobotJson({ context, endpoint: "getAlertContacts", phase: "execute" });
@@ -75,7 +77,7 @@ export const uptimerobotActionHandlers: ProviderActionHandlers<"uptimerobot", Up
       body: buildMonitorMutationBody(input),
       phase: "execute",
     });
-    return { monitor: requireObjectPayload(payload.monitor, "uptimerobot create monitor response") };
+    return { monitor: requiredResponseRecord(payload.monitor, "uptimerobot create monitor response") };
   },
   async update_monitor(input, context) {
     const payload = await requestUptimerobotJson({
@@ -84,7 +86,7 @@ export const uptimerobotActionHandlers: ProviderActionHandlers<"uptimerobot", Up
       body: buildMonitorMutationBody(input, { includeMonitorId: true }),
       phase: "execute",
     });
-    return { monitor: requireObjectPayload(payload.monitor, "uptimerobot update monitor response") };
+    return { monitor: requiredResponseRecord(payload.monitor, "uptimerobot update monitor response") };
   },
   async delete_monitor(input, context) {
     const payload = await requestUptimerobotJson({
@@ -93,7 +95,7 @@ export const uptimerobotActionHandlers: ProviderActionHandlers<"uptimerobot", Up
       body: buildDeleteMonitorBody(input),
       phase: "execute",
     });
-    requireObjectPayload(payload.monitor, "uptimerobot delete monitor response");
+    requiredResponseRecord(payload.monitor, "uptimerobot delete monitor response");
     return { deleted: true };
   },
 };
@@ -144,7 +146,7 @@ export const credentialValidators: CredentialValidators = {
       endpoint: "getAccountDetails",
       phase: "validate",
     });
-    const account = requireObjectPayload(payload.account, "uptimerobot account details response");
+    const account = requiredResponseRecord(payload.account, "uptimerobot account details response");
     const email = optionalString(account.email);
     const firstName = optionalString(account.firstname);
     const userId = readUnknownAsString(account.user_id);
@@ -155,7 +157,6 @@ export const credentialValidators: CredentialValidators = {
         accountId,
         displayName: firstName ?? email ?? accountId,
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: uptimerobotApiBaseUrl,
         validationEndpoint: "/getAccountDetails",
@@ -169,7 +170,7 @@ export const credentialValidators: CredentialValidators = {
 };
 
 async function requestUptimerobotJson(input: {
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   endpoint: string;
   phase: UptimerobotRequestPhase;
   body?: URLSearchParams;
@@ -184,11 +185,11 @@ async function requestUptimerobotJson(input: {
 }
 
 async function uptimerobotFetch(input: {
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   endpoint: string;
   body?: URLSearchParams;
 }): Promise<Response> {
-  const timeout = createProviderTimeout(input.context.signal, uptimerobotDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   const body = new URLSearchParams(input.body);
   body.set("api_key", input.context.apiKey);
   body.set("format", "json");
@@ -196,7 +197,7 @@ async function uptimerobotFetch(input: {
     return await input.context.fetcher(new URL(input.endpoint, `${uptimerobotApiBaseUrl}/`), {
       method: "POST",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/x-www-form-urlencoded",
         "user-agent": providerUserAgent,
       },
@@ -207,7 +208,7 @@ async function uptimerobotFetch(input: {
     if (timeout.didTimeout() && isAbortLikeError(error)) {
       throw new ProviderRequestError(
         504,
-        `uptimerobot ${input.endpoint} request timed out after ${Math.ceil(uptimerobotDefaultRequestTimeoutMs / 1000)} seconds`,
+        `uptimerobot ${input.endpoint} request timed out after ${Math.ceil(defaultProviderRequestTimeoutMs / 1000)} seconds`,
       );
     }
     throw new ProviderRequestError(
@@ -406,12 +407,6 @@ function requirePositiveInteger(value: unknown, fieldName: string): number {
   if (parsed === undefined || parsed <= 0)
     throw new ProviderRequestError(400, `${fieldName} must be a positive integer`);
   return parsed;
-}
-
-function requireObjectPayload(value: unknown, label: string): Record<string, unknown> {
-  const record = optionalRecord(value);
-  if (!record) throw new ProviderRequestError(502, `${label} must be an object`);
-  return record;
 }
 
 function requireArrayPayload(value: unknown, label: string): unknown[] {

@@ -1,6 +1,5 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { OAuthProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { OAuthProviderContext, ProviderActionHandlers } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -9,9 +8,23 @@ import {
   optionalInteger,
   optionalRecord,
   optionalString,
+  requiredRawString,
+  requiredString,
 } from "../../core/cast.ts";
-import { googleJsonRequest } from "../google-runtime.ts";
-import { defineOAuthProviderExecutors, ProviderRequestError } from "../provider-runtime.ts";
+import {
+  defineGoogleProviderExecutors,
+  googleBearerProxyAuth,
+  googleServiceAccountValidator,
+} from "../googledrive/runtime-auth.ts";
+import { googleJsonRequest } from "../googledrive/runtime-request.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import {
+  providerInputError,
+  ProviderRequestError,
+  providerResponseError,
+  requiredResponseRecord,
+} from "../provider-runtime.ts";
+import { googleFormsOAuthScopes } from "./scopes.ts";
 
 export const googleFormsApiBaseUrl = "https://forms.googleapis.com/v1/forms";
 
@@ -19,11 +32,7 @@ const service = "googleforms";
 const googleUserInfoUrl = "https://www.googleapis.com/oauth2/v3/userinfo";
 const allowedPublishUpdateMasks = new Set(["publishState", "*"]);
 
-type GoogleFormsRuntimeContext = OAuthProviderContext;
-type GoogleFormsActionHandler = (
-  input: Record<string, unknown>,
-  context: GoogleFormsRuntimeContext,
-) => Promise<unknown>;
+type GoogleFormsActionHandler = (input: Record<string, unknown>, context: OAuthProviderContext) => Promise<unknown>;
 
 interface FormInfoPayload {
   title?: string;
@@ -87,7 +96,16 @@ export const googleFormsActionHandlers: ProviderActionHandlers<"googleforms", Go
   list_watches: listWatches,
 };
 
-export const executors: ProviderExecutors = defineOAuthProviderExecutors(service, googleFormsActionHandlers);
+export const executors: ProviderExecutors = defineGoogleProviderExecutors(service, googleFormsActionHandlers, {
+  scopes: googleFormsOAuthScopes,
+});
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: googleFormsApiBaseUrl,
+  auth: googleBearerProxyAuth(googleFormsOAuthScopes),
+  skipDnsValidation: true,
+});
 
 export const credentialValidators: CredentialValidators = {
   async oauth2(input, { fetcher, signal }) {
@@ -110,9 +128,10 @@ export const credentialValidators: CredentialValidators = {
       },
     };
   },
+  customCredential: googleServiceAccountValidator(service, googleFormsOAuthScopes),
 };
 
-async function createForm(input: Record<string, unknown>, context: GoogleFormsRuntimeContext) {
+async function createForm(input: Record<string, unknown>, context: OAuthProviderContext) {
   const title = requireString(input.title, "title is required");
   const description = optionalString(input.description);
   const documentTitle = optionalString(input.documentTitle);
@@ -168,7 +187,7 @@ async function createForm(input: Record<string, unknown>, context: GoogleFormsRu
   });
 }
 
-async function getForm(input: Record<string, unknown>, context: GoogleFormsRuntimeContext) {
+async function getForm(input: Record<string, unknown>, context: OAuthProviderContext) {
   const formId = requireString(input.formId, "formId is required");
   const payload = await googleFormsJsonRequest<FormPayload>(`${googleFormsApiBaseUrl}/${encodeURIComponent(formId)}`, {
     context,
@@ -177,9 +196,9 @@ async function getForm(input: Record<string, unknown>, context: GoogleFormsRunti
   return normalizeFormDetail(payload);
 }
 
-async function batchUpdateForm(input: Record<string, unknown>, context: GoogleFormsRuntimeContext) {
+async function batchUpdateForm(input: Record<string, unknown>, context: OAuthProviderContext) {
   const formId = requireString(input.formId, "formId is required");
-  const requests = objectArray(input.requests, "requests", providerRequestError);
+  const requests = objectArray(input.requests, "requests", providerInputError);
   const includeFormInResponse = input.includeFormInResponse === true;
 
   const payload = await googleFormsJsonRequest<BatchUpdatePayload>(
@@ -205,7 +224,7 @@ async function batchUpdateForm(input: Record<string, unknown>, context: GoogleFo
   });
 }
 
-async function setPublishSettings(input: Record<string, unknown>, context: GoogleFormsRuntimeContext) {
+async function setPublishSettings(input: Record<string, unknown>, context: OAuthProviderContext) {
   const formId = requireString(input.formId, "formId is required");
   const updateMask = optionalString(input.updateMask);
   if (updateMask && !allowedPublishUpdateMasks.has(updateMask)) {
@@ -225,7 +244,7 @@ async function setPublishSettings(input: Record<string, unknown>, context: Googl
   return normalizeSetPublishSettingsResult(formId, requestedState, payload);
 }
 
-async function listResponses(input: Record<string, unknown>, context: GoogleFormsRuntimeContext) {
+async function listResponses(input: Record<string, unknown>, context: OAuthProviderContext) {
   const formId = requireString(input.formId, "formId is required");
   const payload = await googleFormsJsonRequest<ListResponsesPayload>(
     `${googleFormsApiBaseUrl}/${encodeURIComponent(formId)}/responses`,
@@ -247,7 +266,7 @@ async function listResponses(input: Record<string, unknown>, context: GoogleForm
   };
 }
 
-async function getResponse(input: Record<string, unknown>, context: GoogleFormsRuntimeContext) {
+async function getResponse(input: Record<string, unknown>, context: OAuthProviderContext) {
   const formId = requireString(input.formId, "formId is required");
   const responseId = requireString(input.responseId, "responseId is required");
 
@@ -261,7 +280,7 @@ async function getResponse(input: Record<string, unknown>, context: GoogleFormsR
   return normalizeFormResponse(payload);
 }
 
-async function listWatches(input: Record<string, unknown>, context: GoogleFormsRuntimeContext) {
+async function listWatches(input: Record<string, unknown>, context: OAuthProviderContext) {
   const formId = requireString(input.formId, "formId is required");
   const payload = await googleFormsJsonRequest<{ watches?: unknown }>(
     `${googleFormsApiBaseUrl}/${encodeURIComponent(formId)}/watches`,
@@ -321,12 +340,12 @@ function normalizeFormSummary(
     description?: string;
   },
 ): Record<string, unknown> {
-  const info = optionalRecord(payload.info);
+  const info = requiredResponseRecord(payload.info, "googleforms form info");
   const publishSettings = normalizePublishSettings(payload.publishSettings);
 
   return compactObject({
-    formId: requireString(payload.formId, "missing googleforms formId"),
-    title: requireString(info?.title, "missing googleforms form title"),
+    formId: requiredString(payload.formId, "googleforms formId", providerResponseError),
+    title: requiredRawString(info.title ?? "", "googleforms form title", providerResponseError),
     description: overrides?.description ?? optionalString(info?.description),
     documentTitle: optionalString(info?.documentTitle),
     revisionId: optionalString(payload.revisionId),
@@ -338,12 +357,12 @@ function normalizeFormSummary(
 }
 
 function normalizeFormDetail(payload: FormPayload): Record<string, unknown> {
-  const info = optionalRecord(payload.info);
+  const info = requiredResponseRecord(payload.info, "googleforms form info");
   const settings = normalizeSettings(payload.settings);
   const publishSettings = normalizePublishSettings(payload.publishSettings);
   return compactObject({
-    formId: requireString(payload.formId, "missing googleforms formId"),
-    title: requireString(info?.title, "missing googleforms form title"),
+    formId: requiredString(payload.formId, "googleforms formId", providerResponseError),
+    title: requiredRawString(info.title ?? "", "googleforms form title", providerResponseError),
     description: optionalString(info?.description),
     documentTitle: optionalString(info?.documentTitle),
     revisionId: optionalString(payload.revisionId),
@@ -486,7 +505,7 @@ function buildWriteControl(input: Record<string, unknown>): Record<string, unkno
 async function googleFormsJsonRequest<T>(
   url: string,
   input: {
-    context: Pick<GoogleFormsRuntimeContext, "accessToken" | "fetcher" | "signal">;
+    context: OAuthProviderContext;
     method?: string;
     query?: Record<string, string | undefined>;
     body?: unknown;
@@ -520,8 +539,4 @@ function requireBoolean(value: unknown, message: string): boolean {
 function integerQuery(value: unknown): string | undefined {
   const integer = optionalInteger(value);
   return integer !== undefined ? String(integer) : undefined;
-}
-
-function providerRequestError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

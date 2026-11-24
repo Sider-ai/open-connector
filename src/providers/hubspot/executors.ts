@@ -1,9 +1,15 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { OAuthProviderContext } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { OAuthProviderContext } from "../provider-executors.ts";
 
-import { defineOAuthProviderExecutors } from "../provider-runtime.ts";
-import { executeHubspotAction, fetchHubspotCurrentAccount } from "./runtime.ts";
+import { defineOAuthProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { executeHubspotAction, fetchHubspotCurrentAccount, hubspotMcpEndpoint } from "./runtime.ts";
 
 const service = "hubspot";
 
@@ -167,6 +173,16 @@ export const hubspotActionHandlers: ProviderActionHandlers<"hubspot", HubspotAct
 
 export const executors: ProviderExecutors = defineOAuthProviderExecutors(service, hubspotActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: hubspotMcpEndpoint,
+  auth: { type: "oauth_bearer" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json, text/event-stream");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async oauth2(input, { fetcher }): Promise<CredentialValidationResult> {
     const profile = await fetchHubspotCurrentAccount(input.accessToken, fetcher);
@@ -175,7 +191,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: profile.providerAccountId,
         displayName: profile.accountLabel,
       },
-      grantedScopes: ["mcp:tools"],
       metadata: profile.providerMetadata,
     };
   },

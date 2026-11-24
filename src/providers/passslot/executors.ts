@@ -4,15 +4,15 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { Validator } from "@cfworker/json-schema";
 import { Buffer } from "node:buffer";
 import { objectArray, optionalRawString, optionalRecord, requiredRecord, requiredString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
+  providerResponseError,
   providerUserAgent,
   ProviderRequestError,
   readProviderJsonBody,
@@ -32,8 +32,6 @@ interface PassslotRequestInput {
   phase?: PassslotRequestPhase;
   allowEmpty?: boolean;
 }
-
-type PassslotRequestContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
 
 const emptyPassslotResponse = Symbol("empty PassSlot response");
 
@@ -134,9 +132,7 @@ export const credentialValidators: CredentialValidators = {
     return {
       profile: {
         displayName: "PassSlot App Key",
-        grantedScopes: [],
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: passslotApiBaseUrl,
         validationEndpoint: "/templates",
@@ -162,7 +158,7 @@ function requirePassslotIdentifier(value: unknown): string {
 
 async function requestPassslotArray(
   input: PassslotRequestInput,
-  context: PassslotRequestContext,
+  context: ApiKeyProviderContext,
 ): Promise<Array<Record<string, unknown>>> {
   const payload = await requestPassslotJson(input, context);
   return objectArray(payload, "PassSlot response", providerResponseError);
@@ -170,7 +166,7 @@ async function requestPassslotArray(
 
 async function requestPassslotObject(
   input: PassslotRequestInput,
-  context: PassslotRequestContext,
+  context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
   const payload = await requestPassslotJson(input, context);
   const object = optionalRecord(payload);
@@ -180,12 +176,12 @@ async function requestPassslotObject(
   return object;
 }
 
-async function requestPassslotJson(input: PassslotRequestInput, context: PassslotRequestContext): Promise<unknown> {
+async function requestPassslotJson(input: PassslotRequestInput, context: ApiKeyProviderContext): Promise<unknown> {
   const response = await context.fetcher(`${passslotApiBaseUrl}${input.path}`, {
     method: input.method ?? "GET",
     headers: {
-      accept: "application/json",
-      authorization: `Basic ${Buffer.from(`${context.apiKey}:`).toString("base64")}`,
+      "accept": "application/json",
+      "authorization": `Basic ${Buffer.from(`${context.apiKey}:`).toString("base64")}`,
       "user-agent": providerUserAgent,
       ...(input.body === undefined ? {} : { "content-type": "application/json" }),
     },
@@ -287,8 +283,4 @@ function validatePassslotUrl(value: unknown, field: string, payload: unknown): s
     throw new ProviderRequestError(502, `PassSlot ${field} must be a valid URL`, payload);
   }
   return value;
-}
-
-function providerResponseError(message: string): ProviderRequestError {
-  return new ProviderRequestError(502, message);
 }

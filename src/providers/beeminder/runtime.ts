@@ -1,8 +1,8 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
-import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
+import { booleanString, compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
 import { encodePathSegment } from "../../core/request.ts";
 import {
   createProviderTimeout,
@@ -12,10 +12,8 @@ import {
 } from "../provider-runtime.ts";
 
 export const beeminderApiBaseUrl = "https://www.beeminder.com/api/v1";
-const beeminderDefaultRequestTimeoutMs = 30_000;
 
 type BeeminderPhase = "validate" | "execute";
-type BeeminderContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
 type BeeminderActionHandler = ProviderRuntimeHandler<ApiKeyProviderContext>;
 
 export const beeminderActionHandlers: ProviderActionHandlers<"beeminder", BeeminderActionHandler> = {
@@ -24,9 +22,9 @@ export const beeminderActionHandlers: ProviderActionHandlers<"beeminder", Beemin
       method: "GET",
       path: `/users/${encodePathSegment(optionalString(input.username) ?? "me")}.json`,
       query: compactObject({
-        associations: readOptionalBooleanString(input.associations),
+        associations: booleanString(input.associations),
         diff_since: readOptionalIntegerString(input.diff_since),
-        skinny: readOptionalBooleanString(input.skinny),
+        skinny: booleanString(input.skinny),
         datapoints_count: readOptionalIntegerString(input.datapoints_count),
       }),
       context,
@@ -64,7 +62,7 @@ export const beeminderActionHandlers: ProviderActionHandlers<"beeminder", Beemin
       method: "GET",
       path: `/users/${encodePathSegment(readRequiredString(input.username, "username"))}/goals/${encodePathSegment(readRequiredString(input.goal_slug, "goal_slug"))}.json`,
       query: compactObject({
-        datapoints: readOptionalBooleanString(input.datapoints),
+        datapoints: booleanString(input.datapoints),
       }),
       context,
       phase: "execute",
@@ -169,7 +167,6 @@ export async function validateBeeminderCredential(
       accountId: user.username || "beeminder-api-token",
       displayName: user.username ? `Beeminder ${user.username}` : "Beeminder API Token",
     },
-    grantedScopes: [],
     metadata: compactObject({
       username: user.username || undefined,
       timezone: user.timezone ?? undefined,
@@ -184,10 +181,10 @@ async function requestBeeminderJson(input: {
   path: string;
   query?: Record<string, string | undefined>;
   form?: Record<string, string | undefined>;
-  context: BeeminderContext;
+  context: ApiKeyProviderContext;
   phase: BeeminderPhase;
 }): Promise<unknown> {
-  const timeout = createProviderTimeout(input.context.signal, beeminderDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   const body = input.form ? buildBeeminderForm(input.context.apiKey, input.form) : undefined;
 
   try {
@@ -197,12 +194,12 @@ async function requestBeeminderJson(input: {
         method: input.method,
         headers: body
           ? {
-              accept: "application/json",
+              "accept": "application/json",
               "content-type": "application/x-www-form-urlencoded",
               "user-agent": providerUserAgent,
             }
           : {
-              accept: "application/json",
+              "accept": "application/json",
               "user-agent": providerUserAgent,
             },
         body,
@@ -430,10 +427,6 @@ function readOptionalIntegerString(value: unknown): string | undefined {
     return undefined;
   }
   return String(value);
-}
-
-function readOptionalBooleanString(value: unknown): string | undefined {
-  return typeof value === "boolean" ? String(value) : undefined;
 }
 
 function readNullableInteger(value: unknown): number | null {

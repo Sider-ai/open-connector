@@ -1,20 +1,15 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
 import { compactObject, optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
-import {
-  createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
-  providerUserAgent,
-  ProviderRequestError,
-} from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { createProviderTimeout, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "wakatime";
 const wakatimeApiBaseUrl = "https://wakatime.com/api/v1";
-const wakatimeDefaultRequestTimeoutMs = 30_000;
 
 type WakatimeRequestPhase = "validate" | "execute";
 
@@ -71,7 +66,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: userId,
         displayName: accountLabel,
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: wakatimeApiBaseUrl,
         validationEndpoint: "/users/current",
@@ -193,7 +187,7 @@ async function requestWakatimeJson(input: {
   signal?: AbortSignal;
   query?: URLSearchParams;
 }): Promise<{ response: Response; payload: Record<string, unknown> }> {
-  const timeout = createProviderTimeout(input.signal, wakatimeDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   try {
     const normalizedPath = input.path.startsWith("/") ? input.path.slice(1) : input.path;
     const url = new URL(normalizedPath, `${wakatimeApiBaseUrl}/`);
@@ -209,8 +203,8 @@ async function requestWakatimeJson(input: {
         method: "GET",
         signal: timeout.signal,
         headers: {
-          Authorization: `Basic ${Buffer.from(input.apiKey).toString("base64")}`,
-          Accept: "application/json",
+          "Authorization": `Basic ${Buffer.from(input.apiKey).toString("base64")}`,
+          "Accept": "application/json",
           "User-Agent": providerUserAgent,
         },
       });

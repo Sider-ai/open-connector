@@ -3,12 +3,13 @@ import type { ActionDefinition } from "../../core/types.ts";
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
 
-const service = "diffy" as const;
+const service = "diffy";
 const positiveId = (description: string) => s.integer(description, { minimum: 1 });
 const rawObject = (description: string) => s.looseObject(description);
 
 const listProjectsAction = defineProviderAction(service, {
   name: "list_projects",
+  operationType: "read",
   description: "List the Diffy visual testing projects available to the connected account.",
   requiredScopes: [],
   inputSchema: s.object("The input payload for listing Diffy projects.", {}),
@@ -19,6 +20,7 @@ const listProjectsAction = defineProviderAction(service, {
 
 const getProjectAction = defineProviderAction(service, {
   name: "get_project",
+  operationType: "read",
   description: "Get the current settings and environments for a Diffy project.",
   requiredScopes: [],
   inputSchema: s.object("The input payload for getting a Diffy project.", {
@@ -31,6 +33,7 @@ const getProjectAction = defineProviderAction(service, {
 
 const listScreenshotsAction = defineProviderAction(service, {
   name: "list_screenshots",
+  operationType: "read",
   description: "List screenshot sets captured for a Diffy project.",
   requiredScopes: [],
   inputSchema: s.object("The input payload for listing Diffy screenshots.", {
@@ -43,6 +46,7 @@ const listScreenshotsAction = defineProviderAction(service, {
 
 const getScreenshotAction = defineProviderAction(service, {
   name: "get_screenshot",
+  operationType: "read",
   description: "Get the current status and result details for a Diffy screenshot set.",
   requiredScopes: [],
   inputSchema: s.object("The input payload for getting a Diffy screenshot set.", {
@@ -55,6 +59,7 @@ const getScreenshotAction = defineProviderAction(service, {
 
 const listDiffsAction = defineProviderAction(service, {
   name: "list_diffs",
+  operationType: "read",
   description: "List visual comparison results for a Diffy project.",
   requiredScopes: [],
   inputSchema: s.object(
@@ -74,6 +79,7 @@ const listDiffsAction = defineProviderAction(service, {
 
 const getDiffAction = defineProviderAction(service, {
   name: "get_diff",
+  operationType: "read",
   description: "Get the current status and visual change result for a Diffy comparison.",
   requiredScopes: [],
   inputSchema: s.object("The input payload for getting a Diffy comparison.", {

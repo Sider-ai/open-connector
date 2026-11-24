@@ -1,14 +1,11 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
-import {
-  defineProviderExecutors,
-  defineProviderProxy,
-  ProviderRequestError,
-  providerUserAgent,
-  requireApiKeyCredential,
-} from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 interface Context {
   siteUrl: string;
   authorization: string;
@@ -63,7 +60,7 @@ async function request(
     }
   }
   const response = await context.fetcher(url, {
-    headers: { accept: "application/json", authorization: context.authorization, "user-agent": providerUserAgent },
+    headers: { "accept": "application/json", "authorization": context.authorization, "user-agent": providerUserAgent },
     signal: context.signal,
   });
   const payload = await response.json().catch(() => null);
@@ -176,7 +173,7 @@ export const credentialValidators: CredentialValidators = {
     const resolvedSiteUrl = siteUrl(input.values.siteUrl);
     const authorization = `Basic ${Buffer.from(`${input.apiKey}:x`).toString("base64")}`;
     const response = await fetcher(new URL("/site.json", resolvedSiteUrl), {
-      headers: { accept: "application/json", authorization, "user-agent": providerUserAgent },
+      headers: { "accept": "application/json", authorization, "user-agent": providerUserAgent },
       signal,
     });
     const payload = await response.json().catch(() => null);
@@ -197,7 +194,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: `chargify:${siteId ?? subdomain}`,
         displayName: typeof record.name === "string" ? record.name : `Maxio ${subdomain}`,
       },
-      grantedScopes: [],
       metadata: {
         siteUrl: resolvedSiteUrl,
         validationEndpoint: "/site.json",
@@ -217,8 +213,5 @@ export const proxy: ProviderProxyExecutor = defineProviderProxy({
     return siteUrl((await requireApiKeyCredential(context, "chargify")).values.siteUrl);
   },
   auth: { type: "api_key_basic", suffix: ":x" },
-  customizeRequest({ headers }) {
-    if (!headers.has("accept")) headers.set("accept", "application/json");
-    if (!headers.has("user-agent")) headers.set("user-agent", providerUserAgent);
-  },
+  defaultHeaders: { "accept": "application/json", "user-agent": providerUserAgent },
 });

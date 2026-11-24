@@ -1,25 +1,17 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
-import {
-  compactObject,
-  optionalBoolean,
-  optionalInteger,
-  optionalRecord,
-  optionalString,
-  requiredString,
-} from "../../core/cast.ts";
+import { compactObject, optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import {
   createProviderTimeout,
   isAbortLikeError,
   ProviderRequestError,
   providerUserAgent,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 const encodianDefaultApiBaseUrl = "https://api.apps-encodian.com";
 const encodianCreateGuidPath = "/api/v1/Utility/CreateGuid";
-const encodianRequestTimeoutMs = 30_000;
 
 type EncodianPhase = "validate" | "execute";
 
@@ -74,7 +66,6 @@ export async function validateEncodianCredential(
       accountId: "encodian",
       displayName: "Encodian API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl,
       validationEndpoint: encodianCreateGuidPath,
@@ -88,7 +79,7 @@ async function executeCompressPdf(input: Record<string, unknown>, context: Encod
     context,
     path: "/api/v1/Core/CompressPdf",
     body: compactObject({
-      fileContent: readRequiredString(input.fileContent, "fileContent"),
+      fileContent: requiredInputString(input.fileContent, "fileContent"),
       compressImages: optionalBoolean(input.compressImages),
       imageQuality: optionalInteger(input.imageQuality),
       maxResolution: optionalInteger(input.maxResolution),
@@ -115,7 +106,7 @@ async function executeExtractPdfPages(input: Record<string, unknown>, context: E
     context,
     path: "/api/v1/Core/ExtractPdfPages",
     body: compactObject({
-      fileContent: readRequiredString(input.fileContent, "fileContent"),
+      fileContent: requiredInputString(input.fileContent, "fileContent"),
       StartPage: optionalInteger(input.startPage),
       EndPage: optionalInteger(input.endPage),
       pageNumbers: optionalString(input.pageNumbers),
@@ -131,8 +122,8 @@ async function executeGetPdfTextLayer(input: Record<string, unknown>, context: E
     context,
     path: "/api/v1/Core/GetPdfTextLayer",
     body: compactObject({
-      FileName: readRequiredString(input.fileName, "fileName"),
-      FileContent: readRequiredString(input.fileContent, "fileContent"),
+      FileName: requiredInputString(input.fileName, "fileName"),
+      FileContent: requiredInputString(input.fileContent, "fileContent"),
       StartPage: optionalInteger(input.startPage),
       EndPage: optionalInteger(input.endPage),
       TextEncodingType: optionalString(input.textEncodingType),
@@ -153,8 +144,8 @@ async function executeSecurePdfDocument(input: Record<string, unknown>, context:
     context,
     path: "/api/v1/Core/SecurePdfDocument",
     body: compactObject({
-      FileName: readRequiredString(input.fileName, "fileName"),
-      fileContent: readRequiredString(input.fileContent, "fileContent"),
+      FileName: requiredInputString(input.fileName, "fileName"),
+      fileContent: requiredInputString(input.fileContent, "fileContent"),
       userPassword: optionalString(input.userPassword),
       adminPassword: optionalString(input.adminPassword),
       pdfPrivileges: optionalString(input.pdfPrivileges),
@@ -179,9 +170,9 @@ async function executeUnlockPdfDocument(input: Record<string, unknown>, context:
     context,
     path: "/api/v1/Core/UnlockPdfDocument",
     body: {
-      FileName: readRequiredString(input.fileName, "fileName"),
-      fileContent: readRequiredString(input.fileContent, "fileContent"),
-      password: readRequiredString(input.password, "password"),
+      FileName: requiredInputString(input.fileName, "fileName"),
+      fileContent: requiredInputString(input.fileContent, "fileContent"),
+      password: requiredInputString(input.password, "password"),
       FinalOperation: true,
     },
     phase: "execute",
@@ -191,13 +182,13 @@ async function executeUnlockPdfDocument(input: Record<string, unknown>, context:
 }
 
 async function requestEncodianJson(input: {
-  context: Pick<EncodianContext, "apiKey" | "apiBaseUrl" | "fetcher" | "signal">;
+  context: EncodianContext;
   path: string;
   body: Record<string, unknown>;
   phase: EncodianPhase;
 }): Promise<unknown> {
   const url = new URL(input.path, input.context.apiBaseUrl);
-  const timeout = createProviderTimeout(input.context.signal, encodianRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   let response: Response;
   let payload: unknown;
 
@@ -266,7 +257,7 @@ function normalizeEncodianApiBaseUrl(value?: string): string {
 function encodianHeaders(apiKey: string): Record<string, string> {
   return {
     "content-type": "application/json",
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     "X-ApiKey": apiKey,
   };
@@ -400,10 +391,6 @@ function readEncodianString(record: Record<string, unknown>, ...keys: string[]):
     }
   }
   return undefined;
-}
-
-function readRequiredString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function assertExtractPageInput(input: Record<string, unknown>): void {

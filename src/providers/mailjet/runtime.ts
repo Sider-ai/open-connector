@@ -1,9 +1,15 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
 import { compactObject, optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
-import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import {
+  ProviderRequestError,
+  providerUserAgent,
+  requiredResponseRecord,
+  providerInputError,
+  providerResponseError,
+} from "../provider-runtime.ts";
 
 const mailjetApiBaseUrl = "https://api.mailjet.com/v3/REST";
 const mailjetValidationPath = "/contact?Limit=1";
@@ -55,7 +61,6 @@ export async function validateMailjetCredential(
       accountId: "mailjet:api-key",
       displayName: "Mailjet API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: mailjetApiBaseUrl,
       validationEndpoint: mailjetValidationPath,
@@ -167,8 +172,8 @@ async function requestMailjet(input: {
   }
 
   const headers: Record<string, string> = {
-    accept: "application/json",
-    authorization: buildBasicAuthorizationHeader(input.apiKey, input.apiSecret),
+    "accept": "application/json",
+    "authorization": buildBasicAuthorizationHeader(input.apiKey, input.apiSecret),
     "user-agent": providerUserAgent,
   };
   if (input.body !== undefined) {
@@ -219,9 +224,9 @@ function createMailjetError(
     return new ProviderRequestError(429, message);
   }
   if (phase === "validate") {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
-  return new ProviderRequestError(502, message);
+  return providerResponseError(message);
 }
 
 function extractMailjetErrorMessage(payload: unknown): string | undefined {
@@ -236,7 +241,7 @@ function extractMailjetErrorMessage(payload: unknown): string | undefined {
 }
 
 function normalizeContactListResponse(payload: unknown): Record<string, unknown> {
-  const response = requireRecord(payload, "Mailjet contact list response");
+  const response = requiredResponseRecord(payload, "Mailjet contact list response");
   const contacts = readArray(response.Data, "Mailjet contact list Data").map((item) => normalizeContact(item));
   return {
     count: readOptionalInteger(response.Count) ?? contacts.length,
@@ -255,7 +260,7 @@ function normalizeSingleContactResponse(payload: unknown): Record<string, unknow
 }
 
 function normalizeContact(value: unknown): Record<string, unknown> {
-  const record = requireRecord(value, "Mailjet contact");
+  const record = requiredResponseRecord(value, "Mailjet contact");
   return {
     id: readRequiredInteger(record.ID, "Mailjet contact ID"),
     email: readRequiredString(record.Email, "Mailjet contact Email"),
@@ -334,14 +339,6 @@ function readNullableBoolean(value: unknown): boolean | null {
     return false;
   }
   return null;
-}
-
-function requireRecord(value: unknown, label: string): Record<string, unknown> {
-  const record = optionalRecord(value);
-  if (!record) {
-    throw new ProviderRequestError(502, `${label} must be an object`);
-  }
-  return record;
 }
 
 function readArray(value: unknown, fieldName: string): unknown[] {

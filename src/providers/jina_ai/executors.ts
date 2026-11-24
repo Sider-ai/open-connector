@@ -1,12 +1,12 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
   providerUserAgent,
   ProviderRequestError,
   readProviderTextBody,
@@ -14,7 +14,6 @@ import {
 
 const service = "jina_ai";
 const apiBaseUrl = "https://api.jina.ai";
-const requestTimeoutMs = 30_000;
 
 type JinaAiActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
@@ -61,7 +60,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "api_key",
         displayName: "Jina AI API Key",
       },
-      grantedScopes: [],
       metadata: {
         validationEndpoint: paths.rerank_documents,
       },
@@ -75,12 +73,12 @@ async function jinaPost(
   path: string,
   mode: "validate" | "execute",
 ): Promise<unknown> {
-  const timeout = createProviderTimeout(context.signal, requestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const response = await context.fetcher(`${apiBaseUrl}${path}`, {
       method: "POST",
       headers: {
-        authorization: `Bearer ${context.apiKey}`,
+        "authorization": `Bearer ${context.apiKey}`,
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },

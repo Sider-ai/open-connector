@@ -1,11 +1,11 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
 import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
-const blocknativeApiBaseUrl = "https://api.blocknative.com";
+export const blocknativeApiBaseUrl = "https://api.blocknative.com";
 
 type BlocknativeRequestPhase = "validate" | "execute";
 type BlocknativeQueryValue = number | string | readonly number[] | readonly string[] | undefined;
@@ -39,7 +39,6 @@ export async function validateBlocknativeCredential(
       accountId: "blocknative",
       displayName: "Blocknative API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: blocknativeApiBaseUrl,
       validationEndpoint: "/chains",
@@ -95,7 +94,7 @@ async function getGasPriceDistribution(
 async function blocknativeGet(
   path: string,
   query: Record<string, BlocknativeQueryValue>,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: BlocknativeRequestPhase,
 ): Promise<unknown> {
   const response = await blocknativeFetch(path, query, context);
@@ -110,7 +109,7 @@ async function blocknativeGet(
 async function blocknativeFetch(
   path: string,
   query: Record<string, BlocknativeQueryValue>,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
 ): Promise<Response> {
   const normalizedPath = path.startsWith("/") ? path.slice(1) : path;
   const url = new URL(normalizedPath, `${blocknativeApiBaseUrl}/`);
@@ -122,8 +121,8 @@ async function blocknativeFetch(
     return await context.fetcher(url.toString(), {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: context.apiKey,
+        "accept": "application/json",
+        "authorization": context.apiKey,
         "user-agent": providerUserAgent,
       },
       signal: context.signal,

@@ -1,25 +1,29 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalString, requiredString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
   isAbortLikeError,
+  providerInputError,
   providerUserAgent,
   ProviderRequestError,
 } from "../provider-runtime.ts";
 
 const service = "la_growth_machine";
 const laGrowthMachineApiBaseUrl = "https://apiv2.lagrowthmachine.com/flow";
-const laGrowthMachineRequestTimeoutMs = 30_000;
 
 type JsonObject = Record<string, unknown>;
-type LaGrowthMachineContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
 type LaGrowthMachineActionHandler = (
   input: Record<string, unknown>,
-  context: LaGrowthMachineContext,
+  context: ApiKeyProviderContext,
 ) => Promise<unknown>;
 
 export const laGrowthMachineActionHandlers: ProviderActionHandlers<"la_growth_machine", LaGrowthMachineActionHandler> =
@@ -121,6 +125,16 @@ export const laGrowthMachineActionHandlers: ProviderActionHandlers<"la_growth_ma
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, laGrowthMachineActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: laGrowthMachineApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     return validateLaGrowthMachineCredential(
@@ -135,7 +149,7 @@ export const credentialValidators: CredentialValidators = {
 };
 
 async function validateLaGrowthMachineCredential(
-  context: LaGrowthMachineContext,
+  context: ApiKeyProviderContext,
   phase: "validate",
 ): Promise<CredentialValidationResult> {
   const payload = await requestLaGrowthMachine({ path: "/members", context, phase });
@@ -149,7 +163,6 @@ async function validateLaGrowthMachineCredential(
       accountId: memberId ? `la_growth_machine:${memberId}` : "la_growth_machine:api_key",
       displayName: accountLabel,
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: laGrowthMachineApiBaseUrl,
       validationEndpoint: "/members",
@@ -163,14 +176,14 @@ async function requestLaGrowthMachine(request: {
   search?: Array<[string, unknown]>;
   body?: Record<string, unknown>;
   phase?: "validate" | "execute";
-  context: LaGrowthMachineContext;
+  context: ApiKeyProviderContext;
 }): Promise<unknown> {
   const url = new URL(request.path.replace(/^\//, ""), `${laGrowthMachineApiBaseUrl}/`);
   for (const [key, value] of request.search ?? []) {
     appendQueryValue(url, key, value);
   }
 
-  const timeout = createProviderTimeout(request.context.signal, laGrowthMachineRequestTimeoutMs);
+  const timeout = createProviderTimeout(request.context.signal);
   let response: Response;
   let payload: unknown;
   try {
@@ -207,8 +220,8 @@ async function requestLaGrowthMachine(request: {
 
 function buildHeaders(apiKey: string, hasBody: boolean): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "user-agent": providerUserAgent,
   };
   if (hasBody) {
@@ -351,8 +364,4 @@ function hasLeadMutationIdentifier(value: Record<string, unknown>): boolean {
 
 function hasNonEmptyString(value: unknown): boolean {
   return typeof value === "string" && value.trim().length > 0;
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

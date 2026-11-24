@@ -1,6 +1,10 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -13,15 +17,26 @@ import {
   requiredStringArray,
 } from "../../core/cast.ts";
 import { encodePathSegment } from "../../core/request.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
-  defineApiKeyProviderExecutors,
+  providerInputError,
   ProviderRequestError,
+  providerResponseError,
   providerUserAgent,
   readProviderTextBody,
 } from "../provider-runtime.ts";
 
 const service = "revenuecat";
 const revenueCatApiBaseUrl = "https://api.revenuecat.com";
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: revenueCatApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
 
 type RevenueCatPhase = "validate" | "execute";
 type RevenueCatActionHandler = ProviderRuntimeHandler<ApiKeyProviderContext>;
@@ -76,7 +91,7 @@ export const revenueCatActionHandlers: ProviderActionHandlers<"revenuecat", Reve
         store_subscription_identifier: requiredString(
           input.storeSubscriptionIdentifier,
           "storeSubscriptionIdentifier",
-          inputError,
+          providerInputError,
         ),
         include_scheduled: optionalBoolean(input.includeScheduled),
       },
@@ -109,8 +124,8 @@ export const revenueCatActionHandlers: ProviderActionHandlers<"revenuecat", Reve
   },
   get_revenue_metric(input, context) {
     return getRevenueCatResource(`/v2/projects/${projectId(input)}/metrics/revenue`, context, "metric", {
-      start_date: requiredString(input.startDate, "startDate", inputError),
-      end_date: requiredString(input.endDate, "endDate", inputError),
+      start_date: requiredString(input.startDate, "startDate", providerInputError),
+      end_date: requiredString(input.endDate, "endDate", providerInputError),
       currency: optionalString(input.currency),
       revenue_type: optionalString(input.revenueType),
     });
@@ -135,7 +150,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "revenuecat-api-key",
         displayName: "RevenueCat API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: revenueCatApiBaseUrl,
         apiVersion: "v2",
@@ -184,7 +198,7 @@ async function getRevenueCatResource(
 
 async function requestRevenueCat(
   path: string,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   query: Record<string, RevenueCatQueryValue>,
   phase: RevenueCatPhase,
 ): Promise<unknown> {
@@ -203,8 +217,8 @@ async function requestRevenueCat(
     response = await context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${context.apiKey}`,
         "user-agent": providerUserAgent,
       },
       signal: context.signal,
@@ -266,26 +280,18 @@ function extractRevenueCatError(payload: unknown, status: number): string {
 }
 
 function projectId(input: Record<string, unknown>): string {
-  return encodePathSegment(requiredString(input.projectId, "projectId", inputError));
+  return encodePathSegment(requiredString(input.projectId, "projectId", providerInputError));
 }
 
 function customerId(input: Record<string, unknown>): string {
-  return encodePathSegment(requiredString(input.customerId, "customerId", inputError));
+  return encodePathSegment(requiredString(input.customerId, "customerId", providerInputError));
 }
 
 function subscriptionId(input: Record<string, unknown>): string {
-  return encodePathSegment(requiredString(input.subscriptionId, "subscriptionId", inputError));
+  return encodePathSegment(requiredString(input.subscriptionId, "subscriptionId", providerInputError));
 }
 
 function optionalStringArray(value: unknown): string[] | undefined {
   if (value === undefined) return undefined;
-  return requiredStringArray(value, "expand", inputError);
-}
-
-function inputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
-}
-
-function providerResponseError(message: string): ProviderRequestError {
-  return new ProviderRequestError(502, message);
+  return requiredStringArray(value, "expand", providerInputError);
 }

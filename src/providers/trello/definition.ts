@@ -1,7 +1,6 @@
 import type { ProviderDefinition } from "../../core/types.ts";
 
 import { trelloActions } from "./actions.ts";
-import { trelloOAuthScopes } from "./scopes.ts";
 
 const service = "trello";
 
@@ -13,16 +12,26 @@ export const provider: ProviderDefinition = {
   auth: [
     {
       type: "oauth2",
+      requireCredentialVerification: true,
+      requiredScopes: ["read:member:trello", "offline_access"],
       authorizationUrl: "https://auth.atlassian.com/authorize",
       tokenUrl: "https://auth.atlassian.com/oauth/token",
-      requireCredentialVerification: true,
-      scopes: trelloOAuthScopes,
+      scopes: [
+        "read:board:trello",
+        "read:enterprise:trello",
+        "read:member:trello",
+        "read:organization:trello",
+        "write:board:membership:trello",
+        "write:board:trello",
+        "write:enterprise:trello",
+        "write:member:trello",
+        "write:organization:membership:trello",
+        "write:organization:trello",
+      ],
       tokenEndpointAuthMethod: "client_secret_post",
       tokenRequestFormat: "json",
       pkce: { method: "S256" },
-      authorizationParams: {
-        prompt: "consent",
-      },
+      authorizationParams: { prompt: "consent" },
     },
     {
       type: "custom_credential",

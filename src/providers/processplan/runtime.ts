@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { queryParams } from "../../core/request.ts";
@@ -12,7 +12,6 @@ import {
 } from "../provider-runtime.ts";
 
 export const processplanApiBaseUrl = "https://apius0.processplan.com/api/v4";
-const timeoutMs = 30_000;
 
 export const processplanActionHandlers: ProviderActionHandlers<
   "processplan",
@@ -79,7 +78,6 @@ export async function validateProcessplanCredential(
   );
   return {
     profile: { displayName: pickString(user, "u_full_name", "u_name", "u_email", "email") ?? "ProcessPlan API Token" },
-    grantedScopes: [],
     metadata: { apiBaseUrl: processplanApiBaseUrl, validationEndpoint: "/user/me" },
   };
 }
@@ -115,14 +113,14 @@ async function requestProcessplan(
 ): Promise<unknown> {
   const url = new URL(`${processplanApiBaseUrl}${path}`);
   for (const [name, value] of Object.entries(options.query ?? {})) url.searchParams.set(name, value);
-  const timeout = createProviderTimeout(context.signal, timeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const response = await context.fetcher(url, {
       method: options.method ?? "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         ...(options.body === undefined ? {} : { "content-type": "application/json" }),
-        tkn_id: context.apiKey,
+        "tkn_id": context.apiKey,
         "user-agent": providerUserAgent,
       },
       body: options.body === undefined ? undefined : JSON.stringify(options.body),

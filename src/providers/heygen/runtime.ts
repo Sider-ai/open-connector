@@ -1,8 +1,8 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
 
-import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { ProviderRequestError } from "../provider-runtime.ts";
+import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
+import { ProviderRequestError, requiredInputString } from "../provider-runtime.ts";
 
 const heygenApiBaseUrl = "https://api.heygen.com";
 const heygenUploadBaseUrl = "https://upload.heygen.com";
@@ -90,10 +90,8 @@ export const heygenActionHandlers: ProviderActionHandlers<"heygen", ProviderRunt
 export async function validateHeygenCredential(
   auth: HeygenAuth,
   options: { fetcher: typeof fetch; signal?: AbortSignal },
-  credential: { grantedScopes?: string[] } = {},
 ): Promise<{
   profile: { accountId: string; displayName: string };
-  grantedScopes: string[];
   metadata: Record<string, unknown>;
 }> {
   const validationEndpoint = auth.headerName === "Authorization" ? "/v3/users/me" : "/v1/user/me";
@@ -116,7 +114,6 @@ export async function validateHeygenCredential(
         (auth.headerName === "Authorization" ? "oauth2" : "api_key"),
       displayName: label,
     },
-    grantedScopes: credential.grantedScopes ?? [],
     metadata: {
       apiBaseUrl: auth.apiBaseUrl,
       authHeaderName: auth.headerName,
@@ -194,7 +191,7 @@ async function heygenListAvatars(context: HeygenActionContext): Promise<unknown>
 }
 
 async function heygenGetAvatar(input: Record<string, unknown>, context: HeygenActionContext): Promise<unknown> {
-  const avatarId = readInputString(input.avatarId, "avatarId");
+  const avatarId = requiredInputString(input.avatarId, "avatarId");
   const data = await heygenRequest<Record<string, unknown>>(
     {
       auth: context.auth,
@@ -247,7 +244,7 @@ async function heygenListTemplates(context: HeygenActionContext): Promise<unknow
 }
 
 async function heygenGetTemplate(input: Record<string, unknown>, context: HeygenActionContext): Promise<unknown> {
-  const templateId = readInputString(input.templateId, "templateId");
+  const templateId = requiredInputString(input.templateId, "templateId");
   const data = await heygenRequest<Record<string, unknown>>(
     {
       auth: context.auth,
@@ -294,7 +291,7 @@ async function heygenGenerateTemplateVideo(
   input: Record<string, unknown>,
   context: HeygenActionContext,
 ): Promise<unknown> {
-  const templateId = readInputString(input.templateId, "templateId");
+  const templateId = requiredInputString(input.templateId, "templateId");
   const data = await heygenRequest<Record<string, unknown>>(
     {
       auth: context.auth,
@@ -371,8 +368,8 @@ async function heygenGetShareableVideoUrl(
 }
 
 async function heygenUploadAsset(input: Record<string, unknown>, context: HeygenActionContext): Promise<unknown> {
-  const mimeType = readInputString(input.mimeType, "mimeType");
-  const content = toArrayBuffer(Buffer.from(readInputString(input.contentBase64, "contentBase64"), "base64"));
+  const mimeType = requiredInputString(input.mimeType, "mimeType");
+  const content = toArrayBuffer(Buffer.from(requiredInputString(input.contentBase64, "contentBase64"), "base64"));
   const isOAuth = context.auth.headerName === "Authorization";
   const data = await heygenRequest<Record<string, unknown>>(
     {
@@ -433,7 +430,7 @@ async function heygenListAssets(input: Record<string, unknown>, context: HeygenA
 }
 
 async function heygenDeleteAsset(input: Record<string, unknown>, context: HeygenActionContext): Promise<unknown> {
-  const assetId = readInputString(input.assetId, "assetId");
+  const assetId = requiredInputString(input.assetId, "assetId");
   const data = await heygenRequest<Record<string, unknown>>(
     {
       auth: context.auth,
@@ -479,7 +476,7 @@ async function heygenListVideos(input: Record<string, unknown>, context: HeygenA
 }
 
 async function heygenDeleteVideo(input: Record<string, unknown>, context: HeygenActionContext): Promise<unknown> {
-  const videoId = readInputString(input.videoId, "videoId");
+  const videoId = requiredInputString(input.videoId, "videoId");
   const data = await heygenRequest<Record<string, unknown>>(
     {
       auth: context.auth,
@@ -705,10 +702,6 @@ function readInputObject(value: unknown): Record<string, unknown> {
     throw new ProviderRequestError(400, "object input is required", value);
   }
   return object;
-}
-
-function readInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function readObjectArray(value: unknown): Array<Record<string, unknown>> {

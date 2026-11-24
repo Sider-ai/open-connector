@@ -1,6 +1,10 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -12,7 +16,14 @@ import {
   requiredRecord,
   requiredString,
 } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import {
+  providerInputError,
+  providerResponseError,
+  providerUserAgent,
+  ProviderRequestError,
+} from "../provider-runtime.ts";
 
 const service = "sender";
 const senderApiBaseUrl = "https://api.sender.net/v2";
@@ -170,6 +181,16 @@ const senderActionHandlers: ProviderActionHandlers<"sender", SenderActionHandler
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, senderActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: senderApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }): Promise<CredentialValidationResult> {
     await senderRequest(
@@ -188,7 +209,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "sender",
         displayName: "Sender API Access Token",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: senderApiBaseUrl,
         validationEndpoint: "/groups",
@@ -198,7 +218,7 @@ export const credentialValidators: CredentialValidators = {
 };
 
 async function senderRequest(
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   path: string,
   options: SenderRequestOptions,
   phase: SenderPhase,
@@ -211,8 +231,8 @@ async function senderRequest(
   }
 
   const headers = new Headers({
-    accept: "application/json",
-    authorization: `Bearer ${context.apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${context.apiKey}`,
     "user-agent": providerUserAgent,
   });
   const init: RequestInit = {
@@ -279,7 +299,7 @@ function groupMembershipBody(input: Record<string, unknown>, includeAutomation: 
 }
 
 function normalizePaginatedResponse(payload: unknown, key: string): Record<string, unknown> {
-  const record = requiredRecord(payload, "Sender paginated response", providerOutputError);
+  const record = requiredRecord(payload, "Sender paginated response", providerResponseError);
   return compactObject({
     [key]: readObjectArray(record.data),
     links: optionalRecord(record.links),
@@ -290,14 +310,14 @@ function normalizePaginatedResponse(payload: unknown, key: string): Record<strin
 }
 
 function normalizeDataObjectResponse(payload: unknown, key: string): Record<string, unknown> {
-  const record = requiredRecord(payload, "Sender detail response", providerOutputError);
+  const record = requiredRecord(payload, "Sender detail response", providerResponseError);
   return {
-    [key]: requiredRecord(record.data, `Sender ${key} response data`, providerOutputError),
+    [key]: requiredRecord(record.data, `Sender ${key} response data`, providerResponseError),
   };
 }
 
 function normalizeMutationResponse(payload: unknown, key: string): Record<string, unknown> {
-  const record = requiredRecord(payload, "Sender mutation response", providerOutputError);
+  const record = requiredRecord(payload, "Sender mutation response", providerResponseError);
   return compactObject({
     success: typeof record.success === "boolean" ? record.success : true,
     message: record.message,
@@ -306,7 +326,7 @@ function normalizeMutationResponse(payload: unknown, key: string): Record<string
 }
 
 function normalizeGenericMutationResponse(payload: unknown): Record<string, unknown> {
-  const record = requiredRecord(payload, "Sender mutation response", providerOutputError);
+  const record = requiredRecord(payload, "Sender mutation response", providerResponseError);
   return {
     success: typeof record.success === "boolean" ? record.success : true,
     message: record.message,
@@ -315,12 +335,12 @@ function normalizeGenericMutationResponse(payload: unknown): Record<string, unkn
 
 function readObjectArray(value: unknown): Array<Record<string, unknown>> {
   if (Array.isArray(value)) {
-    return objectArray(value, "Sender response data item", providerOutputError);
+    return objectArray(value, "Sender response data item", providerResponseError);
   }
   if (value === undefined || value === null) {
     return [];
   }
-  return [requiredRecord(value, "Sender response data item", providerOutputError)];
+  return [requiredRecord(value, "Sender response data item", providerResponseError)];
 }
 
 function pickDefined(input: Record<string, unknown>, keys: string[]): Record<string, unknown> {
@@ -387,12 +407,4 @@ function senderErrorMessage(payload: unknown, fallback: string): string {
     return record.errors.map(String).join("; ");
   }
   return fallback;
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
-}
-
-function providerOutputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(502, message);
 }

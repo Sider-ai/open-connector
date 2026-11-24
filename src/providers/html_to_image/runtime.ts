@@ -1,5 +1,5 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import { createProviderTimeout, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
@@ -34,7 +34,6 @@ export async function validateHtmlToImageCredential(
   options: { fetcher: typeof fetch; signal?: AbortSignal },
 ): Promise<{
   profile: { accountId: string; displayName: string };
-  grantedScopes: string[];
   metadata: Record<string, unknown>;
 }> {
   const payload = await postHtmlToImageJson({
@@ -52,7 +51,6 @@ export async function validateHtmlToImageCredential(
       accountId: "api_key",
       displayName: "HTML to Image API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: htmlToImageApiBaseUrl,
       validationEndpoint: htmlToImageHtmlPath,
@@ -120,7 +118,7 @@ async function postHtmlToImageJson(input: {
     response = await input.fetcher(new URL(input.path, htmlToImageApiBaseUrl), {
       method: "POST",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
         "user-agent": providerUserAgent,
         "x-api-key": input.apiKey,

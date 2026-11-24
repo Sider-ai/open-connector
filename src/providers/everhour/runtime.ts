@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { compactObject, optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import {
@@ -10,14 +10,12 @@ import {
   ProviderRequestError,
 } from "../provider-runtime.ts";
 
-const everhourApiBaseUrl = "https://api.everhour.com";
+export const everhourApiBaseUrl = "https://api.everhour.com";
 const everhourValidationPath = "/users/me";
-const everhourDefaultRequestTimeoutMs = 30_000;
 
 type EverhourRequestPhase = "validate" | "execute";
 type EverhourMethod = "GET" | "POST" | "DELETE";
 type EverhourQueryValue = string | number | boolean | undefined;
-type EverhourContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
 type EverhourActionHandler = ProviderRuntimeHandler<ApiKeyProviderContext>;
 
 interface EverhourRequestInput {
@@ -52,9 +50,9 @@ export const everhourActionHandlers: ProviderActionHandlers<"everhour", Everhour
         path: "/projects",
         phase: "execute",
         query: compactObject({
-          query: readOptionalString(input.query),
+          query: optionalString(input.query),
           limit: readOptionalPositiveInteger(input.limit, "limit"),
-          platform: readOptionalString(input.platform),
+          platform: optionalString(input.platform),
         }),
       },
       context,
@@ -80,9 +78,9 @@ export const everhourActionHandlers: ProviderActionHandlers<"everhour", Everhour
         path: `/projects/${encodePathSegment(projectId)}/tasks`,
         phase: "execute",
         query: compactObject({
-          page: readOptionalPositiveInteger(input.page, "page"),
-          limit: readOptionalPositiveInteger(input.limit, "limit"),
-          query: readOptionalString(input.query),
+          "page": readOptionalPositiveInteger(input.page, "page"),
+          "limit": readOptionalPositiveInteger(input.limit, "limit"),
+          "query": optionalString(input.query),
           "exclude-closed": optionalBoolean(input.excludeClosed),
         }),
       },
@@ -118,8 +116,8 @@ export const everhourActionHandlers: ProviderActionHandlers<"everhour", Everhour
     return { tasks: requireEverhourArray(payload, "tasks") };
   },
   async list_time_records(input, context) {
-    const from = readOptionalString(input.from);
-    const to = readOptionalString(input.to);
+    const from = optionalString(input.from);
+    const to = optionalString(input.to);
     if (from && to && from > to) {
       throw new ProviderRequestError(400, "from must be on or before to");
     }
@@ -148,9 +146,9 @@ export const everhourActionHandlers: ProviderActionHandlers<"everhour", Everhour
         body: compactObject({
           time: readRequiredPositiveInteger(input.time, "time"),
           date: readRequiredString(input.date, "date"),
-          task: readOptionalString(input.taskId),
+          task: optionalString(input.taskId),
           user: readOptionalPositiveInteger(input.userId, "userId"),
-          comment: readOptionalString(input.comment),
+          comment: optionalString(input.comment),
         }),
       },
       context,
@@ -165,8 +163,8 @@ export const everhourActionHandlers: ProviderActionHandlers<"everhour", Everhour
         phase: "execute",
         body: compactObject({
           task: readRequiredString(input.taskId, "taskId"),
-          userDate: readOptionalString(input.userDate),
-          comment: readOptionalString(input.comment),
+          userDate: optionalString(input.userDate),
+          comment: optionalString(input.comment),
         }),
       },
       context,
@@ -215,7 +213,6 @@ export async function validateEverhourCredential(
       accountId: userId === undefined ? "api_key" : String(userId),
       displayName: userName ?? "Everhour API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: everhourApiBaseUrl,
       validationEndpoint: everhourValidationPath,
@@ -228,7 +225,7 @@ export async function validateEverhourCredential(
   };
 }
 
-async function requestEverhourJson(input: EverhourRequestInput, context: EverhourContext): Promise<unknown> {
+async function requestEverhourJson(input: EverhourRequestInput, context: ApiKeyProviderContext): Promise<unknown> {
   const url = new URL(input.path, everhourApiBaseUrl);
   for (const [key, value] of Object.entries(input.query ?? {})) {
     if (value !== undefined) {
@@ -236,13 +233,13 @@ async function requestEverhourJson(input: EverhourRequestInput, context: Everhou
     }
   }
 
-  const timeout = createProviderTimeout(context.signal, everhourDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   let response: Response;
   try {
     response = await context.fetcher(url.toString(), {
       method: input.method,
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "x-api-key": context.apiKey,
         "user-agent": providerUserAgent,
         ...(input.body === undefined ? {} : { "content-type": "application/json" }),
@@ -318,15 +315,11 @@ function requireEverhourArray(value: unknown, label: string): unknown[] {
 }
 
 function readRequiredString(value: unknown, fieldName: string): string {
-  const parsed = readOptionalString(value);
+  const parsed = optionalString(value);
   if (!parsed) {
     throw new ProviderRequestError(400, `${fieldName} is required`);
   }
   return parsed;
-}
-
-function readOptionalString(value: unknown): string | undefined {
-  return optionalString(value);
 }
 
 function readRequiredPositiveInteger(value: unknown, fieldName: string): number {

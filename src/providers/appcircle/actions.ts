@@ -3,7 +3,7 @@ import type { ActionDefinition } from "../../core/types.ts";
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
 
-const service = "appcircle" as const;
+const service = "appcircle";
 
 const positiveIntegerSchema = (description: string) => s.integer(description, { minimum: 1 });
 const profileSchema = s.looseObject("An Appcircle profile returned by the selected module.");
@@ -31,6 +31,7 @@ const organizationSchema = s.looseRequiredObject("An Appcircle organization.", {
 export const appcircleActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "list_organizations",
+    operationType: "read",
     description: "List Appcircle organizations available to the connected API key.",
     inputSchema: s.object(
       "Pagination and search filters for Appcircle organizations.",
@@ -50,18 +51,21 @@ export const appcircleActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_build_profiles",
+    operationType: "read",
     description: "List Appcircle Build profiles for the connected organization.",
     inputSchema: profileListInputSchema,
     outputSchema: profileListOutputSchema,
   }),
   defineProviderAction(service, {
     name: "list_distribution_profiles",
+    operationType: "read",
     description: "List Appcircle Testing Distribution profiles for the connected organization.",
     inputSchema: profileListInputSchema,
     outputSchema: profileListOutputSchema,
   }),
   defineProviderAction(service, {
     name: "list_enterprise_store_profiles",
+    operationType: "read",
     description: "List Appcircle Enterprise App Store profiles for the connected organization.",
     inputSchema: profileListInputSchema,
     outputSchema: profileListOutputSchema,

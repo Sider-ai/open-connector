@@ -1,25 +1,21 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
+import { compactObject, optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import {
-  compactObject,
-  optionalBoolean,
-  optionalInteger,
-  optionalRecord,
-  optionalString,
-  requiredString,
-} from "../../core/cast.ts";
-import { createProviderTimeout, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+  createProviderTimeout,
+  providerUserAgent,
+  ProviderRequestError,
+  requiredInputString,
+} from "../provider-runtime.ts";
 
 export const brightDataApiBaseUrl = "https://api.brightdata.com";
 const brightDataStatusPath = "/status";
-const brightDataRequestTimeoutMs = 30_000;
 
 type BrightDataRequestPhase = "validate" | "execute";
 type BrightDataQueryValue = string | number | boolean | undefined;
-type BrightDataActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type BrightDataActionHandler = (input: Record<string, unknown>, context: BrightDataActionContext) => Promise<unknown>;
+type BrightDataActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 interface BrightDataRequestOptions {
   apiKey: string;
@@ -69,7 +65,6 @@ export async function validateBrightDataCredential(
       accountId: account.customer ? `bright_data:${account.customer}` : "bright_data:api_key",
       displayName: account.customer ? `Bright Data ${account.customer}` : "Bright Data API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: brightDataApiBaseUrl,
       validationEndpoint: brightDataStatusPath,
@@ -82,7 +77,7 @@ export async function validateBrightDataCredential(
 }
 
 async function getAccountStatus(
-  context: BrightDataActionContext,
+  context: ApiKeyProviderContext,
   phase: BrightDataRequestPhase,
 ): Promise<{
   status: string;
@@ -111,7 +106,7 @@ async function getAccountStatus(
   };
 }
 
-async function listDatasets(context: BrightDataActionContext): Promise<unknown> {
+async function listDatasets(context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await requestBrightDataJson({
     apiKey: context.apiKey,
     path: "/datasets/list",
@@ -127,8 +122,8 @@ async function listDatasets(context: BrightDataActionContext): Promise<unknown> 
   };
 }
 
-async function getDatasetMetadata(input: Record<string, unknown>, context: BrightDataActionContext): Promise<unknown> {
-  const datasetId = readRequiredString(input.datasetId, "datasetId");
+async function getDatasetMetadata(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
+  const datasetId = requiredInputString(input.datasetId, "datasetId");
   const payload = await requestBrightDataJson({
     apiKey: context.apiKey,
     path: `/datasets/${encodeURIComponent(datasetId)}/metadata`,
@@ -146,7 +141,7 @@ async function getDatasetMetadata(input: Record<string, unknown>, context: Brigh
   };
 }
 
-async function listDatasetViews(context: BrightDataActionContext): Promise<unknown> {
+async function listDatasetViews(context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await requestBrightDataJson({
     apiKey: context.apiKey,
     path: "/datasets/views",
@@ -162,8 +157,8 @@ async function listDatasetViews(context: BrightDataActionContext): Promise<unkno
   };
 }
 
-async function getSnapshotMetadata(input: Record<string, unknown>, context: BrightDataActionContext): Promise<unknown> {
-  const snapshotId = readRequiredString(input.snapshotId, "snapshotId");
+async function getSnapshotMetadata(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
+  const snapshotId = requiredInputString(input.snapshotId, "snapshotId");
   const payload = await requestBrightDataJson({
     apiKey: context.apiKey,
     path: `/datasets/snapshots/${encodeURIComponent(snapshotId)}`,
@@ -180,8 +175,8 @@ async function getSnapshotMetadata(input: Record<string, unknown>, context: Brig
   };
 }
 
-async function getSnapshotParts(input: Record<string, unknown>, context: BrightDataActionContext): Promise<unknown> {
-  const snapshotId = readRequiredString(input.snapshotId, "snapshotId");
+async function getSnapshotParts(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
+  const snapshotId = requiredInputString(input.snapshotId, "snapshotId");
   const payload = await requestBrightDataJson({
     apiKey: context.apiKey,
     path: `/datasets/snapshots/${encodeURIComponent(snapshotId)}/parts`,
@@ -204,7 +199,7 @@ async function getSnapshotParts(input: Record<string, unknown>, context: BrightD
 }
 
 async function requestBrightDataJson(input: BrightDataRequestOptions): Promise<unknown> {
-  const timeout = createProviderTimeout(input.signal, brightDataRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   const url = new URL(input.path, brightDataApiBaseUrl);
   for (const [key, value] of Object.entries(input.query ?? {})) {
     if (value !== undefined) {
@@ -242,8 +237,8 @@ async function requestBrightDataJson(input: BrightDataRequestOptions): Promise<u
 
 function brightDataHeaders(apiKey: string): Record<string, string> {
   return {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "user-agent": providerUserAgent,
   };
 }
@@ -339,10 +334,6 @@ function readRecordField(value: unknown, fieldName: string): Record<string, unkn
     throw new ProviderRequestError(502, `${fieldName} is required in Bright Data response`);
   }
   return record;
-}
-
-function readRequiredString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function readRequiredNumber(value: unknown, fieldName: string): number {

@@ -1,16 +1,16 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
 
-import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import {
   createProviderTimeout,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
+  requiredInputString,
+  providerInputError,
 } from "../provider-runtime.ts";
-
-const workableDefaultRequestTimeoutMs = 30_000;
 
 interface WorkableContext {
   apiKey: string;
@@ -54,7 +54,7 @@ export const workableActionHandlers: ProviderActionHandlers<"workable", Provider
   async get_job(input, context): Promise<unknown> {
     const job = await requestWorkableJson({
       ...context,
-      path: `/jobs/${encodeURIComponent(requiredProviderString(input.shortcode, "shortcode"))}`,
+      path: `/jobs/${encodeURIComponent(requiredInputString(input.shortcode, "shortcode"))}`,
       phase: "execute",
       notFoundAsInvalidInput: true,
     });
@@ -84,7 +84,7 @@ export const workableActionHandlers: ProviderActionHandlers<"workable", Provider
   async get_candidate(input, context): Promise<unknown> {
     const payload = await requestWorkableJson({
       ...context,
-      path: `/candidates/${encodeURIComponent(requiredProviderString(input.id, "id"))}`,
+      path: `/candidates/${encodeURIComponent(requiredInputString(input.id, "id"))}`,
       phase: "execute",
       notFoundAsInvalidInput: true,
     });
@@ -115,7 +115,6 @@ export async function validateWorkableCredential(
       accountId: `${subdomain}.workable.com`,
       displayName: `${subdomain}.workable.com`,
     },
-    grantedScopes: [],
     metadata: {
       subdomain,
       apiBaseUrl: buildWorkableApiBaseUrl(subdomain),
@@ -161,7 +160,7 @@ async function requestWorkableJson(input: WorkableRequestInput): Promise<Record<
 }
 
 async function rawWorkableRequest(input: WorkableRequestInput): Promise<Response> {
-  const timeout = createProviderTimeout(input.signal, workableDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   const url = new URL(`${buildWorkableApiBaseUrl(input.subdomain)}${input.path}`);
   for (const [key, value] of Object.entries(input.query ?? {})) {
     if (value !== undefined) url.searchParams.set(key, String(value));
@@ -170,8 +169,8 @@ async function rawWorkableRequest(input: WorkableRequestInput): Promise<Response
     return await input.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${input.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${input.apiKey}`,
         "user-agent": providerUserAgent,
       },
       signal: timeout.signal,
@@ -194,13 +193,13 @@ async function buildWorkableError(response: Response, input: WorkableRequestInpu
   const message = extractWorkableErrorMessage(payload) ?? `Workable request failed with ${response.status}`;
   if (response.status === 429) return new ProviderRequestError(429, message);
   if (input.phase === "validate" && [400, 401, 403, 404].includes(response.status)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (input.phase === "execute" && (response.status === 401 || response.status === 403)) {
     return new ProviderRequestError(401, message);
   }
   if (response.status === 400 || response.status === 422 || (response.status === 404 && input.notFoundAsInvalidInput)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   return new ProviderRequestError(response.status || 500, message);
 }
@@ -262,10 +261,6 @@ function readArrayField(payload: Record<string, unknown>, fieldName: string): un
   const value = payload[fieldName];
   if (Array.isArray(value)) return value;
   throw new ProviderRequestError(502, `Workable response is missing ${fieldName}`);
-}
-
-function requiredProviderString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function readIncludeFields(value: unknown): string | undefined {

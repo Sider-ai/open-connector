@@ -1,5 +1,5 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import { encodePathSegment } from "../../core/request.ts";
@@ -78,7 +78,7 @@ async function duneRequest(
   }
 
   const headers = new Headers({
-    accept: "application/json",
+    "accept": "application/json",
     "x-dune-api-key": context.apiKey,
     "user-agent": providerUserAgent,
   });

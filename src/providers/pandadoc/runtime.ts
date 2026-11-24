@@ -1,6 +1,5 @@
 import type { CredentialValidationResult, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -11,11 +10,13 @@ import {
   requiredRecord,
   requiredString,
 } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { readTransitFileInput } from "../provider-files.ts";
 import {
-  defineApiKeyProviderExecutors,
+  providerInputError,
   ProviderRequestError,
+  providerResponseError,
   providerUserAgent,
-  readTransitFileInput,
 } from "../provider-runtime.ts";
 
 const service = "pandadoc";
@@ -65,7 +66,7 @@ export const pandadocActionHandlers: ProviderActionHandlers<"pandadoc", Pandadoc
   },
   async delete_contact(input, context) {
     await requestPandadocJson(context, {
-      path: `/public/v1/contacts/${encodeURIComponent(requiredString(input.contact_id, "contact_id", invalidInputError))}`,
+      path: `/public/v1/contacts/${encodeURIComponent(requiredString(input.contact_id, "contact_id", providerInputError))}`,
       method: "DELETE",
       notFoundAsInvalidInput: true,
     });
@@ -100,7 +101,7 @@ export const pandadocActionHandlers: ProviderActionHandlers<"pandadoc", Pandadoc
   async get_template_details(input, context) {
     return requiredRecord(
       await requestPandadocJson(context, {
-        path: `/public/v1/templates/${encodeURIComponent(requiredString(input.template_id, "template_id", invalidInputError))}/details`,
+        path: `/public/v1/templates/${encodeURIComponent(requiredString(input.template_id, "template_id", providerInputError))}/details`,
         notFoundAsInvalidInput: true,
       }),
       "PandaDoc template details response",
@@ -155,7 +156,7 @@ export const pandadocActionHandlers: ProviderActionHandlers<"pandadoc", Pandadoc
   },
   async delete_template(input, context) {
     const payload = await requestPandadocJson(context, {
-      path: `/public/v1/templates/${encodeURIComponent(requiredString(input.template_id, "template_id", invalidInputError))}`,
+      path: `/public/v1/templates/${encodeURIComponent(requiredString(input.template_id, "template_id", providerInputError))}`,
       method: "DELETE",
       notFoundAsInvalidInput: true,
     });
@@ -231,7 +232,7 @@ export const pandadocActionHandlers: ProviderActionHandlers<"pandadoc", Pandadoc
   async get_document_details(input, context) {
     return requiredRecord(
       await requestPandadocJson(context, {
-        path: `/public/v1/documents/${encodeURIComponent(requiredString(input.document_id, "document_id", invalidInputError))}/details`,
+        path: `/public/v1/documents/${encodeURIComponent(requiredString(input.document_id, "document_id", providerInputError))}/details`,
         notFoundAsInvalidInput: true,
       }),
       "PandaDoc document details response",
@@ -259,7 +260,7 @@ export const pandadocActionHandlers: ProviderActionHandlers<"pandadoc", Pandadoc
     formData.set("file", transitFile.file);
     return requiredRecord(
       await requestPandadocJson(context, {
-        path: `/public/v1/documents/${encodeURIComponent(requiredString(input.document_id, "document_id", invalidInputError))}/attachments`,
+        path: `/public/v1/documents/${encodeURIComponent(requiredString(input.document_id, "document_id", providerInputError))}/attachments`,
         method: "POST",
         body: formData,
         notFoundAsInvalidInput: true,
@@ -299,7 +300,7 @@ export async function validatePandadocCredential(
     ),
   );
   return {
-    profile: { accountId: "pandadoc-api-key", displayName: "PandaDoc API Key", grantedScopes: [] },
+    profile: { accountId: "pandadoc-api-key", displayName: "PandaDoc API Key" },
     metadata: compactObject({
       apiBaseUrl: pandadocApiBaseUrl,
       validationEndpoint: validationPath,
@@ -309,7 +310,7 @@ export async function validatePandadocCredential(
 }
 
 async function requestPandadocJson(
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   options: {
     path: string;
     method?: string;
@@ -369,8 +370,8 @@ function buildUrl(path: string, query: Record<string, PandadocQueryValue> = {}, 
 
 function buildHeaders(apiKey: string, body: FormData | Record<string, unknown> | undefined): Record<string, string> {
   return compactObject({
-    accept: "application/json",
-    authorization: `API-Key ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `API-Key ${apiKey}`,
     "content-type": body && !(body instanceof FormData) ? "application/json" : undefined,
     "user-agent": providerUserAgent,
   }) as Record<string, string>;
@@ -436,12 +437,4 @@ function stringArray(value: unknown): string[] | undefined {
 
 function arrayValue(value: unknown): unknown[] | undefined {
   return Array.isArray(value) ? value : undefined;
-}
-
-function invalidInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
-}
-
-function providerResponseError(message: string): ProviderRequestError {
-  return new ProviderRequestError(502, message);
 }

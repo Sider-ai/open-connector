@@ -1,14 +1,10 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ApiKeyProviderContext, ProviderActionHandlers, ProviderActionSources } from "../provider-runtime.ts";
+import type { ApiKeyProviderContext, ProviderActionHandlers, ProviderActionSources } from "../provider-executors.ts";
 
 import { optionalRecord, optionalString } from "../../core/cast.ts";
-import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
-  mapProviderActionSources,
-  ProviderRequestError,
-  providerUserAgent,
-} from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors, mapProviderActionSources } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "newscatcher";
 const baseUrl = "https://v3-api.newscatcherapi.com";
@@ -29,7 +25,7 @@ async function request(
   const response = await fetcher(new URL(path, baseUrl), {
     method: "POST",
     headers: {
-      accept: "application/json",
+      "accept": "application/json",
       "content-type": "application/json",
       "user-agent": providerUserAgent,
       "x-api-token": apiKey,
@@ -84,7 +80,6 @@ export const credentialValidators: CredentialValidators = {
     const plan = optionalString(subscription.plan);
     return {
       profile: { accountId: "api_key", displayName: plan ? `NewsCatcher ${plan}` : "NewsCatcher API Key" },
-      grantedScopes: [],
       metadata: { apiBaseUrl: baseUrl, validationEndpoint: paths.get_subscription, plan: plan ?? null },
     };
   },

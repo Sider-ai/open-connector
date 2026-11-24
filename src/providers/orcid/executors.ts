@@ -1,11 +1,23 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { OAuthProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { OAuthProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
-import { defineOAuthProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineOAuthProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 const service = "orcid";
 const baseUrl = "https://pub.orcid.org/v3.0";
 const orcidUserInfoUrl = "https://orcid.org/oauth/userinfo";
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl,
+  auth: { type: "oauth_bearer" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/vnd.orcid+json");
+  },
+});
 
 interface OrcidResponseMessages {
   invalidJson: string;
@@ -53,8 +65,8 @@ export const credentialValidators: CredentialValidators = {
   async oauth2(input, { fetcher, signal }) {
     const response = await fetcher(orcidUserInfoUrl, {
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${input.accessToken}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${input.accessToken}`,
         "user-agent": providerUserAgent,
       },
       signal,
@@ -74,7 +86,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: orcidId,
         displayName,
       },
-      grantedScopes: readGrantedScopes(input.metadata.scope),
       metadata: compactObject({
         validationEndpoint: orcidUserInfoUrl,
         orcidId,
@@ -88,8 +99,8 @@ export const credentialValidators: CredentialValidators = {
 async function request(url: URL, context: OAuthProviderContext): Promise<Record<string, unknown>> {
   const response = await context.fetcher(url, {
     headers: {
-      accept: "application/vnd.orcid+json",
-      authorization: `Bearer ${context.accessToken}`,
+      "accept": "application/vnd.orcid+json",
+      "authorization": `Bearer ${context.accessToken}`,
       "user-agent": providerUserAgent,
     },
     signal: context.signal,
@@ -147,7 +158,4 @@ function objectOrEmpty(value: unknown): Record<string, unknown> {
 }
 function normalize(value: string): string {
   return value.toUpperCase().replace(/^HTTPS?:\/\/ORCID\.ORG\//, "");
-}
-function readGrantedScopes(scope: unknown): string[] {
-  return optionalString(scope)?.split(/\s+/u).filter(Boolean) ?? ["openid"];
 }

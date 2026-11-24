@@ -5,14 +5,6 @@ import { defineProviderAction } from "../../core/provider-definition.ts";
 
 const service = "vimeo";
 
-const vimeoConnectorScopes = {
-  read: "vimeo.read",
-  write: "vimeo.write",
-  delete: "vimeo.delete",
-  upload: "vimeo.upload",
-  file: "vimeo.file",
-};
-
 const vimeoProviderPermissions = {
   public: "public",
   private: "private",
@@ -148,16 +140,18 @@ const folderVideosInputSchema = s.object(
 export const vimeoActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "get_current_user",
+    operationType: "read",
     description: "Get the authenticated Vimeo user profile.",
-    requiredScopes: [vimeoConnectorScopes.read],
+    requiredScopes: [vimeoProviderPermissions.public],
     providerPermissions: [vimeoProviderPermissions.public],
     inputSchema: s.object("Input parameters for getting the authenticated Vimeo user.", {}),
     outputSchema: s.object("The authenticated Vimeo user profile.", { user: vimeoUserSchema }),
   }),
   defineProviderAction(service, {
     name: "list_user_videos",
+    operationType: "read",
     description: "List videos uploaded by the authenticated user or by a specified Vimeo user.",
-    requiredScopes: [vimeoConnectorScopes.read],
+    requiredScopes: [vimeoProviderPermissions.public, vimeoProviderPermissions.private],
     providerPermissions: [vimeoProviderPermissions.public, vimeoProviderPermissions.private],
     inputSchema: s.object(
       "Input parameters for listing Vimeo user videos.",
@@ -192,16 +186,18 @@ export const vimeoActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_video",
+    operationType: "read",
     description: "Get metadata for a specific Vimeo video.",
-    requiredScopes: [vimeoConnectorScopes.read],
+    requiredScopes: [vimeoProviderPermissions.public, vimeoProviderPermissions.private],
     providerPermissions: [vimeoProviderPermissions.public, vimeoProviderPermissions.private],
     inputSchema: s.object("Input parameters for getting a Vimeo video.", { videoId: videoIdSchema }),
     outputSchema: s.object("The Vimeo video metadata response.", { video: vimeoVideoSchema }),
   }),
   defineProviderAction(service, {
     name: "update_video",
+    operationType: "write",
     description: "Update basic metadata for a Vimeo video without uploading or replacing media.",
-    requiredScopes: [vimeoConnectorScopes.write],
+    requiredScopes: [vimeoProviderPermissions.edit],
     providerPermissions: [vimeoProviderPermissions.edit],
     inputSchema: s.object(
       "Input parameters for updating Vimeo video metadata.",
@@ -225,8 +221,9 @@ export const vimeoActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "delete_video",
+    operationType: "destructive",
     description: "Delete a Vimeo video by ID.",
-    requiredScopes: [vimeoConnectorScopes.delete],
+    requiredScopes: [vimeoProviderPermissions.delete],
     providerPermissions: [vimeoProviderPermissions.delete],
     inputSchema: s.object("Input parameters for deleting a Vimeo video.", { videoId: videoIdSchema }),
     outputSchema: s.object("The Vimeo video deletion result.", {
@@ -236,17 +233,19 @@ export const vimeoActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "upload_video_from_url",
+    operationType: "write",
     description: "Upload a new Vimeo video by asking Vimeo to pull the media from an HTTP or HTTPS URL.",
-    requiredScopes: [vimeoConnectorScopes.upload],
+    requiredScopes: [vimeoProviderPermissions.upload],
     providerPermissions: [vimeoProviderPermissions.upload],
     inputSchema: uploadVideoInputSchema,
     outputSchema: s.object("The uploaded Vimeo video metadata response.", { video: vimeoVideoSchema }),
   }),
   defineProviderAction(service, {
     name: "replace_video_from_url",
+    operationType: "write",
     description:
       "Add a new version to an existing Vimeo video by asking Vimeo to pull the replacement media from a URL.",
-    requiredScopes: [vimeoConnectorScopes.upload],
+    requiredScopes: [vimeoProviderPermissions.upload],
     providerPermissions: [vimeoProviderPermissions.upload],
     inputSchema: s.object(
       "Input parameters for replacing a Vimeo video by pull URL.",
@@ -264,8 +263,9 @@ export const vimeoActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_video_download_links",
+    operationType: "read",
     description: "Get temporary downloadable file links for a Vimeo video when Vimeo exposes them.",
-    requiredScopes: [vimeoConnectorScopes.file],
+    requiredScopes: [vimeoProviderPermissions.videoFiles],
     providerPermissions: [vimeoProviderPermissions.videoFiles],
     inputSchema: s.object("Input parameters for getting Vimeo video download links.", { videoId: videoIdSchema }),
     outputSchema: s.object("The Vimeo video download links response.", {
@@ -274,8 +274,9 @@ export const vimeoActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "download_video_file",
+    operationType: "read",
     description: "Download one Vimeo video file link and store it in local transit storage.",
-    requiredScopes: [vimeoConnectorScopes.file],
+    requiredScopes: [vimeoProviderPermissions.videoFiles],
     providerPermissions: [vimeoProviderPermissions.videoFiles],
     inputSchema: s.object(
       "Input parameters for downloading a Vimeo video file into transit storage.",
@@ -295,8 +296,9 @@ export const vimeoActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_video_tags",
+    operationType: "read",
     description: "List tags attached to a Vimeo video.",
-    requiredScopes: [vimeoConnectorScopes.read],
+    requiredScopes: [vimeoProviderPermissions.public, vimeoProviderPermissions.private],
     providerPermissions: [vimeoProviderPermissions.public, vimeoProviderPermissions.private],
     inputSchema: s.object(
       "Input parameters for listing Vimeo video tags.",
@@ -307,8 +309,9 @@ export const vimeoActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "add_video_tags",
+    operationType: "write",
     description: "Add one or more tags to a Vimeo video.",
-    requiredScopes: [vimeoConnectorScopes.write],
+    requiredScopes: [vimeoProviderPermissions.edit],
     providerPermissions: [vimeoProviderPermissions.edit],
     inputSchema: s.object("Input parameters for adding tags to a Vimeo video.", {
       videoId: videoIdSchema,
@@ -321,8 +324,9 @@ export const vimeoActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "delete_video_tag",
+    operationType: "destructive",
     description: "Remove a tag from a Vimeo video.",
-    requiredScopes: [vimeoConnectorScopes.write],
+    requiredScopes: [vimeoProviderPermissions.edit],
     providerPermissions: [vimeoProviderPermissions.edit],
     inputSchema: s.object("Input parameters for deleting a Vimeo video tag.", {
       videoId: videoIdSchema,
@@ -336,8 +340,9 @@ export const vimeoActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_showcases",
+    operationType: "read",
     description: "List showcases that belong to the authenticated user or to a specified Vimeo user.",
-    requiredScopes: [vimeoConnectorScopes.read],
+    requiredScopes: [vimeoProviderPermissions.public, vimeoProviderPermissions.private],
     providerPermissions: [vimeoProviderPermissions.public, vimeoProviderPermissions.private],
     inputSchema: s.object(
       "Input parameters for listing Vimeo showcases.",
@@ -360,8 +365,9 @@ export const vimeoActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_showcase",
+    operationType: "read",
     description: "Get metadata for a specific Vimeo showcase.",
-    requiredScopes: [vimeoConnectorScopes.read],
+    requiredScopes: [vimeoProviderPermissions.public, vimeoProviderPermissions.private],
     providerPermissions: [vimeoProviderPermissions.public, vimeoProviderPermissions.private],
     inputSchema: s.object(
       "Input parameters for getting a Vimeo showcase.",
@@ -372,8 +378,9 @@ export const vimeoActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_showcase_videos",
+    operationType: "read",
     description: "List videos in a Vimeo showcase.",
-    requiredScopes: [vimeoConnectorScopes.read],
+    requiredScopes: [vimeoProviderPermissions.public, vimeoProviderPermissions.private],
     providerPermissions: [vimeoProviderPermissions.public, vimeoProviderPermissions.private],
     inputSchema: s.object(
       "Input parameters for listing Vimeo showcase videos.",
@@ -403,8 +410,9 @@ export const vimeoActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "add_video_to_showcase",
+    operationType: "write",
     description: "Add a Vimeo video to a showcase.",
-    requiredScopes: [vimeoConnectorScopes.write],
+    requiredScopes: [vimeoProviderPermissions.edit],
     providerPermissions: [vimeoProviderPermissions.edit],
     inputSchema: s.object(
       "Input parameters for adding a Vimeo video to a showcase.",
@@ -420,8 +428,9 @@ export const vimeoActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "remove_video_from_showcase",
+    operationType: "destructive",
     description: "Remove a Vimeo video from a showcase.",
-    requiredScopes: [vimeoConnectorScopes.write],
+    requiredScopes: [vimeoProviderPermissions.edit],
     providerPermissions: [vimeoProviderPermissions.edit],
     inputSchema: s.object(
       "Input parameters for removing a Vimeo video from a showcase.",
@@ -437,8 +446,9 @@ export const vimeoActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_folders",
+    operationType: "read",
     description: "List folders that belong to the authenticated user or to a specified Vimeo user.",
-    requiredScopes: [vimeoConnectorScopes.read],
+    requiredScopes: [vimeoProviderPermissions.private],
     providerPermissions: [vimeoProviderPermissions.private],
     inputSchema: s.object(
       "Input parameters for listing Vimeo folders.",
@@ -461,8 +471,9 @@ export const vimeoActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_folder",
+    operationType: "write",
     description: "Create a Vimeo folder for the authenticated user or a specified Vimeo user.",
-    requiredScopes: [vimeoConnectorScopes.write],
+    requiredScopes: [vimeoProviderPermissions.create],
     providerPermissions: [vimeoProviderPermissions.create],
     inputSchema: s.object(
       "Input parameters for creating a Vimeo folder.",
@@ -477,8 +488,9 @@ export const vimeoActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_folder",
+    operationType: "read",
     description: "Get metadata for a Vimeo folder.",
-    requiredScopes: [vimeoConnectorScopes.read],
+    requiredScopes: [vimeoProviderPermissions.private],
     providerPermissions: [vimeoProviderPermissions.private],
     inputSchema: s.object(
       "Input parameters for getting a Vimeo folder.",
@@ -489,8 +501,9 @@ export const vimeoActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "update_folder",
+    operationType: "write",
     description: "Update a Vimeo folder name.",
-    requiredScopes: [vimeoConnectorScopes.write],
+    requiredScopes: [vimeoProviderPermissions.edit],
     providerPermissions: [vimeoProviderPermissions.edit],
     inputSchema: s.object(
       "Input parameters for updating a Vimeo folder.",
@@ -505,8 +518,9 @@ export const vimeoActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "delete_folder",
+    operationType: "destructive",
     description: "Delete a Vimeo folder, optionally deleting the videos inside it.",
-    requiredScopes: [vimeoConnectorScopes.delete],
+    requiredScopes: [vimeoProviderPermissions.delete],
     providerPermissions: [vimeoProviderPermissions.delete],
     inputSchema: s.object(
       "Input parameters for deleting a Vimeo folder.",
@@ -525,16 +539,18 @@ export const vimeoActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_folder_videos",
+    operationType: "read",
     description: "List videos in a Vimeo folder.",
-    requiredScopes: [vimeoConnectorScopes.read],
+    requiredScopes: [vimeoProviderPermissions.private],
     providerPermissions: [vimeoProviderPermissions.private],
     inputSchema: folderVideosInputSchema,
     outputSchema: pagedVideosOutputSchema,
   }),
   defineProviderAction(service, {
     name: "add_video_to_folder",
+    operationType: "write",
     description: "Add a Vimeo video to a folder.",
-    requiredScopes: [vimeoConnectorScopes.write],
+    requiredScopes: [vimeoProviderPermissions.interact],
     providerPermissions: [vimeoProviderPermissions.interact],
     inputSchema: s.object(
       "Input parameters for adding a Vimeo video to a folder.",
@@ -550,8 +566,9 @@ export const vimeoActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "remove_video_from_folder",
+    operationType: "destructive",
     description: "Remove a Vimeo video from a folder without deleting the video.",
-    requiredScopes: [vimeoConnectorScopes.delete],
+    requiredScopes: [vimeoProviderPermissions.delete],
     providerPermissions: [vimeoProviderPermissions.delete],
     inputSchema: s.object(
       "Input parameters for removing a Vimeo video from a folder.",

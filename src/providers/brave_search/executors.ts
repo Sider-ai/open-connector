@@ -1,17 +1,15 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
+import { compactObject, optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
-  compactObject,
-  optionalBoolean,
-  optionalInteger,
-  optionalRecord,
-  optionalString,
-  requiredRecord,
-  requiredString,
-} from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+  providerUserAgent,
+  ProviderRequestError,
+  requiredInputString,
+  requiredResponseRecord,
+} from "../provider-runtime.ts";
 
 const service = "brave_search";
 const braveSearchApiBaseUrl = "https://api.search.brave.com";
@@ -56,6 +54,16 @@ export const braveSearchActionHandlers: ProviderActionHandlers<"brave_search", B
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, braveSearchActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: braveSearchApiBaseUrl,
+  auth: { type: "api_key_header", name: "X-Subscription-Token" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     await requestBraveSearchJson(
@@ -78,7 +86,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "brave_search",
         displayName: "Brave Search API Key",
       },
-      grantedScopes: [],
       metadata: {
         validationEndpoint: "/res/v1/web/search",
         validationQuery: "brave search",
@@ -92,7 +99,7 @@ export const credentialValidators: CredentialValidators = {
 async function requestBraveSearchJson(
   path: string,
   query: Record<string, BraveSearchQueryValue>,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: BraveSearchPhase,
 ): Promise<unknown> {
   let response: Response;
@@ -101,7 +108,7 @@ async function requestBraveSearchJson(
     response = await context.fetcher(buildBraveSearchUrl(path, query), {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
         "x-subscription-token": context.apiKey,
       },
@@ -143,7 +150,7 @@ function buildBraveSearchUrl(path: string, query: Record<string, BraveSearchQuer
 
 function buildWebSearchQuery(input: Record<string, unknown>): Record<string, BraveSearchQueryValue> {
   return compactObject({
-    q: readRequiredString(input.q, "q"),
+    q: requiredInputString(input.q, "q"),
     search_lang: optionalString(input.search_lang),
     ui_lang: optionalString(input.ui_lang),
     country: optionalString(input.country),
@@ -164,7 +171,7 @@ function buildWebSearchQuery(input: Record<string, unknown>): Record<string, Bra
 
 function buildNewsSearchQuery(input: Record<string, unknown>): Record<string, BraveSearchQueryValue> {
   return compactObject({
-    q: readRequiredString(input.q, "q"),
+    q: requiredInputString(input.q, "q"),
     search_lang: optionalString(input.search_lang),
     ui_lang: optionalString(input.ui_lang),
     country: optionalString(input.country),
@@ -182,7 +189,7 @@ function buildNewsSearchQuery(input: Record<string, unknown>): Record<string, Br
 
 function buildVideoSearchQuery(input: Record<string, unknown>): Record<string, BraveSearchQueryValue> {
   return compactObject({
-    q: readRequiredString(input.q, "q"),
+    q: requiredInputString(input.q, "q"),
     search_lang: optionalString(input.search_lang),
     ui_lang: optionalString(input.ui_lang),
     country: optionalString(input.country),
@@ -198,7 +205,7 @@ function buildVideoSearchQuery(input: Record<string, unknown>): Record<string, B
 
 function buildImageSearchQuery(input: Record<string, unknown>): Record<string, BraveSearchQueryValue> {
   return compactObject({
-    q: readRequiredString(input.q, "q"),
+    q: requiredInputString(input.q, "q"),
     search_lang: optionalString(input.search_lang),
     country: optionalString(input.country),
     safesearch: optionalString(input.safesearch),
@@ -208,7 +215,7 @@ function buildImageSearchQuery(input: Record<string, unknown>): Record<string, B
 }
 
 function normalizeWebSearchResponse(payload: unknown): Record<string, unknown> {
-  const record = requireOutputRecord(payload, "Brave Search response");
+  const record = requiredResponseRecord(payload, "Brave Search response");
 
   return compactObject({
     type: optionalString(record.type) ?? "search",
@@ -227,7 +234,7 @@ function normalizeWebSearchResponse(payload: unknown): Record<string, unknown> {
 }
 
 function normalizeCollectionResponse(payload: unknown): Record<string, unknown> {
-  const record = requireOutputRecord(payload, "Brave Search response");
+  const record = requiredResponseRecord(payload, "Brave Search response");
 
   return compactObject({
     type: optionalString(record.type) ?? "search",
@@ -310,11 +317,7 @@ function optionalObjectArray(value: unknown): Array<Record<string, unknown>> | u
   if (!Array.isArray(value)) {
     return undefined;
   }
-  return value.map((item) => requireOutputRecord(item, "Brave Search result item"));
-}
-
-function readRequiredString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
+  return value.map((item) => requiredResponseRecord(item, "Brave Search result item"));
 }
 
 function readOptionalStringArray(value: unknown): string[] | undefined {
@@ -331,8 +334,4 @@ function readOptionalStringArray(value: unknown): string[] | undefined {
   }
 
   return result.length > 0 ? result : undefined;
-}
-
-function requireOutputRecord(value: unknown, fieldName: string): Record<string, unknown> {
-  return requiredRecord(value, fieldName, (message) => new ProviderRequestError(502, message));
 }

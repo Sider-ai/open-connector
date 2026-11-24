@@ -6,17 +6,18 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { CastError, compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
 import { encodePathSegment } from "../../core/request.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderFetch,
-  defineProviderProxy,
   ProviderRequestError,
   providerUserAgent,
-  requireApiKeyCredential,
+  toProviderExecutionError,
+  providerInputError,
 } from "../provider-runtime.ts";
 
 const service = "aftership";
@@ -143,14 +144,7 @@ export const proxy: ProviderProxyExecutor = defineProviderProxy({
   baseUrl: aftershipApiBaseUrl,
   auth: { type: "api_key_header", name: "as-api-key" },
   skipDnsValidation: true,
-  customizeRequest({ headers }) {
-    if (!headers.has("accept")) {
-      headers.set("accept", "application/json");
-    }
-    if (!headers.has("content-type")) {
-      headers.set("content-type", "application/json");
-    }
-  },
+  defaultHeaders: { "accept": "application/json", "content-type": "application/json" },
 });
 
 export const credentialValidators: CredentialValidators = {
@@ -179,7 +173,6 @@ export const credentialValidators: CredentialValidators = {
       profile: {
         displayName: "AfterShip API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: aftershipApiBaseUrl,
         validationEndpoint: "/couriers?active=true",
@@ -191,7 +184,7 @@ export const credentialValidators: CredentialValidators = {
 
 async function requestAftership(
   request: AftershipRequest,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: "validate" | "execute",
 ): Promise<unknown> {
   const url = new URL(normalizePath(request.path), `${aftershipApiBaseUrl}/`);
@@ -230,7 +223,7 @@ function normalizePath(path: string): string {
 
 function aftershipHeaders(apiKey: string, hasBody: boolean): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
+    "accept": "application/json",
     "as-api-key": apiKey,
     "user-agent": providerUserAgent,
   };
@@ -256,15 +249,6 @@ async function readAftershipPayload(response: Response): Promise<unknown> {
   }
 }
 
-class AftershipExecutionError extends ProviderRequestError {
-  readonly code: string;
-
-  constructor(status: number, code: string, message: string, details?: unknown) {
-    super(status, message, details);
-    this.code = code;
-  }
-}
-
 function createAftershipError(
   response: Response,
   payload: unknown,
@@ -274,20 +258,20 @@ function createAftershipError(
 
   if (response.status === 401 || response.status === 403) {
     if (phase === "validate") {
-      return new ProviderRequestError(400, message);
+      return providerInputError(message);
     }
-    return new AftershipExecutionError(response.status, "credential_expired", message, payload);
+    return new ProviderRequestError(response.status, message, payload);
   }
 
   if (response.status === 400 || response.status === 404 || response.status === 422) {
     return phase === "validate"
       ? new ProviderRequestError(response.status, message)
-      : new AftershipExecutionError(response.status, "invalid_input", message, payload);
+      : new ProviderRequestError(response.status, message, payload, "invalid_input");
   }
 
   return phase === "validate"
     ? new ProviderRequestError(response.status || 502, message)
-    : new AftershipExecutionError(response.status || 502, "provider_error", message, payload);
+    : new ProviderRequestError(response.status || 502, message, payload, "provider_error");
 }
 
 function readAftershipErrorMessage(payload: unknown): string | undefined {
@@ -397,47 +381,8 @@ function createAftershipContext(apiKey: string, executionContext: ExecutionConte
 }
 
 function toAftershipExecutionResult(error: unknown): ExecutionResult {
-  if (error instanceof AftershipExecutionError) {
-    return {
-      ok: false,
-      error: {
-        code: error.code,
-        message: error.message,
-        details: {
-          status: error.status,
-          details: error.details,
-        },
-      },
-    };
-  }
-
-  if (error instanceof ProviderRequestError) {
-    return {
-      ok: false,
-      error: {
-        code:
-          error.status === 401 || error.status === 403
-            ? "authorization_failed"
-            : error.status < 500
-              ? "invalid_input"
-              : "provider_error",
-        message: error.message,
-        details: {
-          status: error.status,
-          details: error.details,
-        },
-      },
-    };
-  }
-
-  if (error instanceof CastError) {
-    return {
-      ok: false,
-      error: {
-        code: "invalid_input",
-        message: error.message,
-      },
-    };
+  if (error instanceof ProviderRequestError || error instanceof CastError) {
+    return toProviderExecutionError(error, "AfterShip request failed");
   }
 
   return {

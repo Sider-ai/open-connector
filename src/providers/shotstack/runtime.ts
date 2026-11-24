@@ -1,15 +1,18 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { optionalBoolean, optionalNumber, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { jsonObject } from "../../core/request.ts";
-import { createProviderTimeout, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import {
+  createProviderTimeout,
+  providerUserAgent,
+  ProviderRequestError,
+  providerInputError,
+} from "../provider-runtime.ts";
 
 const shotstackApiBaseUrl = "https://api.shotstack.io/edit/v1";
 export const shotstackProxyBaseUrl = "https://api.shotstack.io";
-
-const shotstackRequestTimeoutMs = 30_000;
 
 type ShotstackRequestPhase = "validate" | "execute";
 
@@ -46,7 +49,6 @@ export async function validateShotstackCredential(
       accountId: "shotstack:api-key",
       displayName: "Shotstack API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: shotstackApiBaseUrl,
       validationEndpoint: "/templates",
@@ -74,7 +76,7 @@ async function renderEdit(input: Record<string, unknown>, context: ApiKeyProvide
 }
 
 async function getRender(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
-  const id = requiredString(input.id, "id", (message) => new ProviderRequestError(400, message));
+  const id = requiredString(input.id, "id", providerInputError);
   const query = new URLSearchParams();
   const data = optionalBoolean(input.data);
   const merged = optionalBoolean(input.merged);
@@ -128,9 +130,9 @@ async function requestShotstackJson(input: {
   signal?: AbortSignal;
   phase: ShotstackRequestPhase;
 }): Promise<unknown> {
-  const timeout = createProviderTimeout(input.signal, shotstackRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   const headers: Record<string, string> = {
-    accept: "application/json",
+    "accept": "application/json",
     "x-api-key": input.apiKey,
     "user-agent": providerUserAgent,
   };
@@ -205,13 +207,13 @@ function createShotstackError(
     return new ProviderRequestError(429, message);
   }
   if (phase === "validate" && response.status >= 400 && response.status < 500) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (phase === "execute" && (response.status === 401 || response.status === 403)) {
     return new ProviderRequestError(401, message);
   }
   if (response.status >= 400 && response.status < 500) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   return new ProviderRequestError(response.status || 502, message);
 }

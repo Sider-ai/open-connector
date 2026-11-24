@@ -1,11 +1,12 @@
-import type { AuthDefinition, CredentialField, OAuthConfig, ProviderDefinition } from "./model";
+import type { AuthDefinition, CredentialField, OAuthClientSetup, OAuthConfig, ProviderDefinition } from "./model";
 import type { ReactNode, SubmitEvent } from "react";
 
 import { useTranslate } from "@embra/i18n/react";
-import { Settings, Trash2 } from "lucide-react";
+import { ExternalLink, Settings, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { apiDelete, apiPut } from "./api";
 import { CredentialInput } from "./credential-input";
+import { OAuthSourceForm } from "./saas-project-settings";
 import { FormStatus } from "./shared-ui";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -27,28 +28,29 @@ interface OAuthAppDialogProps extends OAuthAppFormProps {
 
 export function OAuthAppDialog(props: OAuthAppDialogProps): ReactNode {
   const t = useTranslate();
-  const configured = props.config?.configured ?? false;
-
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogContent className="max-h-[calc(100svh-2rem)] max-w-[min(560px,calc(100vw-2rem))] overflow-y-auto sm:max-w-[min(560px,calc(100vw-2rem))]">
         <DialogHeader>
-          <DialogTitle>
-            {t(configured ? "oauthApps.dialog.editTitle" : "oauthApps.dialog.configureTitle", {
-              name: props.provider.displayName,
-            })}
-          </DialogTitle>
-          <DialogDescription>{props.provider.service}</DialogDescription>
+          <DialogTitle>{t("saas.settingsTitle", { name: props.provider.displayName })}</DialogTitle>
+          <DialogDescription>{t("saas.settingsDescription")}</DialogDescription>
         </DialogHeader>
-        <OAuthAppForm
-          provider={props.provider}
-          auth={props.auth}
+        <OAuthSourceForm
+          service={props.provider.service}
           config={props.config}
           onRefresh={props.onRefresh}
-          onSaved={() => {
-            props.onSaved?.();
-            props.onOpenChange(false);
-          }}
+          localConfiguration={
+            <OAuthAppForm
+              provider={props.provider}
+              auth={props.auth}
+              config={props.config}
+              onRefresh={props.onRefresh}
+              onSaved={() => {
+                props.onSaved?.();
+                props.onOpenChange(false);
+              }}
+            />
+          }
         />
       </DialogContent>
     </Dialog>
@@ -64,11 +66,14 @@ export function OAuthAppForm(props: OAuthAppFormProps): ReactNode {
   const [extraValues, setExtraValues] = useState(() =>
     initialClientConfigFieldValues(clientConfigFields, props.config),
   );
+  const [clearedSecrets, setClearedSecrets] = useState<Record<string, boolean>>({});
+  const sameClient = configured && clientId === props.config?.clientId;
   const [status, setStatus] = useState<string | null>(null);
 
   useEffect(() => {
     setClientId(props.config?.clientId ?? "");
     setClientSecret("");
+    setClearedSecrets({});
     setExtraValues(initialClientConfigFieldValues(clientConfigFields, props.config));
     setStatus(null);
   }, [props.provider.service, props.config?.clientId, clientConfigFields]);
@@ -78,9 +83,12 @@ export function OAuthAppForm(props: OAuthAppFormProps): ReactNode {
     setStatus(t("providers.oauthClientSettings.saving"));
     try {
       const { extra, secretExtra } = splitClientConfigFieldValues(clientConfigFields, extraValues);
+      for (const key of Object.keys(secretExtra)) {
+        if (!secretExtra[key]?.trim() && !clearedSecrets[key]) delete secretExtra[key];
+      }
       await apiPut(`/api/oauth/configs/${props.provider.service}`, {
         clientId,
-        clientSecret,
+        clientSecret: clientSecret || undefined,
         extra,
         secretExtra,
       });
@@ -105,6 +113,9 @@ export function OAuthAppForm(props: OAuthAppFormProps): ReactNode {
 
   return (
     <form className="form-grid" onSubmit={(event) => void submit(event)}>
+      {props.auth.clientSetup ? (
+        <OAuthClientSetupSteps setup={props.auth.clientSetup} providerName={props.provider.displayName} />
+      ) : null}
       {props.config?.expectedRedirectUri ? (
         <Label className="field">
           <span>{t("providers.oauthClientSettings.callbackUrl")}</span>
@@ -115,26 +126,50 @@ export function OAuthAppForm(props: OAuthAppFormProps): ReactNode {
         <span>{t("providers.oauthClientSettings.clientId")}</span>
         <Input value={clientId} onChange={(event) => setClientId(event.target.value)} required />
       </Label>
-      {props.auth.tokenEndpointAuthMethod !== "none" ? (
+      {props.auth.clientFields?.some((field) => field.key === "clientSecret" && field.required) ? (
         <Label className="field">
           <span>{t("providers.oauthClientSettings.clientSecret")}</span>
           <Input
             type="password"
             value={clientSecret}
             onChange={(event) => setClientSecret(event.target.value)}
-            required
+            required={!sameClient || props.config?.missingFields?.includes("clientSecret")}
           />
-          {configured ? <small>{t("providers.oauthClientSettings.storedSecretHint")}</small> : null}
+          {sameClient ? <small>{t("providers.oauthClientSettings.storedSecretHint")}</small> : null}
         </Label>
       ) : null}
-      {clientConfigFields.map((field) => (
-        <CredentialInput
-          key={field.key}
-          field={field}
-          value={extraValues[field.key] ?? ""}
-          onChange={(value) => setExtraValues((previous) => ({ ...previous, [field.key]: value }))}
-        />
-      ))}
+      {clientConfigFields.map((field) => {
+        const storedSecret = sameClient && field.location === "secretExtra";
+        return (
+          <div key={field.key} className="grid gap-2">
+            <CredentialInput
+              field={{
+                ...field,
+                required: field.required && (!storedSecret || !!props.config?.missingFields?.includes(field.key)),
+              }}
+              value={extraValues[field.key] ?? ""}
+              onChange={(value) => {
+                setExtraValues((previous) => ({ ...previous, [field.key]: value }));
+                setClearedSecrets((previous) => ({ ...previous, [field.key]: false }));
+              }}
+            />
+            {storedSecret ? <small>{t("providers.oauthClientSettings.storedSecretHint")}</small> : null}
+            {storedSecret && !field.required ? (
+              <Label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={!!clearedSecrets[field.key]}
+                  onChange={(event) => {
+                    setClearedSecrets((previous) => ({ ...previous, [field.key]: event.target.checked }));
+                    setExtraValues((previous) => ({ ...previous, [field.key]: "" }));
+                  }}
+                />
+                {t("providers.oauthClientSettings.clearSecret", { name: field.label })}
+              </Label>
+            ) : null}
+          </div>
+        );
+      })}
       <div className="button-row">
         <Button type="submit">
           <Settings size={16} />
@@ -152,8 +187,33 @@ export function OAuthAppForm(props: OAuthAppFormProps): ReactNode {
   );
 }
 
+function OAuthClientSetupSteps(props: { setup: OAuthClientSetup; providerName: string }): ReactNode {
+  const t = useTranslate();
+  return (
+    <section className="rounded-md border bg-muted/40 p-3">
+      <h4 className="mb-2 text-sm font-medium">{t("providers.oauthClientSettings.setupTitle")}</h4>
+      <ol className="ml-4 list-decimal space-y-1 text-sm text-muted-foreground marker:text-muted-foreground">
+        {props.setup.steps.map((step) => (
+          <li key={step}>{step}</li>
+        ))}
+      </ol>
+      {props.setup.docsUrl ? (
+        <a
+          className="mt-2 inline-flex items-center gap-1 text-sm underline underline-offset-3 hover:text-foreground"
+          href={props.setup.docsUrl}
+          target="_blank"
+          rel="noreferrer noopener"
+        >
+          {t("providers.oauthClientSettings.setupDocsLink", { name: props.providerName })}
+          <ExternalLink size={14} />
+        </a>
+      ) : null}
+    </section>
+  );
+}
+
 export function clientConfigFieldsFor(auth: AuthDefinition): CredentialField[] {
-  return auth.type === "oauth2" ? (auth.clientConfigFields ?? []) : [];
+  return auth.type === "oauth2" ? (auth.clientFields ?? []).filter((field) => field.location !== undefined) : [];
 }
 
 export function initialClientConfigFieldValues(

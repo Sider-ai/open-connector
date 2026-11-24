@@ -1,5 +1,5 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
 import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
@@ -26,13 +26,11 @@ export const myOtpAppActionHandlers: ProviderActionHandlers<
 };
 export async function validateMyOtpApp(context: ApiKeyProviderContext): Promise<{
   profile: { accountId: string; displayName: string };
-  grantedScopes: string[];
   metadata: Record<string, unknown>;
 }> {
   const payload = await request("/check_otp_status", { message_id: validationMessageId }, context, "validate");
   return {
     profile: { accountId: "api_key", displayName: "MyOTP.App API Key" },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: myOtpAppApiBaseUrl,
       validationEndpoint: "/check_otp_status",
@@ -49,7 +47,7 @@ async function request(
   const response = await context.fetcher(new URL(path, myOtpAppApiBaseUrl), {
     method: "POST",
     headers: {
-      accept: "application/json",
+      "accept": "application/json",
       "content-type": "application/json",
       "user-agent": providerUserAgent,
       "X-API-Key": context.apiKey,

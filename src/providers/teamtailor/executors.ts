@@ -4,26 +4,28 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderRequestContext, ProviderFetch } from "../provider-runtime.ts";
 
-import { compactObject, optionalRecord, optionalString, requiredRecord, requiredString } from "../../core/cast.ts";
+import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineProviderExecutors,
-  defineProviderProxy,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
-  requireApiKeyCredential,
+  requiredInputString,
+  requiredResponseRecord,
   setSearchParams,
+  providerInputError,
 } from "../provider-runtime.ts";
 
 const service = "teamtailor";
 const teamtailorEuApiBaseUrl = "https://api.teamtailor.com";
 const teamtailorNaApiBaseUrl = "https://api.na.teamtailor.com";
 const teamtailorApiVersion = "20240904";
-const teamtailorDefaultRequestTimeoutMs = 30_000;
 
 type TeamtailorStack = "eu" | "na";
 type TeamtailorPhase = "validate" | "execute";
@@ -39,11 +41,11 @@ export const teamtailorActionHandlers: ProviderActionHandlers<"teamtailor", Team
       "filter[department]": optionalString(input.departmentId),
       "filter[location]": optionalString(input.locationId),
       "filter[status]": optionalString(input.status),
-      sort: optionalString(input.sort),
+      "sort": optionalString(input.sort),
     });
   },
   async retrieve_job(input, context): Promise<unknown> {
-    const jobId = requiredProviderString(input.jobId, "jobId");
+    const jobId = requiredInputString(input.jobId, "jobId");
     const payload = await requestTeamtailorJson({
       apiKey: context.apiKey,
       stack: resolveStack(input, context),
@@ -112,14 +114,13 @@ export const credentialValidators: CredentialValidators = {
       context: { fetcher, signal },
       phase: "validate",
     });
-    const body = requiredProviderRecord(payload, "Teamtailor jobs response");
+    const body = requiredResponseRecord(payload, "Teamtailor jobs response");
     const jobs = readRequiredArray(body.data, "Teamtailor jobs response data");
 
     return {
       profile: {
         displayName: `Teamtailor ${stack.toUpperCase()} API Key`,
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: getTeamtailorBaseUrl(stack),
         apiVersion: teamtailorApiVersion,
@@ -145,7 +146,7 @@ async function listResources(
       "page[size]": readOptionalPositiveIntegerString(input.pageSize, "pageSize"),
       "page[after]": optionalString(input.pageAfter),
       "page[before]": optionalString(input.pageBefore),
-      include: readOptionalInclude(input.include),
+      "include": readOptionalInclude(input.include),
       ...extraQuery,
     }),
     context,
@@ -158,20 +159,20 @@ async function requestTeamtailorJson(input: {
   apiKey: string;
   stack: TeamtailorStack;
   path: string;
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">;
+  context: ProviderRequestContext;
   phase: TeamtailorPhase;
   query?: Record<string, string | undefined>;
   notFoundAsInvalidInput?: boolean;
 }): Promise<unknown> {
   const url = new URL(input.path, `${getTeamtailorBaseUrl(input.stack)}/`);
   setSearchParams(url, input.query ?? {});
-  const timeout = createProviderTimeout(input.context.signal, teamtailorDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   try {
     const response = await input.context.fetcher(url.toString(), {
       method: "GET",
       headers: {
-        accept: "application/vnd.api+json",
-        authorization: `Token token=${input.apiKey}`,
+        "accept": "application/vnd.api+json",
+        "authorization": `Token token=${input.apiKey}`,
         "user-agent": providerUserAgent,
         "x-api-version": teamtailorApiVersion,
       },
@@ -208,7 +209,7 @@ function readStack(value: unknown): TeamtailorStack {
 }
 
 function normalizeListResponse(payload: unknown, label: string): Record<string, unknown> {
-  const body = requiredProviderRecord(payload, label);
+  const body = requiredResponseRecord(payload, label);
   return {
     data: readRequiredArray(body.data, `${label} data`),
     included: readArray(body.included),
@@ -219,9 +220,9 @@ function normalizeListResponse(payload: unknown, label: string): Record<string, 
 }
 
 function normalizeSingleResourceResponse(payload: unknown, label: string): Record<string, unknown> {
-  const body = requiredProviderRecord(payload, label);
+  const body = requiredResponseRecord(payload, label);
   return {
-    data: requiredProviderRecord(body.data, `${label} data`),
+    data: requiredResponseRecord(body.data, `${label} data`),
     included: readArray(body.included),
     links: optionalRecord(body.links) ?? null,
     meta: optionalRecord(body.meta) ?? null,
@@ -249,14 +250,14 @@ function readOptionalPositiveIntegerString(value: unknown, fieldName: string): s
 }
 
 function readArray(value: unknown): Array<Record<string, unknown>> {
-  return Array.isArray(value) ? value.map((item) => requiredProviderRecord(item, "Teamtailor resource")) : [];
+  return Array.isArray(value) ? value.map((item) => requiredResponseRecord(item, "Teamtailor resource")) : [];
 }
 
 function readRequiredArray(value: unknown, label: string): Array<Record<string, unknown>> {
   if (!Array.isArray(value)) {
     throw new ProviderRequestError(502, `${label} was not an array`);
   }
-  return value.map((item) => requiredProviderRecord(item, "Teamtailor resource"));
+  return value.map((item) => requiredResponseRecord(item, "Teamtailor resource"));
 }
 
 async function readJsonPayload(response: Response): Promise<unknown> {
@@ -282,7 +283,7 @@ function mapTeamtailorError(
     return new ProviderRequestError(phase === "validate" ? 400 : response.status, message);
   }
   if (response.status === 404 && notFoundAsInvalidInput) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (response.status === 429) {
     return new ProviderRequestError(429, message);
@@ -297,12 +298,4 @@ function readTeamtailorErrorMessage(payload: unknown): string | undefined {
   return firstError
     ? (optionalString(firstError.detail) ?? optionalString(firstError.title))
     : (optionalString(body?.message) ?? optionalString(body?.error));
-}
-
-function requiredProviderString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
-}
-
-function requiredProviderRecord(value: unknown, fieldName: string): Record<string, unknown> {
-  return requiredRecord(value, fieldName, (message) => new ProviderRequestError(502, message));
 }

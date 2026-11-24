@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderRequestContext, ProviderFetch } from "../provider-runtime.ts";
 
 import {
   compactObject,
@@ -10,7 +10,7 @@ import {
   optionalString,
   requiredString,
 } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { providerInputError, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 export const openHandsApiBaseUrl = "https://app.all-hands.dev";
 const openHandsValidationPath = "/api/v1/app-conversations/search";
@@ -29,13 +29,13 @@ export const openHandsActionHandlers: ProviderActionHandlers<"open_hands", OpenH
   },
   async get_start_task(input, context) {
     const payload = await openHandsRequest(context.apiKey, "/api/v1/app-conversations/start-tasks", context, {
-      query: { ids: requiredString(input.task_id, "task_id", requestInputError) },
+      query: { ids: requiredString(input.task_id, "task_id", providerInputError) },
     });
     return buildStartTaskOutput(readFirstItem(payload, "OpenHands start task was not found"));
   },
   async get_conversation(input, context) {
     const payload = await openHandsRequest(context.apiKey, "/api/v1/app-conversations", context, {
-      query: { ids: requiredString(input.conversation_id, "conversation_id", requestInputError) },
+      query: { ids: requiredString(input.conversation_id, "conversation_id", providerInputError) },
     });
     const conversation = readNullableFirstItem(payload);
     return {
@@ -61,7 +61,7 @@ export const openHandsActionHandlers: ProviderActionHandlers<"open_hands", OpenH
   },
   async send_message(input, context) {
     const conversationId = encodeURIComponent(
-      requiredString(input.conversation_id, "conversation_id", requestInputError),
+      requiredString(input.conversation_id, "conversation_id", providerInputError),
     );
     const payload = await openHandsRequest(
       context.apiKey,
@@ -87,7 +87,7 @@ export async function validateOpenHandsCredential(
   fetcher: ProviderFetch,
   signal?: AbortSignal,
 ): Promise<CredentialValidationResult> {
-  const context: Pick<ApiKeyProviderContext, "fetcher" | "signal"> = { fetcher, signal };
+  const context: ProviderRequestContext = { fetcher, signal };
   await openHandsRequest(apiKey, openHandsValidationPath, context, {
     query: { limit: 1 },
   });
@@ -96,7 +96,6 @@ export async function validateOpenHandsCredential(
       accountId: "open_hands",
       displayName: "OpenHands API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: openHandsApiBaseUrl,
       validationEndpoint: openHandsValidationPath,
@@ -124,7 +123,7 @@ function buildMessageBody(input: Record<string, unknown>): Record<string, unknow
     content: [
       {
         type: "text",
-        text: requiredString(input.message, "message", requestInputError),
+        text: requiredString(input.message, "message", providerInputError),
       },
     ],
     run: optionalBoolean(input.run),
@@ -134,14 +133,14 @@ function buildMessageBody(input: Record<string, unknown>): Record<string, unknow
 async function openHandsRequest(
   apiKey: string,
   path: string,
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">,
+  context: ProviderRequestContext,
   options: {
     method?: OpenHandsRequestMethod;
     query?: Record<string, unknown>;
     body?: Record<string, unknown>;
   } = {},
 ): Promise<OpenHandsPayload> {
-  const token = requiredString(apiKey, "apiKey", requestInputError);
+  const token = requiredString(apiKey, "apiKey", providerInputError);
   const url = new URL(path, openHandsApiBaseUrl);
   appendQuery(url, options.query ?? {});
   let response: Response;
@@ -150,8 +149,8 @@ async function openHandsRequest(
     response = await context.fetcher(url, {
       method: options.method ?? "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${token}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${token}`,
         ...(options.body ? { "content-type": "application/json" } : {}),
         "user-agent": providerUserAgent,
       },
@@ -330,8 +329,4 @@ function readErrorMessage(payload: Record<string, unknown>): string | undefined 
     optionalString(payload.message) ??
     optionalString(payload.error)
   );
-}
-
-function requestInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

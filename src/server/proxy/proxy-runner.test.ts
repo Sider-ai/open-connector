@@ -1,5 +1,4 @@
-import type { CatalogStore } from "../../catalog-store.ts";
-import type { ConnectionService, ConnectionSummary } from "../../connection-service.ts";
+import type { ConnectionSummary } from "../../connection-service.ts";
 import type {
   ActionExecutor,
   CredentialValidators,
@@ -9,11 +8,20 @@ import type {
   ResolvedCredential,
 } from "../../core/types.ts";
 import type { IProviderLoader } from "../../providers/provider-loader.ts";
+import type { RuntimeStatus } from "../api/runtime-api.ts";
 import type { Logger } from "../logger.ts";
+import type { RunProxyInput } from "./proxy-runner.ts";
 
+import { setImmediate } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
-import { ConnectionError } from "../../connection-service.ts";
+import { createCatalogStore } from "../../catalog-store.ts";
+import { ConnectionError } from "../../connection-error.ts";
+import { ConnectionService } from "../../connection-service.ts";
 import { ActionPolicyService } from "../../core/action-policy.ts";
+import { providerErrorCodes } from "../../core/provider-error-codes.ts";
+import { serializeProxyFailure } from "../api/runtime-api.ts";
+import { serializeRuntimeActionResult } from "../api/runtime-api.ts";
+import { SqliteRuntimeDatabase } from "../storage/sqlite/runtime-store.ts";
 import { ProxyRunner } from "./proxy-runner.ts";
 
 const provider: ProviderDefinition = {
@@ -34,9 +42,63 @@ const credential: Extract<ResolvedCredential, { authType: "api_key" }> = {
 };
 const connectionId = "11111111-1111-4111-8111-111111111111";
 const otherConnectionId = "22222222-2222-4222-8222-222222222222";
+const openPolicy = new ActionPolicyService().createSnapshot();
+
+interface CrossRouteErrorCase {
+  title: string;
+  error: Extract<ProxyExecutionResult, { ok: false }>["error"];
+}
+
+/**
+ * Both `/v1` front doors serve the same provider error object through their own
+ * mapper, so both must derive the same HTTP status from it. Cover every code a
+ * provider executor can raise, the `connection_not_found` the runtime raises on
+ * its behalf, and the two upstream statuses a provider preserves in
+ * `details.status`. The last case matches two branches at once, so it also pins
+ * the order the two mappers resolve them in: a row that carries only a code or
+ * only a status agrees no matter where either mapper puts its 413 branch.
+ */
+const crossRouteErrorCases: CrossRouteErrorCase[] = [
+  ...providerErrorCodes.map((code) => ({ title: code, error: { code, message: "Provider request failed." } })),
+  { title: "connection_not_found", error: { code: "connection_not_found", message: "Connect the account." } },
+  {
+    title: "an upstream not-found status",
+    error: { code: "invalid_input", message: "Task not found.", details: { status: 404 } },
+  },
+  {
+    title: "an upstream payload-too-large status",
+    error: { code: "invalid_input", message: "response exceeds 4 bytes", details: { status: 413 } },
+  },
+  {
+    title: "an exhausted credit balance whose response was too large",
+    error: { code: "insufficient_credit", message: "response exceeds 4 bytes", details: { status: 413 } },
+  },
+];
+
+interface ProxyFailureStatusCase extends CrossRouteErrorCase {
+  status: RuntimeStatus;
+}
+
+/**
+ * The cross-route table proves the two mappers agree about an error object;
+ * these pin what they agree on, so the statuses this layer moved on the proxy
+ * route are caught by value rather than by both routes moving together.
+ */
+const proxyFailureStatusCases: ProxyFailureStatusCase[] = [
+  {
+    title: "an exhausted provider credit balance",
+    error: { code: "insufficient_credit", message: "Account balance is empty." },
+    status: 402,
+  },
+  {
+    title: "an upstream not-found status",
+    error: { code: "invalid_input", message: "Task not found.", details: { status: 404 } },
+    status: 404,
+  },
+];
 
 describe("ProxyRunner", () => {
-  it("returns proxy_not_supported before resolving credentials when the provider has no proxy executor", async () => {
+  it("returns proxy_not_supported after selecting a local connection without a proxy executor", async () => {
     const connections = createConnections();
     const runner = createRunner({
       connections,
@@ -44,23 +106,23 @@ describe("ProxyRunner", () => {
     });
 
     await expect(
-      runner.run({
+      runProxyHttp(runner, {
         service: "example",
-        input: null,
+        input: { endpoint: "/items", method: "GET" },
+        policy: openPolicy,
       }),
     ).resolves.toMatchObject({
       ok: false,
       status: 501,
       errorCode: "proxy_not_supported",
     });
-    expect(connections.getConnectionSummary).not.toHaveBeenCalled();
+    expect(connections.getConnectionSummary).toHaveBeenCalled();
   });
 
   it("rejects proxies blocked by local policy before loading executors", async () => {
     const loadProxyExecutor = vi.fn();
     const connections = createConnections();
     const runner = createRunner({
-      actionPolicy: new ActionPolicyService({ allowedProxies: ["other"] }),
       connections,
       providerLoader: {
         loadActionExecutor: async () => undefined,
@@ -70,9 +132,10 @@ describe("ProxyRunner", () => {
     });
 
     await expect(
-      runner.run({
+      runProxyHttp(runner, {
         service: "example",
         input: { endpoint: "/items", method: "GET" },
+        policy: new ActionPolicyService({ allowedProxies: ["other"] }).createSnapshot(),
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -87,7 +150,6 @@ describe("ProxyRunner", () => {
     const loadProxyExecutor = vi.fn();
     const actionPolicy = new ActionPolicyService({ allowedProxies: ["example"] });
     const runner = createRunner({
-      actionPolicy,
       providerLoader: {
         loadActionExecutor: async () => undefined,
         loadCredentialValidators: async () => undefined,
@@ -105,7 +167,7 @@ describe("ProxyRunner", () => {
     );
 
     await expect(
-      runner.run({ service: "example", input: { endpoint: "/items", method: "GET" }, policy }),
+      runProxyHttp(runner, { service: "example", input: { endpoint: "/items", method: "GET" }, policy }),
     ).resolves.toMatchObject({
       ok: false,
       errorCode: "proxy_blocked",
@@ -117,7 +179,6 @@ describe("ProxyRunner", () => {
     const loadProxyExecutor = vi.fn();
     const actionPolicy = new ActionPolicyService({ allowedProxies: ["example"] });
     const runner = createRunner({
-      actionPolicy,
       providerLoader: {
         loadActionExecutor: async () => undefined,
         loadCredentialValidators: async () => undefined,
@@ -135,7 +196,7 @@ describe("ProxyRunner", () => {
     );
 
     await expect(
-      runner.run({ service: "example", input: { endpoint: "/items", method: "GET" }, policy }),
+      runProxyHttp(runner, { service: "example", input: { endpoint: "/items", method: "GET" }, policy }),
     ).resolves.toMatchObject({
       ok: false,
       errorCode: "proxy_not_allowed",
@@ -144,17 +205,14 @@ describe("ProxyRunner", () => {
   });
 
   it("denies a restricted connection before executing the proxy", async () => {
-    const proxy = vi.fn(
-      async (): Promise<ProxyExecutionResult> => ({
-        ok: true,
-        response: { status: 200, headers: {}, data: null },
-      }),
-    );
+    const proxy = vi.fn(async (): Promise<ProxyExecutionResult> => ({
+      ok: true,
+      response: { status: 200, headers: {}, data: null },
+    }));
     const loadProxyExecutor = vi.fn(async () => proxy);
     const connections = createConnections();
     const actionPolicy = new ActionPolicyService({ allowedProxies: ["example"] });
     const runner = createRunner({
-      actionPolicy,
       connections,
       providerLoader: {
         loadActionExecutor: async () => undefined,
@@ -170,14 +228,14 @@ describe("ProxyRunner", () => {
     });
 
     await expect(
-      runner.run({ service: "example", input: { endpoint: "/items", method: "GET" }, policy }),
+      runProxyHttp(runner, { service: "example", input: { endpoint: "/items", method: "GET" }, policy }),
     ).resolves.toMatchObject({
       ok: false,
       status: 403,
       errorCode: "connection_not_allowed",
     });
     await expect(
-      runner.run({
+      runProxyHttp(runner, {
         service: "example",
         connectionName: "hidden",
         input: { endpoint: "/items", method: "GET" },
@@ -188,26 +246,23 @@ describe("ProxyRunner", () => {
       status: 403,
       errorCode: "connection_not_allowed",
     });
-    expect(loadProxyExecutor).toHaveBeenCalledTimes(2);
+    expect(loadProxyExecutor).not.toHaveBeenCalled();
     expect(connections.getConnectionSummary).toHaveBeenCalledTimes(2);
     expect(proxy).not.toHaveBeenCalled();
   });
 
   it("executes allowlisted proxy connections and leaves unrestricted tokens unchanged", async () => {
-    const proxy: ProviderProxyExecutor = vi.fn(
-      async (): Promise<ProxyExecutionResult> => ({
-        ok: true,
-        response: { status: 200, headers: {}, data: null },
-      }),
-    );
+    const proxy: ProviderProxyExecutor = vi.fn(async (): Promise<ProxyExecutionResult> => ({
+      ok: true,
+      response: { status: 200, headers: {}, data: null },
+    }));
     const actionPolicy = new ActionPolicyService({ allowedProxies: ["example"] });
     const runner = createRunner({
-      actionPolicy,
       providerLoader: new TestProviderLoader(proxy),
     });
 
     await expect(
-      runner.run({
+      runProxyHttp(runner, {
         service: "example",
         connectionName: " work ",
         input: { endpoint: "/items", method: "GET" },
@@ -220,7 +275,7 @@ describe("ProxyRunner", () => {
       }),
     ).resolves.toMatchObject({ ok: true });
     await expect(
-      runner.run({
+      runProxyHttp(runner, {
         service: "example",
         connectionName: "personal",
         input: { endpoint: "/items", method: "GET" },
@@ -236,15 +291,12 @@ describe("ProxyRunner", () => {
   });
 
   it("does not apply connection grants to no-auth proxies", async () => {
-    const proxy: ProviderProxyExecutor = vi.fn(
-      async (): Promise<ProxyExecutionResult> => ({
-        ok: true,
-        response: { status: 200, headers: {}, data: null },
-      }),
-    );
+    const proxy: ProviderProxyExecutor = vi.fn(async (): Promise<ProxyExecutionResult> => ({
+      ok: true,
+      response: { status: 200, headers: {}, data: null },
+    }));
     const actionPolicy = new ActionPolicyService({ allowedProxies: ["example"] });
     const runner = createRunner({
-      actionPolicy,
       provider: { ...provider, authTypes: ["no_auth"], auth: [{ type: "no_auth" }] },
       connections: createConnections({
         getConnectionSummary: async () => ({
@@ -262,7 +314,7 @@ describe("ProxyRunner", () => {
     });
 
     await expect(
-      runner.run({
+      runProxyHttp(runner, {
         service: "example",
         input: { endpoint: "/items", method: "GET" },
         policy: actionPolicy.createSnapshot(undefined, {
@@ -276,15 +328,12 @@ describe("ProxyRunner", () => {
   });
 
   it("applies connection grants to credentials on providers that also support no-auth", async () => {
-    const proxy = vi.fn(
-      async (): Promise<ProxyExecutionResult> => ({
-        ok: true,
-        response: { status: 200, headers: {}, data: null },
-      }),
-    );
+    const proxy = vi.fn(async (): Promise<ProxyExecutionResult> => ({
+      ok: true,
+      response: { status: 200, headers: {}, data: null },
+    }));
     const actionPolicy = new ActionPolicyService({ allowedProxies: ["example"] });
     const runner = createRunner({
-      actionPolicy,
       provider: {
         ...provider,
         authTypes: ["no_auth", "api_key"],
@@ -294,7 +343,7 @@ describe("ProxyRunner", () => {
     });
 
     await expect(
-      runner.run({
+      runProxyHttp(runner, {
         service: "example",
         input: { endpoint: "/items", method: "GET" },
         policy: actionPolicy.createSnapshot(undefined, {
@@ -309,24 +358,22 @@ describe("ProxyRunner", () => {
   });
 
   it("runs allowlisted proxies regardless of action policy", async () => {
-    const proxy: ProviderProxyExecutor = vi.fn(
-      async (): Promise<ProxyExecutionResult> => ({
-        ok: true,
-        response: { status: 200, headers: {}, data: null },
-      }),
-    );
+    const proxy: ProviderProxyExecutor = vi.fn(async (): Promise<ProxyExecutionResult> => ({
+      ok: true,
+      response: { status: 200, headers: {}, data: null },
+    }));
     const runner = createRunner({
-      actionPolicy: new ActionPolicyService({
-        allowedActions: ["example.echo"],
-        allowedProxies: ["example"],
-      }),
       providerLoader: new TestProviderLoader(proxy),
     });
 
     await expect(
-      runner.run({
+      runProxyHttp(runner, {
         service: "example",
         input: { endpoint: "/items", method: "GET" },
+        policy: new ActionPolicyService({
+          allowedActions: ["example.echo"],
+          allowedProxies: ["example"],
+        }).createSnapshot(),
       }),
     ).resolves.toMatchObject({
       ok: true,
@@ -343,9 +390,10 @@ describe("ProxyRunner", () => {
     });
 
     await expect(
-      runner.run({
+      runProxyHttp(runner, {
         service: "example",
         input: { endpoint: "https://evil.test/a", method: "GET" },
+        policy: openPolicy,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -355,12 +403,10 @@ describe("ProxyRunner", () => {
   });
 
   it("rejects slash-prefixed absolute endpoints before loading executors", async () => {
-    const proxy: ProviderProxyExecutor = vi.fn(
-      async (): Promise<ProxyExecutionResult> => ({
-        ok: true,
-        response: { status: 200, headers: {}, data: null },
-      }),
-    );
+    const proxy: ProviderProxyExecutor = vi.fn(async (): Promise<ProxyExecutionResult> => ({
+      ok: true,
+      response: { status: 200, headers: {}, data: null },
+    }));
     const runner = createRunner({
       providerLoader: {
         loadActionExecutor: async () => undefined,
@@ -375,10 +421,44 @@ describe("ProxyRunner", () => {
       "/http://169.254.169.254/latest/meta-data/",
       "/http:/169.254.169.254/",
     ]) {
-      await expect(runner.run({ service: "example", input: { endpoint, method: "GET" } })).resolves.toMatchObject({
+      await expect(
+        runProxyHttp(runner, { service: "example", input: { endpoint, method: "GET" }, policy: openPolicy }),
+      ).resolves.toMatchObject({
         ok: false,
         status: 400,
         errorCode: "invalid_input",
+      });
+    }
+    expect(proxy).not.toHaveBeenCalled();
+  });
+
+  it("rejects encoded traversal endpoints before loading executors", async () => {
+    const proxy: ProviderProxyExecutor = vi.fn(async (): Promise<ProxyExecutionResult> => ({
+      ok: true,
+      response: { status: 200, headers: {}, data: null },
+    }));
+    const runner = createRunner({
+      providerLoader: {
+        loadActionExecutor: async () => undefined,
+        loadCredentialValidators: async () => undefined,
+        loadProxyExecutor: async () => proxy,
+      },
+    });
+
+    for (const endpoint of [
+      "/api/..%2F..%2F..%2Fv3/users",
+      "/api/..%2f..%2fv3",
+      "/api/%2e%2e%2Fv3",
+      "/api/..%5Cv3",
+      "/api/%zz",
+    ]) {
+      await expect(
+        runProxyHttp(runner, { service: "example", input: { endpoint, method: "GET" }, policy: openPolicy }),
+      ).resolves.toMatchObject({
+        ok: false,
+        status: 400,
+        errorCode: "invalid_input",
+        message: "endpoint must not contain path traversal segments",
       });
     }
     expect(proxy).not.toHaveBeenCalled();
@@ -403,10 +483,11 @@ describe("ProxyRunner", () => {
     });
 
     await expect(
-      runner.run({
+      runProxyHttp(runner, {
         service: "example",
         connectionName: "work",
         input: { endpoint: "/items", method: "post", query: { limit: 1 } },
+        policy: openPolicy,
       }),
     ).resolves.toEqual({
       ok: true,
@@ -427,24 +508,256 @@ describe("ProxyRunner", () => {
         getCredential: expect.any(Function),
       }),
     );
-    expect(connections.forConnection).toHaveBeenCalledWith("work");
+    expect(connections.resolveConnection).toHaveBeenCalledWith("example", "work", undefined);
+  });
+
+  it("threads the caller abort signal into the proxy execution context", async () => {
+    const controller = new AbortController();
+    let seenSignal: AbortSignal | undefined;
+    const proxy: ProviderProxyExecutor = vi.fn(async (_input, context): Promise<ProxyExecutionResult> => {
+      seenSignal = context.signal;
+      return { ok: true, response: { status: 200, headers: {}, data: null } };
+    });
+    const runner = createRunner({ providerLoader: new TestProviderLoader(proxy) });
+
+    await expect(
+      runProxyHttp(runner, {
+        service: "example",
+        input: { endpoint: "/items", method: "GET" },
+        policy: openPolicy,
+        signal: controller.signal,
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(seenSignal).toBe(controller.signal);
+    expect(seenSignal?.aborted).toBe(false);
+  });
+
+  it("rejects an already cancelled proxy before reading credentials or loading the executor", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const proxy = vi.fn<ProviderProxyExecutor>();
+    const providerLoader = new TestProviderLoader(proxy);
+    const loadExecutor = vi.spyOn(providerLoader, "loadProxyExecutor");
+    const connections = createConnections();
+    const runner = createRunner({ providerLoader, connections });
+
+    await expect(
+      runProxyHttp(runner, {
+        service: "example",
+        input: { endpoint: "/items", method: "GET" },
+        policy: openPolicy,
+        signal: controller.signal,
+      }),
+    ).resolves.toMatchObject({ ok: false, status: 400, errorCode: "execution_cancelled" });
+    expect(connections.getConnectionSummary).not.toHaveBeenCalled();
+    expect(connections.resolveConnection).not.toHaveBeenCalled();
+    expect(loadExecutor).not.toHaveBeenCalled();
+    expect(proxy).not.toHaveBeenCalled();
+  });
+
+  it("stops before credential refresh when cancelled during connection lookup", async () => {
+    const controller = new AbortController();
+    const connections = createConnections();
+    const read = vi.mocked(connections.getConnectionSummary).getMockImplementation()!;
+    vi.mocked(connections.getConnectionSummary).mockImplementation(async (...args) => {
+      const summary = await read(...args);
+      controller.abort();
+      return summary;
+    });
+    const providerLoader = new TestProviderLoader();
+    const loadExecutor = vi.spyOn(providerLoader, "loadProxyExecutor");
+    const runner = createRunner({ providerLoader, connections });
+
+    await expect(
+      runProxyHttp(runner, {
+        service: "example",
+        input: { endpoint: "/items", method: "GET" },
+        policy: openPolicy,
+        signal: controller.signal,
+      }),
+    ).resolves.toMatchObject({ ok: false, status: 400, errorCode: "execution_cancelled" });
+    expect(connections.resolveConnection).not.toHaveBeenCalled();
+    expect(loadExecutor).not.toHaveBeenCalled();
+  });
+
+  it("does not invoke a proxy cancelled during executor loading", async () => {
+    const controller = new AbortController();
+    const proxy = vi.fn<ProviderProxyExecutor>();
+    const providerLoader = new TestProviderLoader(proxy);
+    vi.spyOn(providerLoader, "loadProxyExecutor").mockImplementation(async () => {
+      controller.abort();
+      return proxy;
+    });
+    const runner = createRunner({ providerLoader });
+
+    await expect(
+      runProxyHttp(runner, {
+        service: "example",
+        input: { endpoint: "/items", method: "GET" },
+        policy: openPolicy,
+        signal: controller.signal,
+      }),
+    ).resolves.toMatchObject({ ok: false, status: 400, errorCode: "execution_cancelled" });
+    expect(proxy).not.toHaveBeenCalled();
+  });
+
+  it.each(["success", "failure"])(
+    "cancels a credential wait without interrupting a shared OAuth refresh ending in %s",
+    async (outcome) => {
+      const oauthProvider: ProviderDefinition = {
+        ...provider,
+        authTypes: ["oauth2"],
+        auth: [
+          {
+            type: "oauth2",
+            authorizationUrl: "https://example.com/authorize",
+            tokenUrl: "https://example.com/token",
+            scopes: [],
+            tokenEndpointAuthMethod: "client_secret_post",
+          },
+        ],
+      };
+      const expired: Extract<ResolvedCredential, { authType: "oauth2" }> = {
+        authType: "oauth2",
+        accessToken: "expired-token",
+        refreshToken: "old-refresh-token",
+        tokenType: "Bearer",
+        expiresAt: "2000-01-01T00:00:00.000Z",
+        profile: credential.profile,
+        metadata: {},
+      };
+      const fresh = {
+        ...expired,
+        accessToken: "fresh-token",
+        refreshToken: "rotated-refresh-token",
+        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+      };
+      const started = Promise.withResolvers<void>();
+      const refreshed = Promise.withResolvers<typeof expired>();
+      const refresh = vi.fn(() => {
+        started.resolve();
+        return refreshed.promise;
+      });
+      const database = new SqliteRuntimeDatabase(":memory:");
+      await database.connectionStore.set("example", "default", expired);
+      const proxy = vi.fn<ProviderProxyExecutor>(async (_input, context) => {
+        expect(await context.getCredential("example")).toMatchObject({ accessToken: "fresh-token" });
+        return { ok: true, response: { status: 200, headers: {}, data: null } };
+      });
+      const providerLoader = new TestProviderLoader(proxy);
+      const loadExecutor = vi.spyOn(providerLoader, "loadProxyExecutor");
+      const runner = createRunner({
+        provider: oauthProvider,
+        providerLoader,
+        connections: new ConnectionService({
+          catalog: createCatalogStore([oauthProvider]),
+          providerLoader,
+          store: database.connectionStore,
+          oauthCredentials: { refresh },
+        }),
+      });
+      const controller = new AbortController();
+      const request = { service: "example", input: { endpoint: "/items", method: "GET" }, policy: openPolicy };
+      const cancelled = runProxyHttp(runner, { ...request, signal: controller.signal });
+      const active = runProxyHttp(runner, request);
+      try {
+        await started.promise;
+        controller.abort();
+        await expect(Promise.race([cancelled, setImmediate()])).resolves.toMatchObject({
+          ok: false,
+          status: 400,
+          errorCode: "execution_cancelled",
+        });
+        expect(loadExecutor).not.toHaveBeenCalled();
+        expect(proxy).not.toHaveBeenCalled();
+        await expect(database.connectionStore.get("example", "default")).resolves.toMatchObject({
+          credential: expired,
+        });
+
+        if (outcome === "failure")
+          refreshed.reject(new ConnectionError("oauth_token_refresh_failed", "Refresh failed."));
+        else refreshed.resolve(fresh);
+
+        await expect(active).resolves.toMatchObject(
+          outcome === "success" ? { ok: true } : { ok: false, status: 409, errorCode: "oauth_token_refresh_failed" },
+        );
+        expect(refresh).toHaveBeenCalledOnce();
+        expect(proxy).toHaveBeenCalledTimes(outcome === "success" ? 1 : 0);
+        await expect(database.connectionStore.get("example", "default")).resolves.toMatchObject({
+          credential: outcome === "success" ? fresh : expired,
+        });
+      } finally {
+        refreshed.resolve(fresh);
+        await Promise.allSettled([cancelled, active]);
+        database.close();
+      }
+    },
+  );
+
+  it("returns execution_cancelled when the proxy executor throws on abort", async () => {
+    const controller = new AbortController();
+    const proxy: ProviderProxyExecutor = vi.fn(async (_input, context): Promise<ProxyExecutionResult> => {
+      controller.abort();
+      context.signal?.throwIfAborted();
+      return { ok: true, response: { status: 200, headers: {}, data: null } };
+    });
+    const runner = createRunner({ providerLoader: new TestProviderLoader(proxy) });
+
+    await expect(
+      runProxyHttp(runner, {
+        service: "example",
+        input: { endpoint: "/items", method: "GET" },
+        policy: openPolicy,
+        signal: controller.signal,
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      status: 400,
+      errorCode: "execution_cancelled",
+      message: "Proxy execution was cancelled.",
+      meta: { service: "example" },
+    });
+  });
+
+  it.each([true, false])("returns execution_cancelled when an aborted executor returns ok=%s", async (ok) => {
+    const controller = new AbortController();
+    const proxy: ProviderProxyExecutor = vi.fn(async (): Promise<ProxyExecutionResult> => {
+      controller.abort();
+      if (ok) return { ok: true, response: { status: 200, headers: {}, data: null } };
+      return { ok: false, error: { code: "internal_error", message: "provider request failed" } };
+    });
+    const runner = createRunner({ providerLoader: new TestProviderLoader(proxy) });
+
+    await expect(
+      runProxyHttp(runner, {
+        service: "example",
+        input: { endpoint: "/items", method: "GET" },
+        policy: openPolicy,
+        signal: controller.signal,
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      status: 400,
+      errorCode: "execution_cancelled",
+      message: "Proxy execution was cancelled.",
+      meta: { service: "example" },
+    });
   });
 
   it("passes HEAD requests through to provider proxy executors", async () => {
-    const proxy: ProviderProxyExecutor = vi.fn(
-      async (): Promise<ProxyExecutionResult> => ({
-        ok: true,
-        response: { status: 200, headers: {}, data: null },
-      }),
-    );
+    const proxy: ProviderProxyExecutor = vi.fn(async (): Promise<ProxyExecutionResult> => ({
+      ok: true,
+      response: { status: 200, headers: {}, data: null },
+    }));
     const runner = createRunner({
       providerLoader: new TestProviderLoader(proxy),
     });
 
     await expect(
-      runner.run({
+      runProxyHttp(runner, {
         service: "example",
         input: { endpoint: "/items", method: "HEAD" },
+        policy: openPolicy,
       }),
     ).resolves.toMatchObject({
       ok: true,
@@ -458,20 +771,19 @@ describe("ProxyRunner", () => {
   });
 
   it("rejects GET and HEAD proxy requests with bodies", async () => {
-    const proxy: ProviderProxyExecutor = vi.fn(
-      async (): Promise<ProxyExecutionResult> => ({
-        ok: true,
-        response: { status: 200, headers: {}, data: null },
-      }),
-    );
+    const proxy: ProviderProxyExecutor = vi.fn(async (): Promise<ProxyExecutionResult> => ({
+      ok: true,
+      response: { status: 200, headers: {}, data: null },
+    }));
     const runner = createRunner({
       providerLoader: new TestProviderLoader(proxy),
     });
 
     await expect(
-      runner.run({
+      runProxyHttp(runner, {
         service: "example",
         input: { endpoint: "/items", method: "GET", body: { ignored: true } },
+        policy: openPolicy,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -483,18 +795,17 @@ describe("ProxyRunner", () => {
   });
 
   it.each(["query", "headers"])("rejects a non-object %s field instead of silently dropping it", async (field) => {
-    const proxy: ProviderProxyExecutor = vi.fn(
-      async (): Promise<ProxyExecutionResult> => ({
-        ok: true,
-        response: { status: 200, headers: {}, data: null },
-      }),
-    );
+    const proxy: ProviderProxyExecutor = vi.fn(async (): Promise<ProxyExecutionResult> => ({
+      ok: true,
+      response: { status: 200, headers: {}, data: null },
+    }));
     const runner = createRunner({ providerLoader: new TestProviderLoader(proxy) });
 
     await expect(
-      runner.run({
+      runProxyHttp(runner, {
         service: "example",
         input: { endpoint: "/items", method: "POST", [field]: "not-an-object" },
+        policy: openPolicy,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -513,9 +824,10 @@ describe("ProxyRunner", () => {
     });
 
     await expect(
-      runner.run({
+      runProxyHttp(runner, {
         service: "example",
         input: { endpoint: "/items", method: "GET" },
+        policy: openPolicy,
       }),
     ).resolves.toEqual({
       ok: false,
@@ -538,9 +850,10 @@ describe("ProxyRunner", () => {
     });
 
     await expect(
-      runner.run({
+      runProxyHttp(runner, {
         service: "example",
         input: { endpoint: "/items", method: "GET" },
+        policy: openPolicy,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -550,12 +863,10 @@ describe("ProxyRunner", () => {
   });
 
   it("logs proxy endpoints without query strings", async () => {
-    const proxy: ProviderProxyExecutor = vi.fn(
-      async (): Promise<ProxyExecutionResult> => ({
-        ok: true,
-        response: { status: 200, headers: {}, data: null },
-      }),
-    );
+    const proxy: ProviderProxyExecutor = vi.fn(async (): Promise<ProxyExecutionResult> => ({
+      ok: true,
+      response: { status: 200, headers: {}, data: null },
+    }));
     const info = vi.fn();
     const logger = {
       info,
@@ -566,9 +877,10 @@ describe("ProxyRunner", () => {
       providerLoader: new TestProviderLoader(proxy),
     });
 
-    await runner.run({
+    await runProxyHttp(runner, {
       service: "example",
       input: { endpoint: "/items?access_token=secret", method: "GET" },
+      policy: openPolicy,
     });
 
     expect(info).toHaveBeenCalledWith(
@@ -595,10 +907,11 @@ describe("ProxyRunner", () => {
     });
 
     await expect(
-      runner.run({
+      runProxyHttp(runner, {
         service: "example",
         connectionName: "work",
         input: { endpoint: "/items", method: "GET" },
+        policy: openPolicy,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -620,15 +933,53 @@ describe("ProxyRunner", () => {
     });
 
     await expect(
-      runner.run({
+      runProxyHttp(runner, {
         service: "example",
         input: { endpoint: "/items", method: "GET" },
+        policy: openPolicy,
       }),
     ).resolves.toMatchObject({
       ok: false,
       status: 429,
       errorCode: "rate_limited",
       message: "Rate limit exceeded.",
+    });
+  });
+
+  it.each(proxyFailureStatusCases)("answers $title with HTTP $status", async ({ error, status }) => {
+    const runner = createRunner({
+      providerLoader: new TestProviderLoader(async () => ({ ok: false, error })),
+    });
+
+    await expect(
+      runProxyHttp(runner, {
+        service: "example",
+        input: { endpoint: "/items", method: "GET" },
+        policy: openPolicy,
+      }),
+    ).resolves.toMatchObject({ ok: false, status, errorCode: error.code });
+  });
+
+  it.each(crossRouteErrorCases)("answers $title with the status the action route answers", async ({ error }) => {
+    const runner = createRunner({
+      providerLoader: new TestProviderLoader(async () => ({ ok: false, error })),
+    });
+
+    const proxyResult = await runProxyHttp(runner, {
+      service: "example",
+      input: { endpoint: "/items", method: "GET" },
+      policy: openPolicy,
+    });
+
+    expect(proxyResult).toMatchObject({
+      ok: false,
+      status: serializeRuntimeActionResult({
+        actionId: "example.echo",
+        executionId: "execution-1",
+        auditPersisted: false,
+        result: { ok: false, error },
+      }).status,
+      errorCode: error.code,
     });
   });
 
@@ -645,9 +996,10 @@ describe("ProxyRunner", () => {
     });
 
     await expect(
-      runner.run({
+      runProxyHttp(runner, {
         service: "example",
         input: { endpoint: "/items", method: "GET" },
+        policy: openPolicy,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -659,15 +1011,13 @@ describe("ProxyRunner", () => {
 });
 
 function createRunner(input: {
-  actionPolicy?: ActionPolicyService;
   connections?: ConnectionService;
   logger?: Logger;
   provider?: ProviderDefinition;
   providerLoader: IProviderLoader;
 }): ProxyRunner {
   return new ProxyRunner({
-    catalog: { providers: [input.provider ?? provider] } as CatalogStore,
-    actionPolicy: input.actionPolicy,
+    catalog: createCatalogStore([input.provider ?? provider]),
     connections: input.connections ?? createConnections(),
     logger: input.logger,
     providerLoader: input.providerLoader,
@@ -691,8 +1041,10 @@ function createConnections(
   };
   return {
     getConnectionSummary: vi.fn(input.getConnectionSummary ?? (async () => summary)),
-    forConnection: vi.fn(() => ({
-      getCredential: async () => credential,
+    resolveConnection: vi.fn(async () => ({
+      source: "local",
+      summary: input.getConnectionSummary ? await input.getConnectionSummary("example") : summary,
+      credential,
     })),
   } as unknown as ConnectionService;
 }
@@ -715,4 +1067,9 @@ class TestProviderLoader implements IProviderLoader {
   async loadCredentialValidators(): Promise<CredentialValidators | undefined> {
     return undefined;
   }
+}
+
+async function runProxyHttp(runner: ProxyRunner, input: RunProxyInput) {
+  const result = await runner.run(input);
+  return result.ok ? result : { ok: false, ...serializeProxyFailure(result) };
 }

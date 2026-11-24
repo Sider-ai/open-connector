@@ -1,8 +1,17 @@
-import type { CredentialValidators } from "../../core/types.ts";
+import type { CredentialValidators, ProviderProxyExecutor } from "../../core/types.ts";
 
-import { executors, validatePaymoCredential } from "./runtime.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { executors, paymoApiBaseUrl, validatePaymoCredential } from "./runtime.ts";
 
 export { executors };
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service: "paymo",
+  baseUrl: paymoApiBaseUrl,
+  auth: { type: "api_key_basic", suffix: ":x" },
+  skipDnsValidation: true,
+  defaultHeaders: { "accept": "application/json", "content-type": "application/json" },
+});
 
 export const credentialValidators: CredentialValidators = {
   apiKey(input, { fetcher, signal }) {

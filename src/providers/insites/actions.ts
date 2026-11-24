@@ -3,7 +3,7 @@ import type { ActionDefinition } from "../../core/types.ts";
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
 
-const service = "insites" as const;
+const service = "insites";
 
 const reportIdSchema = s.nonEmptyString("The Insites audit report ID.");
 const auditPayloadSchema = s.looseObject("The account-configured Insites audit data returned for this website.");
@@ -55,6 +55,7 @@ const filterSchema = s.requiredObject("One Insites audit search filter.", {
 export const insitesActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "start_audit",
+    operationType: "write",
     description: "Start an Insites SEO and AEO website audit and return the report ID for status polling.",
     asyncLifecycle: {
       startActionId: "insites.start_audit",
@@ -126,6 +127,7 @@ export const insitesActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_audit",
+    operationType: "read",
     description: "Get the processing state and account-configured JSON result for one Insites audit.",
     asyncLifecycle: {
       startActionId: "insites.start_audit",
@@ -138,6 +140,7 @@ export const insitesActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_llm_audit",
+    operationType: "read",
     description: "Get the LLM-optimized JSON result for one Insites audit with a compact AI-oriented payload.",
     inputSchema: s.requiredObject("The Insites audit to retrieve in LLM-optimized form.", {
       reportId: reportIdSchema,
@@ -146,6 +149,7 @@ export const insitesActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_audits",
+    operationType: "read",
     description: "Search existing Insites audits with documented filters, ordering, and offset pagination.",
     inputSchema: s.object(
       "The filters, ordering, and pagination applied to the Insites audit search.",

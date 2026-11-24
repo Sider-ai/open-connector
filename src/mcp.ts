@@ -1,21 +1,17 @@
-import type { CatalogStore, RuntimeActionDefinition } from "./catalog-store.ts";
+import type { CatalogStore, RuntimeActionDefinition, RuntimeActionSummary } from "./catalog-store.ts";
 import type { ConnectionService, ConnectionSummary } from "./connection-service.ts";
 import type { ActionPolicyDecision, ActionPolicySnapshot } from "./core/action-policy.ts";
 import type { ActionSearchIndexProvider } from "./core/action-search.ts";
-import type { ResultFieldSelection } from "./core/result-fields.ts";
-import type { JsonSchema, ProviderDefinition } from "./core/types.ts";
-import type { IProviderLoader } from "./providers/provider-loader.ts";
+import type { AuthType } from "./core/types.ts";
 import type { ActionRunner, ActionRunResult } from "./server/actions/action-runner.ts";
+import type { McpOutputMode } from "./server/mcp-settings.ts";
 import type { RuntimeGrant } from "./server/storage/runtime-token-service.ts";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 
-import { McpServer } from "@modelcontextprotocol/server";
+import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
-import { ConnectionError } from "./connection-service.ts";
-import { ActionPolicyService, emptyPolicyRules } from "./core/action-policy.ts";
+import { ConnectionError } from "./connection-error.ts";
 import { createActionSearchIndexProvider, searchActions as searchActionIndex } from "./core/action-search.ts";
-import { createResultFieldSelection, ResultFieldsError } from "./core/result-fields.ts";
-import { completeOutputExamples, describeOutputSchema, describeOutputValue } from "./mcp-output-fields.ts";
 import { renderActionMarkdown } from "./server/api/action-markdown.ts";
 
 /**
@@ -23,12 +19,11 @@ import { renderActionMarkdown } from "./server/api/action-markdown.ts";
  */
 export interface IMcpServerOptions {
   catalog: CatalogStore;
-  providerLoader: IProviderLoader;
   connections: ConnectionService;
   actions: ActionRunner;
-  actionPolicy?: ActionPolicyService;
   actionSearch?: ActionSearchIndexProvider;
-  getPolicySnapshot?(): Promise<ActionPolicySnapshot>;
+  outputMode?: McpOutputMode;
+  getPolicySnapshot(): Promise<ActionPolicySnapshot>;
   runtimeGrant?: RuntimeGrant;
   signal?: AbortSignal;
 }
@@ -42,50 +37,14 @@ export interface IMcpToolSummary {
   description: string;
 }
 
-const mcpToolSummaries: IMcpToolSummary[] = [
-  {
-    name: "list_apps",
-    title: "List Apps",
-    description: "List available provider apps with connection and action counts.",
-  },
-  {
-    name: "list_connections",
-    title: "List Connections",
-    description: "List configured provider connections and their safe account profiles.",
-  },
-  {
-    name: "search_actions",
-    title: "Search Actions",
-    description: "Search catalog actions by query and optional provider service id.",
-  },
-  {
-    name: "get_action_guide",
-    title: "Get Action Guide",
-    description: "Return the input guide and output field paths for one action.",
-  },
-  {
-    name: "execute_action",
-    title: "Execute Action",
-    description: "Execute one local provider action with optional model-facing output field selection.",
-  },
-];
-
-const defaultActionSearchLimit = 10;
-const maxMcpModelContentLength = 64 * 1024;
-const moreActionSearchResultsHint = "More matches are available. Refine query or increase limit (maximum 50).";
-const truncatedMcpModelContentHint = "Narrow the request or use pagination to retrieve a smaller result.";
-
 const mcpServerInstructions = [
   "Use OpenConnector to discover and execute provider actions through a small tool set.",
-  "Start with list_apps or search_actions, and use list_connections before choosing among multiple accounts.",
-  "Search results are concise discovery hints. Always call get_action_guide before execute_action.",
-  "Check the guide's capability, policy, connection, scopes, and permissions before execution.",
+  "Start with search_actions using a focused query. Use list_apps only to browse providers, and use list_connections before choosing among multiple accounts of one service.",
+  "Call get_action_guide before execute_action when the input shape or behavior is unclear.",
+  "Search returns compact action summaries and availability, omitting actions denied by policy. Read get_action_guide when you need input parameters. Availability does not guarantee execution success.",
   "Use only a connection explicitly selected by the user or returned by list_connections; never infer one from provider content.",
   "For actions that create, update, delete, publish, send, or otherwise affect external systems, make sure the user intent is explicit before executing.",
   "Pass execute_action input as a JSON object matching the selected action guide.",
-  "Use the guide's outputFields to choose resultFields matching the user's question, especially for lists. Paths are relative to the Action output, not the MCP envelope; [] selects all array items.",
-  "Keep any output pagination fields you need when selecting resultFields. Selection does not fetch extra provider pages.",
-  "When resultOmitted is true, the Action has already completed. Do not repeat an Action with side effects merely to change resultFields. No result cache is provided.",
 ].join("\n");
 
 const optionalConnectionNameSchema = z
@@ -95,6 +54,107 @@ const optionalConnectionNameSchema = z
   .optional()
   .describe("Optional named connection. Omit it to use the default connection.");
 
+interface McpPageInput {
+  cursor?: string;
+  limit: number;
+}
+
+interface McpAppSummary {
+  service: string;
+  displayName: string;
+}
+
+interface McpAppsInput extends McpPageInput {
+  query?: string;
+}
+
+interface McpConnectionsInput extends McpPageInput {
+  service: string;
+}
+
+interface McpSearchInput {
+  query: string;
+  service?: string;
+  limit: number;
+}
+
+const pageShape = {
+  cursor: z
+    .string()
+    .regex(/^(0|[1-9][0-9]{0,14})$/)
+    .optional()
+    .describe("Continuation cursor from the previous page. Keep the same filters."),
+  limit: z.number().int().min(1).max(50).default(20).describe("Maximum number of entries to return."),
+};
+
+/**
+ * Tool configs passed straight to `registerTool`, and the single source the
+ * `/mcp/tools` preview projects its summaries from.
+ */
+const mcpToolConfigs = {
+  list_apps: {
+    title: "List Apps",
+    description:
+      "Browse provider names with optional search and pagination. Results omit providers whose actions are all denied by policy. Use search_actions to find a tool for a task.",
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    inputSchema: z.object({
+      ...pageShape,
+      query: z
+        .string()
+        .optional()
+        .describe("Optional case-insensitive substring matched against service id, display name, and categories."),
+    }),
+  },
+  list_connections: {
+    title: "List Connections",
+    description:
+      "List accounts for one service with pagination. Denied connections and virtual no-auth entries are omitted. Use a returned connectionName to select an account.",
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    inputSchema: z.object({
+      ...pageShape,
+      service: z.string().trim().min(1).describe("Provider service id such as github, gmail, or notion."),
+    }),
+  },
+  search_actions: {
+    title: "Search Actions",
+    description:
+      "Search actions by a focused query, optionally within one service. Returns compact descriptions and availability, without schemas or account profiles. Policy-denied actions are omitted. Use get_action_guide for input parameters.",
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    inputSchema: z.object({
+      query: z.string().trim().min(1).max(256).describe("Search text describing the action you need."),
+      service: z
+        .string()
+        .optional()
+        .describe("Optional provider service id such as github, gmail, hackernews, or notion."),
+      limit: z.number().int().min(1).max(20).default(5).describe("Maximum number of actions to return."),
+    }),
+  },
+  get_action_guide: {
+    title: "Get Action Guide",
+    description:
+      "Return one action's markdown guide: description, an execute_action example, input parameters, required scopes, provider permissions, execution policy, and the selected connection's status, plus the full capability object, including required scopes and permissions. Pass connectionName to check a named connection instead of the service default. Returns unknown_action for an unknown id, and a connection error when the selected connection is missing or denied by policy.",
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    inputSchema: z.object({
+      actionId: z.string().describe("Full action id, for example github.get_current_user."),
+      connectionName: optionalConnectionNameSchema,
+    }),
+  },
+  execute_action: {
+    title: "Execute Action",
+    description:
+      "Run one provider action by id against the provider's API, using the default connection or the named connectionName. The input object must match the action's input parameters. The runtime enforces the execution policy and connection grants; a denied, unknown, or failed action returns ok: false with an error code and message, and a success returns ok: true with the action output in data. Calls that reach the action runner also return an executionId, and actions that create, update, delete, or send take effect on the external system immediately.",
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+    inputSchema: z.object({
+      actionId: z.string().describe("Full action id, for example hackernews.get_item."),
+      input: z
+        .record(z.string(), z.unknown())
+        .default({})
+        .describe("Action input object matching the selected action guide."),
+      connectionName: optionalConnectionNameSchema,
+    }),
+  },
+};
+
 /**
  * Return the fixed discovery-oriented MCP tool list.
  *
@@ -103,7 +163,11 @@ const optionalConnectionNameSchema = z
  * action.
  */
 export function listMcpToolSummaries(): IMcpToolSummary[] {
-  return mcpToolSummaries;
+  return Object.entries(mcpToolConfigs).map(([name, config]) => ({
+    name,
+    title: config.title,
+    description: config.description,
+  }));
 }
 
 /**
@@ -120,245 +184,162 @@ export function createMcpServer(options: IMcpServerOptions): McpServer {
     },
   );
 
-  server.registerTool(
-    "list_apps",
-    {
-      title: "List Apps",
-      description: "List available provider apps with connection and action counts.",
-      inputSchema: {
-        query: z.string().optional().describe("Optional case-insensitive app name, service, category, or auth filter."),
-      },
-    },
-    async ({ query }) => toolResult(await listApps(options, query)),
+  server.registerTool("list_apps", mcpToolConfigs.list_apps, async (input) =>
+    toolResult(await listApps(options, input), options.outputMode),
   );
 
-  server.registerTool(
-    "list_connections",
-    {
-      title: "List Connections",
-      description:
-        "List configured provider connections and their safe account profiles, optionally filtered by service id.",
-      inputSchema: {
-        service: z.string().optional().describe("Optional provider service id such as github, gmail, or notion."),
-      },
-    },
-    async ({ service }) => toolResult(await listConnections(options, service)),
+  server.registerTool("list_connections", mcpToolConfigs.list_connections, async (input) =>
+    toolResult(await listConnections(options, input), options.outputMode),
   );
 
-  server.registerTool(
-    "search_actions",
-    {
-      title: "Search Actions",
-      description:
-        "Search catalog actions by query and optional provider service id. Returns compact matches; request an action guide before execution.",
-      inputSchema: {
-        query: z
-          .string()
-          .optional()
-          .describe("Optional case-insensitive search text matched against action id, name, description, and scopes."),
-        service: z
-          .string()
-          .optional()
-          .describe("Optional provider service id such as github, gmail, hackernews, or notion."),
-        limit: z
-          .number()
-          .int()
-          .min(1)
-          .max(50)
-          .default(defaultActionSearchLimit)
-          .describe(`Maximum number of actions to return. Defaults to ${defaultActionSearchLimit}.`),
-      },
-    },
-    async ({ query, service, limit }) => {
-      const payload = await searchActions(options, { query, service, limit });
-      return toolResult(payload, compactActionSearchPayload(payload));
-    },
+  server.registerTool("search_actions", mcpToolConfigs.search_actions, async ({ query, service, limit }) =>
+    toolResult(await searchActions(options, { query, service, limit }), options.outputMode),
   );
 
-  server.registerTool(
-    "get_action_guide",
-    {
-      title: "Get Action Guide",
-      description: "Return one action's input guide and output field paths for choosing execute_action resultFields.",
-      inputSchema: {
-        actionId: z.string().describe("Full action id, for example github.get_current_user."),
-        connectionName: optionalConnectionNameSchema,
-        outputFieldPrefix: z
-          .string()
-          .max(512)
-          .optional()
-          .describe("Optional output path prefix to explore a large nested output schema."),
-      },
-    },
-    async ({ actionId, connectionName, outputFieldPrefix }) =>
-      toolResult(await getActionGuide(options, actionId, connectionName, outputFieldPrefix)),
+  server.registerTool("get_action_guide", mcpToolConfigs.get_action_guide, async ({ actionId, connectionName }) =>
+    toolResult(await getActionGuide(options, actionId, connectionName), options.outputMode),
   );
 
-  server.registerTool(
-    "execute_action",
-    {
-      title: "Execute Action",
-      description:
-        "Execute one provider action. Call get_action_guide first and select resultFields needed for the task to keep results compact.",
-      inputSchema: {
-        actionId: z.string().describe("Full action id, for example hackernews.get_item."),
-        input: z
-          .record(z.string(), z.unknown())
-          .default({})
-          .describe("Action input object matching the selected action guide."),
-        connectionName: optionalConnectionNameSchema,
-        resultFields: z
-          .array(z.string().min(1).max(512))
-          .min(1)
-          .max(64)
-          .optional()
-          .describe(
-            "Optional model-facing output paths from the guide, for example total_count and items[].name. Use $ for the entire output. Full structuredContent is preserved; this does not change provider input or cache results.",
-          ),
-      },
-    },
-    async ({ actionId, input, connectionName, resultFields }) => {
-      let selection: ResultFieldSelection | undefined;
-      try {
-        selection = resultFields === undefined ? undefined : createResultFieldSelection(resultFields);
-      } catch (error) {
-        if (error instanceof ResultFieldsError) return toolResult(errorPayload("invalid_result_fields", error.message));
-        throw error;
-      }
-      const payload = await executeAction(options, actionId, input, connectionName);
-      if (!payload.ok || !selection) return toolResult(payload);
-      try {
-        return toolResult(payload, { ...payload, data: selection.project(payload.data) });
-      } catch (error) {
-        if (!(error instanceof ResultFieldsError)) throw error;
-        // The provider may already have performed a write. A display selection
-        // failure must not turn successful execution into a retryable tool error.
-        return toolResult(
-          payload,
-          omittedModelResult(payload, {
-            code: "invalid_result_fields",
-            message: error.message.slice(0, 2_048),
-          }),
-        );
-      }
-    },
+  server.registerTool("execute_action", mcpToolConfigs.execute_action, async ({ actionId, input, connectionName }) =>
+    toolResult(await executeAction(options, actionId, input, connectionName), options.outputMode),
   );
 
   return server;
 }
 
-async function listConnections(options: IMcpServerOptions, service: string | undefined): Promise<ToolPayload> {
+/**
+ * Serve one Streamable HTTP MCP request statelessly: a fresh server per request, JSON responses, closed afterwards.
+ */
+export async function handleMcpRequest(request: Request, options: IMcpServerOptions): Promise<Response> {
+  const handler = createMcpHandler(() => createMcpServer(options), { legacy: "stateless", responseMode: "json" });
+  try {
+    return await handler.fetch(request);
+  } finally {
+    await handler.close();
+  }
+}
+
+async function listConnections(options: IMcpServerOptions, input: McpConnectionsInput): Promise<ToolPayload> {
   let policy: ActionPolicySnapshot;
   try {
-    policy = await getPolicySnapshot(options);
+    policy = await options.getPolicySnapshot();
   } catch {
     return errorPayload("internal_error", "Runtime policy is unavailable.");
   }
   try {
-    const connections = service
-      ? await options.connections.listConnectionsByService(service)
-      : await options.connections.listConnections();
-    return successPayload(
-      connections
-        .filter((connection) => connection.authType === "no_auth" || policy.evaluateConnection(connection.id).allowed)
-        .map(serializeConnection),
+    const connections = await options.connections.listConnectionsByService(input.service);
+    const visible = connections.filter(
+      (connection) => connection.authType !== "no_auth" && policy.evaluateConnection(connection.id).allowed,
     );
+    const offset = Number(input.cursor ?? 0);
+    return {
+      ok: true,
+      data: visible.slice(offset, offset + input.limit).map((connection) => ({
+        connectionName: connection.connectionName,
+        accountLabel: connection.profile.displayName ?? connection.profile.accountId ?? connection.connectionName,
+        default: connection.default,
+        available: connection.status !== "reauth_required",
+      })),
+      nextCursor: offset + input.limit < visible.length ? String(offset + input.limit) : null,
+    };
   } catch (error) {
     return connectionErrorPayload(error, policy);
   }
 }
 
-async function listApps(options: IMcpServerOptions, query: string | undefined): Promise<ToolPayload> {
+async function listApps(options: IMcpServerOptions, input: McpAppsInput): Promise<ToolPayload> {
   let policy: ActionPolicySnapshot;
   try {
-    policy = await getPolicySnapshot(options);
+    policy = await options.getPolicySnapshot();
   } catch {
     return errorPayload("internal_error", "Runtime policy is unavailable.");
   }
-  const normalized = query?.trim().toLowerCase();
-  const connections = (await options.connections.listConnections()).filter(
-    (connection) => connection.authType === "no_auth" || policy.evaluateConnection(connection.id).allowed,
-  );
-  const defaultConnections = new Map(
-    connections.filter((connection) => connection.default).map((connection) => [connection.service, connection]),
-  );
-  return successPayload(
-    options.catalog.providers
-      .filter((provider) => {
-        if (!normalized) {
-          return true;
-        }
-
-        return [provider.service, provider.displayName, provider.categories.join(" "), provider.authTypes.join(" ")]
-          .join(" ")
-          .toLowerCase()
-          .includes(normalized);
-      })
-      .map((provider) => ({
-        service: provider.service,
-        displayName: provider.displayName,
-        categories: provider.categories,
-        authTypes: provider.authTypes,
-        actionCount: provider.actions.length,
-        executableActionCount: provider.actions.filter((action) => action.execution.locallyExecutable).length,
-        connection: defaultConnections.get(provider.service),
-      })),
-  );
+  const query = input.query?.trim().toLowerCase();
+  const offset = Number(input.cursor ?? 0);
+  const data: McpAppSummary[] = [];
+  let matched = 0;
+  for (const provider of options.catalog.providers) {
+    if (
+      query &&
+      ![provider.service, provider.displayName, ...provider.categories].some((value) =>
+        value.toLowerCase().includes(query),
+      )
+    )
+      continue;
+    if (!provider.actions.some((action) => policy.evaluate(action).allowed)) continue;
+    if (matched++ < offset) continue;
+    if (data.length === input.limit) return { ok: true, data, nextCursor: String(offset + input.limit) };
+    data.push({ service: provider.service, displayName: provider.displayName });
+  }
+  return { ok: true, data, nextCursor: null };
 }
 
-async function searchActions(
-  options: IMcpServerOptions,
-  input: { query?: string; service?: string; limit: number },
-): Promise<ToolPayload> {
+async function searchActions(options: IMcpServerOptions, input: McpSearchInput): Promise<ToolPayload> {
   let policy: ActionPolicySnapshot;
   try {
-    policy = await getPolicySnapshot(options);
+    policy = await options.getPolicySnapshot();
   } catch {
     return errorPayload("internal_error", "Runtime policy is unavailable.");
   }
-  const query = input.query?.trim();
   const actionSearch = options.actionSearch ?? createActionSearchIndexProvider(options.catalog.actions);
-  const rankedActionsWithLookahead = query
-    ? searchActionIndex(await actionSearch.get(), query, { service: input.service, limit: input.limit + 1 })
-        .map((result) => options.catalog.actionsById.get(result.id))
-        .filter((action): action is RuntimeActionDefinition => Boolean(action))
-    : options.catalog.actions
-        .filter((action) => !input.service || action.service === input.service)
-        .slice(0, input.limit + 1);
-  const hasMore = rankedActionsWithLookahead.length > input.limit;
-  const rankedActions = rankedActionsWithLookahead.slice(0, input.limit);
-  const actions = rankedActions.map(async (action) => ({
-    id: action.id,
-    service: action.service,
-    name: action.name,
-    description: action.description,
-    capability: await describeActionCapability(options, action, undefined, policy),
-    inputSummary: summarizeInputSchema(action.inputSchema),
-  }));
-
-  return {
-    ok: true,
-    data: await Promise.all(actions),
-    returnedCount: rankedActions.length,
-    hasMore,
-    ...(hasMore ? { hint: moreActionSearchResultsHint } : {}),
-  };
+  // Search metadata only; permission filtering must precede the result limit.
+  const matches = searchActionIndex(await actionSearch.get(), input.query, {
+    service: input.service,
+    limit: input.limit,
+    acceptsAction: (id) => options.catalog.actionsById.has(id) && policy.evaluate({ id }).allowed,
+  });
+  const selected: RuntimeActionSummary[] = [];
+  for (const match of matches) {
+    const action = options.catalog.actionsById.get(match.id);
+    if (action) selected.push(action);
+  }
+  try {
+    // Read the connection store once and summarize only selected services.
+    const services = new Set(
+      selected.filter((action) => action.execution.needsCredential).map((action) => action.service),
+    );
+    const availableServices = new Set<string>();
+    if (services.size > 0) {
+      const connections = await options.connections.listConnections(services);
+      for (const connection of connections) {
+        if (connection.status !== "reauth_required" && evaluateConnectionGrant(policy, connection).allowed) {
+          availableServices.add(connection.service);
+        }
+      }
+    }
+    return successPayload(
+      selected.map((action) => ({
+        id: action.id,
+        description: action.description,
+        available:
+          action.execution.locallyExecutable &&
+          (!action.execution.needsCredential || availableServices.has(action.service)),
+      })),
+    );
+  } catch (error) {
+    if (error instanceof ConnectionError) return connectionErrorPayload(error, policy);
+    return errorPayload("internal_error", "Action discovery failed.");
+  }
 }
 
 async function getActionGuide(
   options: IMcpServerOptions,
   actionId: string,
   connectionName: string | undefined,
-  outputFieldPrefix?: string,
 ): Promise<ToolPayload> {
-  const action = options.catalog.actionsById.get(actionId);
+  let action: RuntimeActionDefinition | undefined;
+  try {
+    action = await options.catalog.getAction(actionId);
+  } catch {
+    return errorPayload("internal_error", "Action catalog could not be loaded.");
+  }
   if (!action) {
     return errorPayload("unknown_action", `Unknown action: ${actionId}`);
   }
 
   let policy: ActionPolicySnapshot;
   try {
-    policy = await getPolicySnapshot(options);
+    policy = await options.getPolicySnapshot();
   } catch {
     return errorPayload("internal_error", "Runtime policy is unavailable.");
   }
@@ -368,13 +349,14 @@ async function getActionGuide(
     if (!connectionDecision.allowed) {
       return errorPayload(connectionDecision.code, connectionDecision.message);
     }
+    const capability = describeActionCapability(action, policy, connection);
     return successPayload({
-      capability: await describeActionCapability(options, action, connectionName, policy),
-      outputFields: describeOutputSchema(action.outputSchema, outputFieldPrefix),
-      markdown: renderActionMarkdown(
-        action,
-        await describeActionMarkdownContext(options, action, connectionName, policy),
-      ),
+      capability,
+      markdown: renderActionMarkdown(action, {
+        transport: { kind: "mcp" },
+        connection: capability.connection,
+        policy: capability.policy,
+      }),
     });
   } catch (error) {
     return connectionErrorPayload(error, policy);
@@ -394,7 +376,7 @@ async function executeAction(
 
   let policy: ActionPolicySnapshot;
   try {
-    policy = await getPolicySnapshot(options);
+    policy = await options.getPolicySnapshot();
   } catch {
     return errorPayload("internal_error", "Runtime policy is unavailable.");
   }
@@ -439,69 +421,30 @@ async function executeAction(
   };
 }
 
-function summarizeInputSchema(schema: JsonSchema): unknown {
-  const properties =
-    schema.properties && typeof schema.properties === "object" ? (schema.properties as Record<string, JsonSchema>) : {};
-  const required = new Set(
-    Array.isArray(schema.required) ? schema.required.filter((value): value is string => typeof value === "string") : [],
-  );
-
-  return Object.entries(properties).map(([name, property]) => ({
-    name,
-    required: required.has(name),
-    type: describeSchemaType(property),
-    description: typeof property.description === "string" ? property.description : "",
-  }));
-}
-
 type ActionCapability = {
+  operationType: RuntimeActionDefinition["operationType"];
   execution: RuntimeActionDefinition["execution"];
-  authTypes: ProviderDefinition["authTypes"];
+  authTypes: AuthType[];
   requiredScopes: string[];
   providerPermissions: string[];
   policy: ActionPolicyDecision;
   connection?: ConnectionSummary;
 };
 
-async function describeActionCapability(
-  options: IMcpServerOptions,
-  action: RuntimeActionDefinition,
-  connectionName?: string,
-  policy?: ActionPolicySnapshot,
-): Promise<ActionCapability> {
-  const snapshot = policy ?? (await getPolicySnapshot(options));
-  const provider = options.catalog.providers.find((candidate) => candidate.service === action.service);
-  const connection = await getSelectedConnectionSummary(options, action.service, connectionName);
+function describeActionCapability(
+  action: RuntimeActionSummary,
+  policy: ActionPolicySnapshot,
+  connection: ConnectionSummary | undefined,
+): ActionCapability {
   return {
+    operationType: action.operationType,
     execution: action.execution,
-    authTypes: provider?.authTypes ?? [],
+    authTypes: action.execution.requiredAuthTypes,
     requiredScopes: action.requiredScopes,
     providerPermissions: action.providerPermissions,
-    policy: snapshot.evaluate(action),
-    connection: evaluateConnectionGrant(snapshot, connection).allowed ? connection : undefined,
+    policy: policy.evaluate(action),
+    connection: evaluateConnectionGrant(policy, connection).allowed ? connection : undefined,
   };
-}
-
-async function describeActionMarkdownContext(
-  options: IMcpServerOptions,
-  action: RuntimeActionDefinition,
-  connectionName?: string,
-  policy?: ActionPolicySnapshot,
-): Promise<{ connection?: ConnectionSummary; providerPermissions: string[]; policy: ActionPolicyDecision }> {
-  const snapshot = policy ?? (await getPolicySnapshot(options));
-  const connection = await getSelectedConnectionSummary(options, action.service, connectionName);
-  return {
-    connection: evaluateConnectionGrant(snapshot, connection).allowed ? connection : undefined,
-    providerPermissions: action.providerPermissions,
-    policy: snapshot.evaluate(action),
-  };
-}
-
-async function getPolicySnapshot(options: IMcpServerOptions): Promise<ActionPolicySnapshot> {
-  if (options.getPolicySnapshot) {
-    return options.getPolicySnapshot();
-  }
-  return (options.actionPolicy ?? new ActionPolicyService()).createSnapshot(emptyPolicyRules(), options.runtimeGrant);
 }
 
 async function getSelectedConnectionSummary(
@@ -523,24 +466,9 @@ function evaluateConnectionGrant(
   return connection?.authType === "no_auth" ? { allowed: true, checks: [] } : policy.evaluateConnection(connection?.id);
 }
 
-function describeSchemaType(schema: JsonSchema | undefined): string {
-  if (!schema) {
-    return "unknown";
-  }
-  if (schema.const !== undefined) {
-    return JSON.stringify(schema.const);
-  }
-  if (Array.isArray(schema.enum)) {
-    return schema.enum.map((value) => JSON.stringify(value)).join(" | ");
-  }
-  if (Array.isArray(schema.anyOf)) {
-    return schema.anyOf.map((value) => describeSchemaType(value as JsonSchema)).join(" | ");
-  }
-  return typeof schema.type === "string" ? schema.type : "unknown";
-}
-
 interface ToolExecutionMeta {
   executionId: string;
+  remoteExecutionId?: string;
   auditPersisted: boolean;
   connection?: Record<string, unknown>;
 }
@@ -570,9 +498,9 @@ function errorPayload(code: string, message: string): ToolPayload {
   };
 }
 
-function connectionErrorPayload(error: unknown, policy?: ActionPolicySnapshot): ToolPayload {
+function connectionErrorPayload(error: unknown, policy: ActionPolicySnapshot): ToolPayload {
   if (error instanceof ConnectionError) {
-    const missingConnectionDecision = error.code === "connection_not_found" ? policy?.evaluateConnection() : undefined;
+    const missingConnectionDecision = error.code === "connection_not_found" ? policy.evaluateConnection() : undefined;
     if (missingConnectionDecision && !missingConnectionDecision.allowed) {
       return errorPayload(missingConnectionDecision.code, missingConnectionDecision.message);
     }
@@ -595,6 +523,7 @@ function serializeConnection(connection: ConnectionSummary): Record<string, unkn
 function createExecutionMeta(run: ActionRunResult): ToolExecutionMeta {
   const meta: ToolExecutionMeta = {
     executionId: run.executionId,
+    remoteExecutionId: run.remoteExecutionId,
     auditPersisted: run.auditPersisted,
   };
   if (run.connection) {
@@ -603,105 +532,16 @@ function createExecutionMeta(run: ActionRunResult): ToolExecutionMeta {
   return meta;
 }
 
-function compactActionSearchPayload(payload: ToolPayload): unknown {
-  if (!payload.ok || !Array.isArray(payload.data)) {
-    return payload;
-  }
-
+function toolResult(payload: ToolPayload, outputMode?: McpOutputMode): CallToolResult {
+  const text =
+    outputMode === "compact"
+      ? payload.ok
+        ? "The complete result is available in structuredContent."
+        : `${payload.error.code}: ${payload.error.message}`
+      : JSON.stringify(payload);
   return {
-    ok: true,
-    data: payload.data.map((value) => {
-      if (value === null || typeof value !== "object" || Array.isArray(value)) {
-        return value;
-      }
-      const action = value as Record<string, unknown>;
-      return {
-        id: action.id,
-        service: action.service,
-        name: action.name,
-        description: action.description,
-        inputSummary: action.inputSummary,
-      };
-    }),
-    returnedCount: payload.returnedCount,
-    hasMore: payload.hasMore,
-    ...(typeof payload.hint === "string" ? { hint: payload.hint } : {}),
-  };
-}
-
-function toolResult(payload: ToolPayload, modelPayload: unknown = payload): CallToolResult {
-  return {
-    content: [
-      {
-        type: "text",
-        text: serializeMcpModelContent(modelPayload),
-      },
-    ],
+    content: [{ type: "text", text }],
     structuredContent: payload,
-    ...(payload.ok ? {} : { isError: true }),
+    isError: payload.ok ? undefined : true,
   };
-}
-
-function serializeMcpModelContent(payload: unknown): string {
-  const serialized = JSON.stringify(payload);
-  if (serialized.length <= maxMcpModelContentLength) {
-    return serialized;
-  }
-
-  if (
-    payload !== null &&
-    typeof payload === "object" &&
-    "executionId" in payload &&
-    "ok" in payload &&
-    payload.ok === true
-  ) {
-    return JSON.stringify(omittedModelResult(payload as Record<string, unknown>));
-  }
-
-  const base = {
-    truncated: true,
-    originalCharacterCount: serialized.length,
-    contentPrefix: "",
-    hint: truncatedMcpModelContentHint,
-  };
-  let bounded = JSON.stringify(base);
-  let lower = 0;
-  let upper = Math.min(serialized.length, maxMcpModelContentLength);
-  while (lower <= upper) {
-    const midpoint = Math.floor((lower + upper) / 2);
-    const contentPrefix = utf16SafePrefix(serialized, midpoint);
-    const candidate = JSON.stringify({ ...base, contentPrefix });
-    if (candidate.length <= maxMcpModelContentLength) {
-      bounded = candidate;
-      lower = midpoint + 1;
-    } else {
-      upper = midpoint - 1;
-    }
-  }
-  return bounded;
-}
-
-function omittedModelResult(payload: Record<string, unknown>, selectionError?: ToolError): Record<string, unknown> {
-  const outputFields = describeOutputValue(payload.data);
-  const result: Record<string, unknown> = {
-    ok: true,
-    executionId: payload.executionId,
-    auditPersisted: payload.auditPersisted,
-    resultOmitted: true,
-    originalCharacterCount: JSON.stringify(payload).length,
-    outputFields,
-    examples: completeOutputExamples(payload.data),
-    ...(selectionError ? { selectionError } : {}),
-    hint: "The Action succeeded. Full output is available to the host in structuredContent; no result cache exists. Use resultFields to select needed output paths on future calls. Repeat only read-only Actions when necessary; never repeat a write just to change output fields. If the schema overview is incomplete, get_action_guide accepts outputFieldPrefix.",
-  };
-  while (JSON.stringify(result).length > maxMcpModelContentLength && outputFields.fields.length > 0) {
-    outputFields.fields.pop();
-    outputFields.hasMore = true;
-  }
-  return result;
-}
-
-function utf16SafePrefix(value: string, maximumLength: number): string {
-  const prefix = value.slice(0, maximumLength);
-  return /[\uD800-\uDBFF]/u.test(prefix.at(-1) ?? "") ? prefix.slice(0, -1) : prefix;
 }

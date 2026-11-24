@@ -1,7 +1,8 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
+  booleanString,
   compactObject,
   optionalBoolean,
   optionalRecord,
@@ -54,7 +55,6 @@ export async function validateHexCredential(
   options: { fetcher: typeof fetch; signal?: AbortSignal },
 ): Promise<{
   profile: { accountId: string; displayName: string };
-  grantedScopes: string[];
   metadata: Record<string, unknown>;
 }> {
   await requestHexJson({
@@ -73,7 +73,6 @@ export async function validateHexCredential(
       accountId: "api_token",
       displayName: "Hex API Token",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: hexApiBaseUrl,
       validationEndpoint: "/projects",
@@ -99,10 +98,10 @@ async function listProjects(input: Record<string, unknown>, context: HexActionCo
       ownerEmail: optionalString(input.ownerEmail),
       creatorEmail: optionalString(input.creatorEmail),
       collectionId: optionalString(input.collectionId),
-      includeSharing: optionalBooleanString(input.includeSharing),
-      includeArchived: optionalBooleanString(input.includeArchived),
-      includeTrashed: optionalBooleanString(input.includeTrashed),
-      includeComponents: optionalBooleanString(input.includeComponents),
+      includeSharing: booleanString(input.includeSharing),
+      includeArchived: booleanString(input.includeArchived),
+      includeTrashed: booleanString(input.includeTrashed),
+      includeComponents: booleanString(input.includeComponents),
     }),
   });
 
@@ -123,7 +122,7 @@ async function getProject(input: Record<string, unknown>, context: HexActionCont
     signal: context.signal,
     mode: "execute",
     query: compactObject({
-      includeSharing: optionalBooleanString(input.includeSharing),
+      includeSharing: booleanString(input.includeSharing),
     }),
   });
 
@@ -203,7 +202,7 @@ async function getRunStatus(input: Record<string, unknown>, context: HexActionCo
     signal: context.signal,
     mode: "execute",
     headers: compactObject({
-      "enable-expanded-stats": optionalBooleanString(input.enableExpandedStats),
+      "enable-expanded-stats": booleanString(input.enableExpandedStats),
     }),
   });
 
@@ -243,8 +242,8 @@ async function requestHexJson(options: HexRequestOptions): Promise<unknown> {
   }
 
   const headers = new Headers({
-    accept: "application/json",
-    authorization: `Bearer ${options.apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${options.apiKey}`,
     "user-agent": providerUserAgent,
   });
   for (const [key, value] of Object.entries(options.headers ?? {})) {
@@ -356,10 +355,6 @@ function nullableString(value: unknown): string | null {
 
 function nullableInteger(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) ? value : null;
-}
-
-function optionalBooleanString(value: unknown): string | undefined {
-  return typeof value === "boolean" ? String(value) : undefined;
 }
 
 function joinStringArray(value: unknown): string | undefined {

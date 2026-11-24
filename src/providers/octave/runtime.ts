@@ -1,16 +1,15 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
+  booleanString,
   compactObject,
   optionalBoolean,
   optionalNumber,
   optionalRecord,
   optionalString,
-  requiredString,
 } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { providerUserAgent, ProviderRequestError, requiredInputString } from "../provider-runtime.ts";
 
 export const octaveApiBaseUrl = "https://app.octavehq.com";
 export const octaveValidationPath = "/api/v2/api-key/validate";
@@ -19,7 +18,7 @@ type OctaveActionHandler = (input: Record<string, unknown>, context: ApiKeyProvi
 
 interface OctaveRequestOptions {
   path: string;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   mode: "validate" | "execute";
   method?: "GET" | "POST" | "DELETE";
   query?: Record<string, string | undefined>;
@@ -87,7 +86,6 @@ export async function validateOctaveCredential(
       accountId: workspaceOId,
       displayName: workspaceName ?? organizationName ?? "Octave API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: octaveApiBaseUrl,
       validationEndpoint: octaveValidationPath,
@@ -100,9 +98,7 @@ export async function validateOctaveCredential(
   };
 }
 
-async function validateApiKeyAction(
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
-): Promise<Record<string, unknown>> {
+async function validateApiKeyAction(context: ApiKeyProviderContext): Promise<Record<string, unknown>> {
   const payload = await requestOctaveJson({
     context,
     path: octaveValidationPath,
@@ -142,7 +138,7 @@ async function listAgents(
       limit: numberQuery(input.limit),
       orderField: optionalString(input.orderField),
       orderDirection: optionalString(input.orderDirection),
-      includeExperiments: booleanQuery(input.includeExperiments),
+      includeExperiments: booleanString(input.includeExperiments),
     }),
   });
   const body = requireObject(payload, "Octave returned an invalid agent list payload");
@@ -240,8 +236,8 @@ async function requestOctaveJson(options: OctaveRequestOptions): Promise<unknown
   }
 
   const headers: Record<string, string> = {
-    accept: "application/json",
-    api_key: options.context.apiKey,
+    "accept": "application/json",
+    "api_key": options.context.apiKey,
     "user-agent": providerUserAgent,
   };
   if (options.body !== undefined) {
@@ -325,14 +321,6 @@ function requireObject(value: unknown, message: string): Record<string, unknown>
   throw new ProviderRequestError(502, message);
 }
 
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
-}
-
 function numberQuery(value: unknown): string | undefined {
   return typeof value === "number" ? String(value) : undefined;
-}
-
-function booleanQuery(value: unknown): string | undefined {
-  return typeof value === "boolean" ? String(value) : undefined;
 }

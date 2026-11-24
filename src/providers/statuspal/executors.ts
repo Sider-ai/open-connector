@@ -1,12 +1,14 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { objectArray, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
+  providerInputError,
   ProviderRequestError,
+  providerResponseError,
   providerUserAgent,
 } from "../provider-runtime.ts";
 
@@ -105,7 +107,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "statuspal:api-key",
         displayName: "StatusPal API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: `${statuspalApiOrigin}${statuspalApiPrefix}`,
         validationEndpoint: statuspalValidationPath,
@@ -151,7 +152,7 @@ function buildStatuspalUrl(path: string, query?: Record<string, unknown>): strin
 
 function statuspalHeaders(apiKey?: string): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
   };
   if (apiKey) {
@@ -224,15 +225,15 @@ function normalizeStatusPageSummary(payloadPromise: Promise<unknown>): Promise<u
     const statusPage = readRequiredObject(raw.status_page ?? raw.statusPage ?? raw, "status page");
     return {
       statusPage: normalizeStatusPage(statusPage),
-      services: objectArray(raw.services, "services", providerError).map(normalizeService),
-      incidents: objectArray(raw.incidents, "incidents", providerError).map(normalizeIncident),
-      maintenances: objectArray(raw.maintenances, "maintenances", providerError).map(normalizeIncident),
+      services: objectArray(raw.services, "services", providerResponseError).map(normalizeService),
+      incidents: objectArray(raw.incidents, "incidents", providerResponseError).map(normalizeIncident),
+      maintenances: objectArray(raw.maintenances, "maintenances", providerResponseError).map(normalizeIncident),
       upcomingMaintenances: objectArray(
         raw.upcoming_maintenances ?? raw.upcomingMaintenances,
         "upcoming_maintenances",
-        providerError,
+        providerResponseError,
       ).map(normalizeIncident),
-      infoNotices: objectArray(raw.info_notices ?? raw.infoNotices, "info_notices", providerError),
+      infoNotices: objectArray(raw.info_notices ?? raw.infoNotices, "info_notices", providerResponseError),
       currentStatusType: optionalString(raw.current_status_type ?? raw.currentStatusType) ?? null,
       raw,
     };
@@ -246,8 +247,8 @@ function normalizeListOutput(
 ): Promise<unknown> {
   return payloadPromise.then((payload) => {
     const raw = Array.isArray(payload)
-      ? objectArray(payload, key, providerError)
-      : objectArray(readRequiredObject(payload, `${key} response`)[key], key, providerError);
+      ? objectArray(payload, key, providerResponseError)
+      : objectArray(readRequiredObject(payload, `${key} response`)[key], key, providerResponseError);
     return {
       [key]: raw.map(normalize),
       raw,
@@ -293,7 +294,7 @@ function normalizeIncident(raw: Record<string, unknown>): Record<string, unknown
 }
 
 function readPathSegment(value: unknown, fieldName: string): string {
-  return encodeURIComponent(requiredString(value, fieldName, invalidInputError));
+  return encodeURIComponent(requiredString(value, fieldName, providerInputError));
 }
 
 function readIntegerPathSegment(value: unknown, fieldName: string): string {
@@ -310,12 +311,4 @@ function readRequiredObject(value: unknown, label: string): Record<string, unkno
     throw new ProviderRequestError(502, `StatusPal response is missing ${label}`, value);
   }
   return object;
-}
-
-function invalidInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
-}
-
-function providerError(message: string): ProviderRequestError {
-  return new ProviderRequestError(502, message);
 }

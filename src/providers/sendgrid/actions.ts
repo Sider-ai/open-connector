@@ -3,7 +3,7 @@ import type { ActionDefinition } from "../../core/types.ts";
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
 
-const service = "sendgrid" as const;
+const service = "sendgrid";
 
 const emptyObjectInputSchema = s.object(
   {},
@@ -150,6 +150,7 @@ sendEmailInputSchema.allOf = [
 export const sendgridActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "get_account_info",
+    operationType: "read",
     description: "Get the current SendGrid account type and sender reputation.",
     requiredScopes: [],
     providerPermissions: ["user.account.read"],
@@ -166,6 +167,7 @@ export const sendgridActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_user_scopes",
+    operationType: "read",
     description: "Get the SendGrid API key scopes available to the current credential.",
     requiredScopes: [],
     inputSchema: emptyObjectInputSchema,
@@ -183,6 +185,7 @@ export const sendgridActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_transactional_templates",
+    operationType: "read",
     description: "List SendGrid transactional templates with pagination metadata.",
     requiredScopes: [],
     providerPermissions: ["templates.read"],
@@ -201,6 +204,7 @@ export const sendgridActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "send_email",
+    operationType: "write",
     description: "Send a transactional email with SendGrid Mail Send.",
     requiredScopes: [],
     providerPermissions: ["mail.send"],

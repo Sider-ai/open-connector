@@ -5,12 +5,10 @@ import type {
   ProviderProxyExecutor,
 } from "../../core/types.ts";
 
-import {
-  defineProviderExecutors,
-  defineProviderProxy,
-  providerUserAgent,
-  requireApiKeyCredential,
-} from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent } from "../provider-runtime.ts";
 import { qingflowActionHandlers, qingflowApiBaseUrl, validateQingflowCredential } from "./runtime.ts";
 
 const service = "qingflow";
@@ -46,8 +44,5 @@ export const proxy: ProviderProxyExecutor = defineProviderProxy({
   baseUrl: qingflowApiBaseUrl,
   auth: { type: "api_key_header", name: "accessToken" },
   skipDnsValidation: true,
-  customizeRequest({ headers }) {
-    if (!headers.has("accept")) headers.set("accept", "application/json");
-    if (!headers.has("user-agent")) headers.set("user-agent", providerUserAgent);
-  },
+  defaultHeaders: { "accept": "application/json", "user-agent": providerUserAgent },
 });

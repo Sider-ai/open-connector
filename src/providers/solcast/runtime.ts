@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -61,7 +61,6 @@ export async function validateSolcastCredential(context: ApiKeyProviderContext):
       accountId: "solcast",
       displayName: "Solcast API Key",
     },
-    grantedScopes: [],
     metadata: {
       validationEndpoint: "/data/forecast/radiation_and_weather",
       apiBaseUrl: solcastApiBaseUrl,
@@ -100,8 +99,8 @@ async function solcastJsonRequest(
     response = await context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${context.apiKey}`,
         "user-agent": providerUserAgent,
       },
       signal: context.signal,

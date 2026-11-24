@@ -117,8 +117,10 @@ describe("GitHub file write input", () => {
 describe("GitHub file update workflow", () => {
   it("exposes the read-to-update workflow and required sha in action guides", () => {
     expect(readAction.followUpActions).toContain(updateAction.id);
-    expect(renderActionMarkdown(readAction)).toContain("github.update_file");
-    const guide = renderActionMarkdown(updateAction);
+    expect(
+      renderActionMarkdown(readAction, { transport: { kind: "http", origin: "http://localhost:8787" } }),
+    ).toContain("github.update_file");
+    const guide = renderActionMarkdown(updateAction, { transport: { kind: "http", origin: "http://localhost:8787" } });
     expect(guide.replaceAll("\\_", "_")).toContain("github.get_file_contents");
     expect(guide).toContain("same branch");
     expect(guide).toContain("at least one of these input groups");

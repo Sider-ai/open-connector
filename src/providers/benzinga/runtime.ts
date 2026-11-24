@@ -1,20 +1,13 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
-import {
-  createProviderTimeout,
-  isAbortLikeError,
-  providerUserAgent,
-  ProviderRequestError,
-} from "../provider-runtime.ts";
+import { providerUserAgent, ProviderRequestError, runProviderRequest } from "../provider-runtime.ts";
 
 const benzingaApiBaseUrl = "https://api.benzinga.com";
-const benzingaDefaultRequestTimeoutMs = 30_000;
 
 type BenzingaPhase = "validate" | "execute";
-type BenzingaContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
 type BenzingaActionHandler = ProviderRuntimeHandler<ApiKeyProviderContext>;
 
 export const benzingaActionHandlers: ProviderActionHandlers<"benzinga", BenzingaActionHandler> = {
@@ -92,7 +85,6 @@ export async function validateBenzingaCredential(
       accountId: "benzinga-api-key",
       displayName: "Benzinga API Key",
     },
-    grantedScopes: [],
     metadata: {
       validationEndpoint: "/api/v2.1/news/channels",
       channelCount: channels.length,
@@ -105,27 +97,25 @@ function buildCalendarParams(input: Record<string, unknown>): Record<string, str
     "parameters[tickers]": optionalString(input.symbol),
     "parameters[date_from]": optionalString(input.dateFrom),
     "parameters[date_to]": optionalString(input.dateTo),
-    page: readOptionalNumberString(input.page),
-    pagesize: readOptionalNumberString(input.limit),
+    "page": readOptionalNumberString(input.page),
+    "pagesize": readOptionalNumberString(input.limit),
   });
 }
 
 async function requestBenzingaJson(input: {
   path: string;
-  context: BenzingaContext;
+  context: ApiKeyProviderContext;
   params: Record<string, string | undefined>;
   phase: BenzingaPhase;
 }): Promise<unknown> {
-  const timeout = createProviderTimeout(input.context.signal, benzingaDefaultRequestTimeoutMs);
-
-  try {
+  return runProviderRequest({ signal: input.context.signal, label: "Benzinga" }, async (signal) => {
     const response = await input.context.fetcher(buildBenzingaUrl(input.path, input.context.apiKey, input.params), {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
-      signal: timeout.signal,
+      signal,
     });
     const payload = await readBenzingaPayload(response, {
       strictJson: response.ok,
@@ -136,20 +126,7 @@ async function requestBenzingaJson(input: {
     }
 
     return payload;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-    if (timeout.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "Benzinga request timed out");
-    }
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Benzinga request failed: ${error.message}` : "Benzinga request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+  });
 }
 
 function buildBenzingaUrl(path: string, apiKey: string, params: Record<string, string | undefined>): URL {

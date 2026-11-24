@@ -1,14 +1,24 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { RazorpayActionName } from "./actions.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
-import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
-import { providerFetch, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import {
+  compactObject,
+  optionalBooleanOrNull,
+  optionalInteger,
+  optionalRecord,
+  optionalString,
+} from "../../core/cast.ts";
+import {
+  providerFetch,
+  ProviderRequestError,
+  providerUserAgent,
+  providerInputError,
+  defaultProviderRequestTimeoutMs,
+} from "../provider-runtime.ts";
 
 export const razorpayApiBaseUrl = "https://api.razorpay.com/v1";
 const razorpayValidationPath = "/payments";
-const razorpayDefaultRequestTimeoutMs = 30_000;
 
 const asOptionalInteger = optionalInteger;
 const asOptionalString = optionalString;
@@ -34,14 +44,6 @@ function createTimeoutSignal(input: { timeoutMs: number }): {
 }
 
 type RazorpayRequestPhase = "validate" | "execute";
-type RazorpayActionInput = {
-  apiKey: string;
-  values?: Record<string, string>;
-  metadata?: Record<string, unknown>;
-  providerMetadata?: Record<string, unknown>;
-  actionName: RazorpayActionName;
-  input: Record<string, unknown>;
-};
 type RazorpayActionHandler = (input: Record<string, unknown>, context: RazorpayActionContext) => Promise<unknown>;
 
 type RazorpayActionContext = {
@@ -93,7 +95,7 @@ export async function validateRazorpayCredential(
   const firstPayment = asOptionalObject(readFirstCollectionItem(record));
 
   return {
-    profile: { accountId: keyId, displayName: "Razorpay API Key", grantedScopes: [] },
+    profile: { accountId: keyId, displayName: "Razorpay API Key" },
     metadata: compactObject({
       apiBaseUrl: razorpayApiBaseUrl,
       validationEndpoint: `${razorpayValidationPath}?count=1`,
@@ -103,19 +105,6 @@ export async function validateRazorpayCredential(
       firstPaymentStatus: trimOptionalString(firstPayment?.status),
     }),
   };
-}
-
-export async function executeRazorpayAction(input: RazorpayActionInput, fetcher: typeof fetch): Promise<unknown> {
-  const handler = razorpayActionHandlers[input.actionName];
-  if (!handler) {
-    throw new ProviderRequestError(400, `unknown razorpay action: ${input.actionName}`);
-  }
-
-  return handler(input.input, {
-    keyId: requireStoredRazorpayKeyId(input),
-    keySecret: input.apiKey,
-    fetcher,
-  });
 }
 
 async function createOrder(input: Record<string, unknown>, context: RazorpayActionContext) {
@@ -272,15 +261,15 @@ async function requestRazorpayJson(input: {
   }
 
   const timeout = createTimeoutSignal({
-    timeoutMs: razorpayDefaultRequestTimeoutMs,
+    timeoutMs: defaultProviderRequestTimeoutMs,
   });
 
   try {
     const response = await input.fetcher(url.toString(), {
       method: input.method,
       headers: {
-        Accept: "application/json",
-        Authorization: buildBasicAuthorizationHeader(input.keyId, input.keySecret),
+        "Accept": "application/json",
+        "Authorization": buildBasicAuthorizationHeader(input.keyId, input.keySecret),
         "Content-Type": "application/json",
         "User-Agent": providerUserAgent,
       },
@@ -326,15 +315,15 @@ function createRazorpayError(status: number, payload: unknown, phase: RazorpayRe
   }
 
   if (phase === "validate" && [400, 401, 403].includes(status)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   if (phase === "execute" && [401, 403].includes(status)) {
-    return new ProviderRequestError(409, message);
+    return new ProviderRequestError(401, message);
   }
 
   if (phase === "execute" && [400, 404, 409, 422].includes(status)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   return new ProviderRequestError(500, message, status || 500);
@@ -359,17 +348,6 @@ function requireRazorpayKeyId(input: Record<string, string>) {
   const keyId = trimOptionalString(input.keyId);
   if (!keyId) {
     throw new ProviderRequestError(400, "keyId is required");
-  }
-  return keyId;
-}
-
-function requireStoredRazorpayKeyId(input: RazorpayActionInput) {
-  const keyId =
-    trimOptionalString(input.values?.keyId) ??
-    trimOptionalString(input.providerMetadata?.keyId) ??
-    trimOptionalString((input.providerMetadata as Record<string, unknown> | undefined)?.keyId);
-  if (!keyId) {
-    throw new ProviderRequestError(500, "stored keyId is missing for razorpay credential");
   }
   return keyId;
 }
@@ -413,11 +391,11 @@ function normalizePayment(record: Record<string, unknown>) {
     status: trimOptionalString(record.status) ?? null,
     orderId: trimOptionalString(record.order_id) ?? null,
     invoiceId: trimOptionalString(record.invoice_id) ?? null,
-    international: readOptionalBoolean(record.international),
+    international: optionalBooleanOrNull(record.international),
     method: trimOptionalString(record.method) ?? null,
     amountRefunded: asOptionalInteger(record.amount_refunded) ?? null,
     refundStatus: trimOptionalString(record.refund_status) ?? null,
-    captured: readOptionalBoolean(record.captured),
+    captured: optionalBooleanOrNull(record.captured),
     description: trimOptionalString(record.description) ?? null,
     cardId: trimOptionalString(record.card_id) ?? null,
     bank: trimOptionalString(record.bank) ?? null,
@@ -543,10 +521,6 @@ function readOptionalStringRecord(value: unknown) {
       .filter(([, child]) => child !== undefined),
   );
   return Object.keys(normalized).length > 0 ? normalized : undefined;
-}
-
-function readOptionalBoolean(value: unknown) {
-  return typeof value === "boolean" ? value : null;
 }
 
 function stringifyOptionalInteger(value: number | undefined) {

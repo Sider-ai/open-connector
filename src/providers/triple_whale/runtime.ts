@@ -1,6 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -10,7 +9,7 @@ import {
   optionalRecord,
   optionalString,
 } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { providerUserAgent, ProviderRequestError, providerInputError } from "../provider-runtime.ts";
 
 const tripleWhaleApiBaseUrl = "https://api.triplewhale.com/api/v2/";
 const tripleWhaleValidateApiKeyPath = "/users/api-keys/me";
@@ -106,7 +105,7 @@ export async function validateTripleWhaleCredential(
 async function requestTripleWhaleJson(input: {
   path: string;
   method: "GET" | "POST";
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   phase: TripleWhaleRequestPhase;
   body?: Record<string, unknown>;
 }): Promise<unknown> {
@@ -122,13 +121,13 @@ async function requestTripleWhaleJson(input: {
 async function requestTripleWhale(input: {
   path: string;
   method: "GET" | "POST";
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   body?: Record<string, unknown>;
 }): Promise<Response> {
   const normalizedPath = input.path.startsWith("/") ? input.path.slice(1) : input.path;
   const url = new URL(normalizedPath, tripleWhaleApiBaseUrl);
   const headers: Record<string, string> = {
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     "x-api-key": input.context.apiKey,
   };
@@ -176,7 +175,7 @@ function createTripleWhaleError(
   }
 
   if (phase === "validate" && [400, 401, 403].includes(response.status)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   if (phase === "execute" && [401, 403].includes(response.status)) {
@@ -184,7 +183,7 @@ function createTripleWhaleError(
   }
 
   if (phase === "execute" && [400, 404, 422].includes(response.status)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   return new ProviderRequestError(response.status || 500, message);
@@ -229,7 +228,7 @@ function buildCustomerJourneyBody(input: Record<string, unknown>): Record<string
 function normalizeSummaryPagePayload(payload: unknown): Record<string, unknown> {
   const record = normalizeObject(payload);
   return {
-    metrics: objectArray(record.metrics, "metrics", providerResponseError),
+    metrics: objectArray(record.metrics, "metrics", tripleWhaleResponseError),
     raw: record,
   };
 }
@@ -239,7 +238,7 @@ function normalizeCustomSqlPayload(payload: unknown): Record<string, unknown> {
   return {
     success: optionalBoolean(record.success) ?? null,
     message: optionalString(record.message) ?? null,
-    data: objectArray(record.data, "data", providerResponseError),
+    data: objectArray(record.data, "data", tripleWhaleResponseError),
     raw: record,
   };
 }
@@ -253,7 +252,7 @@ function normalizeCustomerJourneyPayload(payload: unknown): Record<string, unkno
     endDate: optionalString(record.endDate) ?? null,
     page: optionalNumber(record.page) ?? null,
     earliestDate: optionalString(record.earliestDate) ?? null,
-    ordersWithJourneys: objectArray(record.ordersWithJourneys, "ordersWithJourneys", providerResponseError),
+    ordersWithJourneys: objectArray(record.ordersWithJourneys, "ordersWithJourneys", tripleWhaleResponseError),
     raw: record,
   };
 }
@@ -295,7 +294,7 @@ function requiredTrimmedString(value: unknown, fieldName: string): string {
   throw new ProviderRequestError(400, `${fieldName} is required`);
 }
 
-function providerResponseError(message: string): ProviderRequestError {
+function tripleWhaleResponseError(message: string): ProviderRequestError {
   return new ProviderRequestError(502, `Triple Whale returned invalid ${message}`);
 }
 

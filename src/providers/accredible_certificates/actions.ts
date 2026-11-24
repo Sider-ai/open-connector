@@ -68,6 +68,7 @@ const groupSchema = s.object("Normalized Accredible group details.", {
 export const accredibleCertificatesActions: readonly ActionDefinition[] = [
   defineProviderAction(service, {
     name: "list_groups",
+    operationType: "read",
     description: "List Accredible credential groups available to the API key.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for listing Accredible groups.", {}),
@@ -78,6 +79,7 @@ export const accredibleCertificatesActions: readonly ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_group",
+    operationType: "read",
     description: "Get one Accredible credential group by group ID.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for reading one Accredible group.", {
@@ -89,6 +91,7 @@ export const accredibleCertificatesActions: readonly ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "search_groups",
+    operationType: "read",
     description: "Search Accredible credential groups with documented filters.",
     requiredScopes: [],
     inputSchema: s.object(
@@ -125,6 +128,7 @@ export const accredibleCertificatesActions: readonly ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_credentials",
+    operationType: "read",
     description: "List Accredible credentials with documented query filters.",
     requiredScopes: [],
     inputSchema: s.object(
@@ -163,6 +167,7 @@ export const accredibleCertificatesActions: readonly ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_credential",
+    operationType: "read",
     description: "Get one Accredible credential by credential ID.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for reading one Accredible credential.", {
@@ -174,24 +179,25 @@ export const accredibleCertificatesActions: readonly ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "search_credentials",
+    operationType: "read",
     description: "Search Accredible credentials with documented filters.",
     requiredScopes: [],
     inputSchema: s.object(
       "The input payload for searching Accredible credentials.",
       {
-        group_id: idSearchSchema,
+        "group_id": idSearchSchema,
         "recipient.name": nonEmptyStringSchema("A recipient name substring used for matching."),
         "recipient.email": s.email("The recipient email address to match."),
         "recipient.id": idSearchSchema,
         "recipient.meta_data": looseMetadataSchema,
-        license_id: nonEmptyStringSchema("The Accredible license ID to filter credentials by."),
-        meta_data: looseMetadataSchema,
-        start_date: dateFilterSchema,
-        end_date: dateFilterSchema,
-        start_updated_date: dateFilterSchema,
-        end_updated_date: dateFilterSchema,
-        page_size: pageSizeSchema,
-        page: pageSchema,
+        "license_id": nonEmptyStringSchema("The Accredible license ID to filter credentials by."),
+        "meta_data": looseMetadataSchema,
+        "start_date": dateFilterSchema,
+        "end_date": dateFilterSchema,
+        "start_updated_date": dateFilterSchema,
+        "end_updated_date": dateFilterSchema,
+        "page_size": pageSizeSchema,
+        "page": pageSchema,
       },
       {
         optional: [
@@ -218,29 +224,30 @@ export const accredibleCertificatesActions: readonly ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_credential",
+    operationType: "write",
     description: "Create one Accredible credential using JSON recipient and group fields.",
     requiredScopes: [],
     inputSchema: s.object(
       "The input payload for creating one Accredible credential.",
       {
-        id: nonEmptyStringSchema("The issuer-defined credential ID."),
-        group_id: groupIdInputSchema,
+        "id": nonEmptyStringSchema("The issuer-defined credential ID."),
+        "group_id": groupIdInputSchema,
         "recipient.name": nonEmptyStringSchema("The recipient name."),
         "recipient.email": s.email("The recipient email address."),
         "recipient.phone_number": nonEmptyStringSchema("The recipient phone number."),
         "recipient.id": idSearchSchema,
         "recipient.meta_data": looseMetadataSchema,
-        name: nonEmptyStringSchema("The credential name."),
-        description: nonEmptyStringSchema("The credential description."),
-        custom_attributes: looseMetadataSchema,
-        issued_on: dateFilterSchema,
-        expired_on: dateFilterSchema,
-        complete: s.boolean("Whether the credential should be marked complete."),
-        private: s.boolean("Whether Accredible should create the credential as private."),
-        approve: s.boolean("Whether Accredible should approve the credential."),
-        allow_supplemental_evidence: s.boolean("Whether supplemental evidence is allowed for the credential."),
-        allow_supplemental_references: s.boolean("Whether supplemental references are allowed for the credential."),
-        meta_data: looseMetadataSchema,
+        "name": nonEmptyStringSchema("The credential name."),
+        "description": nonEmptyStringSchema("The credential description."),
+        "custom_attributes": looseMetadataSchema,
+        "issued_on": dateFilterSchema,
+        "expired_on": dateFilterSchema,
+        "complete": s.boolean("Whether the credential should be marked complete."),
+        "private": s.boolean("Whether Accredible should create the credential as private."),
+        "approve": s.boolean("Whether Accredible should approve the credential."),
+        "allow_supplemental_evidence": s.boolean("Whether supplemental evidence is allowed for the credential."),
+        "allow_supplemental_references": s.boolean("Whether supplemental references are allowed for the credential."),
+        "meta_data": looseMetadataSchema,
       },
       {
         optional: [
@@ -268,6 +275,7 @@ export const accredibleCertificatesActions: readonly ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "delete_credential",
+    operationType: "destructive",
     description: "Delete one Accredible credential by credential ID.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for deleting one Accredible credential.", {

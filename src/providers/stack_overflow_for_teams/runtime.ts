@@ -1,18 +1,17 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import {
-  createProviderTimeout,
-  isAbortLikeError,
+  providerInputError,
   ProviderRequestError,
   providerUserAgent,
   readProviderJsonBody,
+  runProviderRequest,
 } from "../provider-runtime.ts";
 
 export const stackOverflowForTeamsApiBaseUrl = "https://api.stackoverflowteams.com/v3/";
-const requestTimeoutMs = 30_000;
 
 export interface StackOverflowForTeamsContext {
   apiKey: string;
@@ -66,7 +65,7 @@ export function createStackOverflowForTeamsContext(
   signal?: AbortSignal,
 ): StackOverflowForTeamsContext {
   return {
-    apiKey: requiredString(apiKey, "apiKey", invalidInput),
+    apiKey: requiredString(apiKey, "apiKey", providerInputError),
     team: requireTeam(values.team ?? optionalString(metadata.team)),
     fetcher,
     signal,
@@ -88,7 +87,6 @@ export async function validateStackOverflowForTeamsCredential(
       accountId: typeof user.id === "number" ? String(user.id) : `stack-internal:${context.team}`,
       displayName: displayName ? `${displayName} (${context.team})` : `Stack Internal ${context.team}`,
     },
-    grantedScopes: [],
     metadata: {
       team: context.team,
       apiBaseUrl: stackOverflowForTeamsApiBaseUrl,
@@ -113,15 +111,14 @@ async function requestPaginated(
 async function requestJson(input: RequestInput): Promise<unknown> {
   const url = new URL(`teams/${encodeURIComponent(input.team)}/${input.path}`, stackOverflowForTeamsApiBaseUrl);
   if (input.query) url.search = input.query.toString();
-  const timeout = createProviderTimeout(input.signal, requestTimeoutMs);
-  try {
+  return runProviderRequest({ signal: input.signal, label: "Stack Internal" }, async (signal) => {
     const response = await input.fetcher(url, {
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${input.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${input.apiKey}`,
         "user-agent": providerUserAgent,
       },
-      signal: timeout.signal,
+      signal,
     });
     const payload = await readProviderJsonBody(response, {
       emptyBody: {},
@@ -129,18 +126,7 @@ async function requestJson(input: RequestInput): Promise<unknown> {
     });
     if (!response.ok) throw mapError(response, payload, input.phase);
     return payload;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) throw error;
-    if (timeout.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "Stack Internal request timed out");
-    }
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Stack Internal request failed: ${error.message}` : "Stack Internal request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+  });
 }
 
 function mapError(response: Response, payload: unknown, phase: "validate" | "execute"): ProviderRequestError {
@@ -168,8 +154,4 @@ function requirePositiveInteger(value: unknown, fieldName: string): number {
     throw new ProviderRequestError(400, `${fieldName} must be a positive integer`);
   }
   return value;
-}
-
-function invalidInput(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

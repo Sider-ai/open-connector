@@ -1,6 +1,7 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalString, requiredString } from "../../core/cast.ts";
+import { assertPublicHttpUrl, isPrivateNetworkAccessAllowed } from "../../core/request.ts";
 import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 export const planeCloudApiBaseUrl = "https://api.plane.so";
@@ -127,7 +128,6 @@ export async function validatePlaneCredential(
   signal?: AbortSignal,
 ): Promise<{
   profile: { accountId: string; displayName: string };
-  grantedScopes: string[];
   metadata: Record<string, unknown>;
 }> {
   const baseUrl = normalizePlaneApiBaseUrl(apiBaseUrl);
@@ -145,7 +145,6 @@ export async function validatePlaneCredential(
   const displayName = optionalString(user.display_name) ?? optionalString(user.email) ?? fullName;
   return {
     profile: { accountId, displayName: displayName || "Plane API Key" },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: baseUrl,
       userId: optionalString(user.id),
@@ -192,7 +191,7 @@ async function requestPlane(
     response = await context.fetcher(buildPlaneUrl(normalizePlaneApiBaseUrl(context.apiBaseUrl), path, query), {
       method,
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
         "X-API-Key": context.apiKey,
         ...(body ? { "content-type": "application/json" } : {}),
@@ -288,17 +287,13 @@ function buildWorkItemBody(input: Record<string, unknown>): Record<string, unkno
   });
 }
 
-function normalizePlaneApiBaseUrl(value: unknown): string {
+export function normalizePlaneApiBaseUrl(value: unknown): string {
   const input = typeof value === "string" && value.trim() ? value.trim() : planeCloudApiBaseUrl;
-  let url: URL;
-  try {
-    url = new URL(input);
-  } catch {
-    throw new ProviderRequestError(400, "apiBaseUrl must be a valid http(s) URL");
-  }
-  if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new ProviderRequestError(400, "apiBaseUrl must be a valid http(s) URL");
-  }
+  const url = assertPublicHttpUrl(input, {
+    fieldName: "apiBaseUrl",
+    allowPrivateNetwork: isPrivateNetworkAccessAllowed(),
+    createError: (message) => new ProviderRequestError(400, message),
+  });
   if (url.pathname !== "/" && url.pathname !== "") {
     throw new ProviderRequestError(400, "apiBaseUrl must be an origin without a path");
   }

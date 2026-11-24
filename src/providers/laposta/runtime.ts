@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
 import { optionalRecord, optionalString } from "../../core/cast.ts";
@@ -17,8 +17,6 @@ type RequestPhase = "validate" | "execute";
 type LapostaActionHandler = ProviderRuntimeHandler<ApiKeyProviderContext>;
 
 export const lapostaApiBaseUrl = "https://api.laposta.nl";
-
-const lapostaDefaultRequestTimeoutMs = 30_000;
 
 export const lapostaActionHandlers: ProviderActionHandlers<"laposta", LapostaActionHandler> = {
   list_lists(_input, context) {
@@ -73,9 +71,7 @@ export async function validateLapostaCredential(
   return {
     profile: {
       displayName: "Laposta API Key",
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: lapostaApiBaseUrl,
       validationEndpoint: "/v2/list",
@@ -211,8 +207,8 @@ async function requestLapostaJson(
     }
   }
   const headers = new Headers({
-    accept: "application/json",
-    authorization: `Basic ${Buffer.from(`${input.apiKey}:`, "utf8").toString("base64")}`,
+    "accept": "application/json",
+    "authorization": `Basic ${Buffer.from(`${input.apiKey}:`, "utf8").toString("base64")}`,
     "user-agent": providerUserAgent,
   });
   if (input.body) {
@@ -220,7 +216,7 @@ async function requestLapostaJson(
   }
 
   input.signal?.throwIfAborted();
-  const timeout = createProviderTimeout(input.signal, lapostaDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   try {
     const response = await input.fetcher(url, {
       method: input.method,

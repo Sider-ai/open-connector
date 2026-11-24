@@ -1,5 +1,4 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import { encodePathSegment } from "../../core/request.ts";
@@ -52,7 +51,6 @@ export async function validateFirstbaseCredential(
   signal?: AbortSignal,
 ): Promise<{
   profile: { accountId: string; displayName: string };
-  grantedScopes: string[];
   metadata: Record<string, unknown>;
 }> {
   await firstbaseRequestJson("GET", firstbaseValidationPath, { apiKey, fetcher, signal }, "validate");
@@ -62,7 +60,6 @@ export async function validateFirstbaseCredential(
       accountId: "firstbase:api-key",
       displayName: "Firstbase API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: firstbaseApiBaseUrl,
       validationEndpoint: firstbaseValidationPath,
@@ -94,7 +91,7 @@ async function firstbaseGetJson(
 async function firstbaseRequestJson(
   method: "GET",
   path: string,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   mode: FirstbaseRequestMode,
 ): Promise<unknown> {
   let response: Response;
@@ -103,8 +100,8 @@ async function firstbaseRequestJson(
     response = await context.fetcher(firstbaseUrl(path), {
       method,
       headers: {
-        accept: "application/json",
-        authorization: `ApiKey ${context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `ApiKey ${context.apiKey}`,
         "user-agent": providerUserAgent,
       },
       signal: context.signal,

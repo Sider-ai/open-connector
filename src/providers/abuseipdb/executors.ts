@@ -1,18 +1,26 @@
-import type { CredentialValidators, ExecutionContext, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type {
+  CredentialValidators,
+  ExecutionContext,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { isIP } from "node:net";
 import { nullableString, optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
-  defineProviderExecutors,
+  isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
-  requireApiKeyCredential,
+  requiredResponseRecord,
+  defaultProviderRequestTimeoutMs,
 } from "../provider-runtime.ts";
 
 const service = "abuseipdb";
 const abuseipdbApiBaseUrl = "https://api.abuseipdb.com/api/v2";
-const abuseipdbDefaultRequestTimeoutMs = 30_000;
 const abuseipdbValidationIpAddress = "8.8.8.8";
 
 type AbuseipdbRequestPhase = "validate" | "execute";
@@ -53,6 +61,13 @@ export const executors: ProviderExecutors = defineProviderExecutors<AbuseipdbAct
   },
 });
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: abuseipdbApiBaseUrl,
+  auth: { type: "api_key_header", name: "Key" },
+  skipDnsValidation: true,
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = await requestAbuseipdbJson({
@@ -69,15 +84,14 @@ export const credentialValidators: CredentialValidators = {
       },
       phase: "validate",
     });
-    const body = readObject(payload, "abuseipdb validation response");
-    readObject(body.data, "abuseipdb validation response data");
+    const body = requiredResponseRecord(payload, "abuseipdb validation response");
+    requiredResponseRecord(body.data, "abuseipdb validation response data");
 
     return {
       profile: {
         accountId: "api_key",
         displayName: "AbuseIPDB API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: abuseipdbApiBaseUrl,
         validationEndpoint: "/check",
@@ -100,8 +114,8 @@ async function executeCheckIp(input: Record<string, unknown>, context: Abuseipdb
     context,
     phase: "execute",
   });
-  const body = readObject(payload, "abuseipdb check response");
-  const data = readObject(body.data, "abuseipdb check response data");
+  const body = requiredResponseRecord(payload, "abuseipdb check response");
+  const data = requiredResponseRecord(body.data, "abuseipdb check response data");
 
   return {
     ip: normalizeIpSummary(data),
@@ -122,8 +136,8 @@ async function executeGetReports(input: Record<string, unknown>, context: Abusei
     context,
     phase: "execute",
   });
-  const body = readObject(payload, "abuseipdb reports response");
-  const data = readObject(body.data, "abuseipdb reports response data");
+  const body = requiredResponseRecord(payload, "abuseipdb reports response");
+  const data = requiredResponseRecord(body.data, "abuseipdb reports response data");
 
   return {
     reports: normalizeReportList(data.results, "abuseipdb reports response results"),
@@ -150,8 +164,8 @@ async function executeCheckBlock(input: Record<string, unknown>, context: Abusei
     context,
     phase: "execute",
   });
-  const body = readObject(payload, "abuseipdb check-block response");
-  const data = readObject(body.data, "abuseipdb check-block response data");
+  const body = requiredResponseRecord(payload, "abuseipdb check-block response");
+  const data = requiredResponseRecord(body.data, "abuseipdb check-block response data");
   const reportedAddressPayload = data.reportedAddress ?? data.reportedAddresses;
 
   return {
@@ -181,7 +195,7 @@ async function executeBlacklist(input: Record<string, unknown>, context: Abuseip
     context,
     phase: "execute",
   });
-  const body = readObject(payload, "abuseipdb blacklist response");
+  const body = requiredResponseRecord(payload, "abuseipdb blacklist response");
   const meta = optionalRecord(body.meta);
   const generatedAt =
     optionalString(meta?.generatedAt) ?? optionalString(body.generatedAt) ?? optionalString(body.generated_at);
@@ -217,14 +231,14 @@ async function requestAbuseipdbJson<T>(input: {
   let response: Response;
   let payload: unknown;
   const signal = input.context.signal
-    ? AbortSignal.any([input.context.signal, AbortSignal.timeout(abuseipdbDefaultRequestTimeoutMs)])
-    : AbortSignal.timeout(abuseipdbDefaultRequestTimeoutMs);
+    ? AbortSignal.any([input.context.signal, AbortSignal.timeout(defaultProviderRequestTimeoutMs)])
+    : AbortSignal.timeout(defaultProviderRequestTimeoutMs);
   try {
     response = await input.context.fetcher(buildAbuseipdbUrl(input.path, input.query ?? {}), {
       method: "GET",
       headers: {
-        Key: input.apiKey,
-        Accept: "application/json",
+        "Key": input.apiKey,
+        "Accept": "application/json",
         "User-Agent": providerUserAgent,
       },
       signal,
@@ -234,7 +248,7 @@ async function requestAbuseipdbJson<T>(input: {
     if (error instanceof ProviderRequestError) {
       throw error;
     }
-    if (isAbortError(error)) {
+    if (isAbortLikeError(error)) {
       throw new ProviderRequestError(504, "AbuseIPDB request timed out");
     }
     throw new ProviderRequestError(
@@ -360,7 +374,7 @@ function normalizeReportList(value: unknown, label: string): Record<string, unkn
   }
 
   return value.map((item) => {
-    const record = readObject(item, label);
+    const record = requiredResponseRecord(item, label);
     return {
       reportedAt: readString(record.reportedAt, "reportedAt"),
       comment: readString(record.comment, "comment"),
@@ -378,7 +392,7 @@ function normalizeReportedAddressList(value: unknown, label: string): Record<str
   }
 
   return value.map((item) => {
-    const record = readObject(item, label);
+    const record = requiredResponseRecord(item, label);
     return {
       ipAddress: readString(record.ipAddress, "ipAddress"),
       numReports: readInteger(record.numReports, "numReports"),
@@ -394,15 +408,7 @@ function normalizeBlacklistEntries(value: unknown): Record<string, unknown>[] {
     throw new ProviderRequestError(502, "abuseipdb blacklist data must be an array");
   }
 
-  return value.map((item) => readObject(item, "abuseipdb blacklist entry"));
-}
-
-function readObject(value: unknown, label: string): Record<string, unknown> {
-  const record = optionalRecord(value);
-  if (!record) {
-    throw new ProviderRequestError(502, `${label} must be an object`);
-  }
-  return record;
+  return value.map((item) => requiredResponseRecord(item, "abuseipdb blacklist entry"));
 }
 
 function readInputString(value: unknown, fieldName: string): string {
@@ -515,10 +521,6 @@ function serializeStringList(value: unknown): string | undefined {
     .filter((item) => item !== "");
 
   return values.length > 0 ? values.join(",") : undefined;
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
 }
 
 function isRateLimitLike402Message(message: string): boolean {

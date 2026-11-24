@@ -1,17 +1,22 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 import type { DadataRuActionName } from "./actions.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerInputError, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "dadata_ru";
 const dadataRuApiBaseUrl = "https://suggestions.dadata.ru/suggestions/api/4_1/rs";
 const dadataRuValidationQuery = "\u043c\u043e\u0441\u043a\u0432\u0430";
 
-type DadataRuActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type DadataRuActionHandler = (input: Record<string, unknown>, context: DadataRuActionContext) => Promise<unknown>;
+type DadataRuActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 const dadataRuEndpointByAction: Record<DadataRuActionName, string> = {
   suggest_address: "/suggest/address",
@@ -41,9 +46,17 @@ export const dadataRuActionHandlers: ProviderActionHandlers<"dadata_ru", DadataR
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, dadataRuActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: dadataRuApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Token " },
+  skipDnsValidation: true,
+  defaultHeaders: { "accept": "application/json", "content-type": "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
-    const context: DadataRuActionContext = {
+    const context: ApiKeyProviderContext = {
       apiKey: input.apiKey,
       fetcher,
       signal,
@@ -62,7 +75,6 @@ export const credentialValidators: CredentialValidators = {
       profile: {
         accountId: "dadata-api-key",
         displayName: "DaData.ru API Key",
-        grantedScopes: [],
       },
       metadata: {
         apiBaseUrl: dadataRuApiBaseUrl,
@@ -76,7 +88,7 @@ export const credentialValidators: CredentialValidators = {
 async function dadataRuSuggest(
   actionName: DadataRuActionName,
   input: Record<string, unknown>,
-  context: DadataRuActionContext,
+  context: ApiKeyProviderContext,
 ): Promise<unknown> {
   return dadataRuRequest(
     dadataRuEndpointByAction[actionName],
@@ -100,7 +112,7 @@ function buildDadataRuSuggestionBody(
 async function dadataRuRequest(
   path: string,
   body: Record<string, unknown>,
-  context: DadataRuActionContext,
+  context: ApiKeyProviderContext,
   phase: "validate" | "execute",
 ): Promise<unknown> {
   const url = new URL(`${dadataRuApiBaseUrl}${path}`);
@@ -110,8 +122,8 @@ async function dadataRuRequest(
     response = await context.fetcher(url, {
       method: "POST",
       headers: {
-        accept: "application/json",
-        authorization: `Token ${context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Token ${context.apiKey}`,
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },
@@ -191,8 +203,4 @@ function firstSuggestionValue(payload: unknown): string | undefined {
     return undefined;
   }
   return optionalString(optionalRecord(suggestions[0])?.value);
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

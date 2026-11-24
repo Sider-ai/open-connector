@@ -1,9 +1,23 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
-import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import {
+  compactObject,
+  looseArray,
+  optionalInteger,
+  optionalRecord,
+  optionalString,
+  requiredString,
+} from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "route4me";
 const route4meApiBaseUrl = "https://api.route4me.com/api.v4";
@@ -28,6 +42,16 @@ export const route4meActionHandlers: ProviderActionHandlers<"route4me", Route4me
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, route4meActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: route4meApiBaseUrl,
+  auth: { type: "api_key_query", name: "api_key" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }): Promise<CredentialValidationResult> {
     const apiKey = requiredString(input.apiKey, "apiKey", (message) => new ProviderRequestError(401, message));
@@ -37,7 +61,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "route4me-api-key",
         displayName: "Route4Me API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: route4meApiBaseUrl,
         validationEndpoint: route4meValidationPath,
@@ -140,7 +163,7 @@ async function route4meRequest(
     response = await fetcher(url, {
       method,
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         ...(body ? { "content-type": "application/json" } : {}),
         "user-agent": providerUserAgent,
       },
@@ -197,8 +220,8 @@ function extractRoute4meErrorMessage(payload: unknown): string | undefined {
 }
 
 function normalizeOptimizationSummary(payload: Record<string, unknown>): Record<string, unknown> {
-  const routes = readOptionalArray(payload.routes);
-  const addresses = readOptionalArray(payload.addresses);
+  const routes = looseArray(payload.routes);
+  const addresses = looseArray(payload.addresses);
   return {
     optimizationProblemId: readRequiredString(payload.optimization_problem_id, "optimization_problem_id"),
     state: readOptionalInteger(payload.state) ?? null,
@@ -225,10 +248,6 @@ function readRequiredObject(value: unknown, fieldName: string, status = 502): Re
 function readRequiredArray(value: unknown, fieldName: string): unknown[] {
   if (!Array.isArray(value)) throw new ProviderRequestError(400, `${fieldName} must be an array`);
   return value;
-}
-
-function readOptionalArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
 }
 
 function readRequiredString(value: unknown, fieldName: string): string {

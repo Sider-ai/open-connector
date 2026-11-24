@@ -1,8 +1,9 @@
 import type { ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject } from "../../core/cast.ts";
-import { defineProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { providerUserAgent, ProviderRequestError, providerInputError } from "../provider-runtime.ts";
 
 export const quickchartBaseUrl = "https://quickchart.io";
 
@@ -70,7 +71,7 @@ export async function createChartShortUrl(
     response = await fetcher(new URL("/chart/create", quickchartBaseUrl), {
       method: "POST",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },
@@ -173,7 +174,7 @@ function createQuickchartError(response: Response, payload: unknown) {
   }
 
   if ([400, 404, 422].includes(response.status)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   return new ProviderRequestError(response.status >= 500 ? 502 : response.status || 502, message);

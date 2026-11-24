@@ -1,6 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { createHash } from "node:crypto";
 import { compactObject, optionalBoolean, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
@@ -17,11 +16,10 @@ const higgsfieldAiValidationPath = `/requests/${higgsfieldAiValidationRequestId}
 const higgsfieldAiValidationNotFoundStatus = "request_not_found";
 const higgsfieldAiDefaultImageModelId = "higgsfield-ai/soul/standard";
 const higgsfieldAiDefaultVideoModelId = "higgsfield-ai/dop/standard";
-const higgsfieldAiRequestTimeoutMs = 30_000;
 
 type HiggsfieldAiRequestPhase = "validate" | "execute";
 
-export interface HiggsfieldAiContext extends Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal"> {
+export interface HiggsfieldAiContext extends ApiKeyProviderContext {
   apiSecret: string;
 }
 
@@ -102,7 +100,6 @@ export async function validateHiggsfieldAiCredential(
       accountId: `higgsfield_ai:api_key:${createHash("sha256").update(apiKey).digest("hex").slice(0, 16)}`,
       displayName: "Higgsfield AI API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: higgsfieldAiApiBaseUrl,
       validationEndpoint: higgsfieldAiValidationPath,
@@ -150,7 +147,7 @@ async function requestHiggsfieldAiJson(input: HiggsfieldAiRequestInput): Promise
 }
 
 async function requestHiggsfieldAiResponse(input: HiggsfieldAiRequestInput): Promise<Response> {
-  const timeout = createProviderTimeout(input.context.signal, higgsfieldAiRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   try {
     return await input.context.fetcher(buildHiggsfieldAiUrl(input.path, input.query), {
       method: input.method,
@@ -185,11 +182,11 @@ function buildHiggsfieldAiUrl(path: string, query?: Record<string, unknown>): UR
   return url;
 }
 
-function buildHiggsfieldAiHeaders(context: Pick<HiggsfieldAiContext, "apiKey" | "apiSecret">): Record<string, string> {
+function buildHiggsfieldAiHeaders(context: HiggsfieldAiContext): Record<string, string> {
   return {
-    accept: "application/json",
+    "accept": "application/json",
     "content-type": "application/json",
-    authorization: `Key ${context.apiKey}:${context.apiSecret}`,
+    "authorization": `Key ${context.apiKey}:${context.apiSecret}`,
     "user-agent": providerUserAgent,
   };
 }

@@ -4,23 +4,24 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
-import { optionalInteger, optionalRecord, optionalString, requiredString, stringArray } from "../../core/cast.ts";
+import { optionalInteger, optionalRecord, optionalString, stringArray } from "../../core/cast.ts";
 import { compactJson, queryParams } from "../../core/request.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineProviderExecutors,
-  defineProviderProxy,
   isAbortLikeError,
+  providerInputError,
   providerUserAgent,
   ProviderRequestError,
-  requireApiKeyCredential,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 const service = "nocrm_io";
 const nocrmValidationPath = "/api/v2/ping";
-const nocrmRequestTimeoutMs = 30_000;
 
 interface NocrmContext {
   apiKey: string;
@@ -187,7 +188,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: `nocrm_io:${subdomain}`,
         displayName: `noCRM.io ${subdomain}`,
       },
-      grantedScopes: [],
       metadata: {
         subdomain,
         baseUrl,
@@ -216,7 +216,7 @@ interface NocrmRequestOptions {
 }
 
 async function requestNocrmJson(context: NocrmContext, input: NocrmRequestOptions): Promise<unknown> {
-  const timeout = createProviderTimeout(context.signal, nocrmRequestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const response = await context.fetcher(buildNocrmUrl(context.baseUrl, input.path, input.query), {
       method: input.method ?? "GET",
@@ -256,7 +256,7 @@ function buildNocrmUrl(baseUrl: string, path: string, query?: Record<string, str
 
 function buildNocrmHeaders(apiKey: string, hasBody: boolean): Headers {
   const headers = new Headers({
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     "x-api-key": apiKey,
   });
@@ -331,14 +331,6 @@ function normalizeNocrmSubdomain(value: unknown): string {
     );
   }
   return normalized;
-}
-
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, providerInputError);
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }
 
 function identifierValue(value: unknown): string | undefined {

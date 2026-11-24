@@ -1,6 +1,7 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
 
-import { defineApiKeyProviderExecutors, defineProviderProxy } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   getWaiverForeverUserInfo,
   waiverforeverActionHandlers,
@@ -19,11 +20,7 @@ export const proxy: ProviderProxyExecutor = defineProviderProxy({
   baseUrl: waiverforeverApiBaseUrl,
   auth: { type: "api_key_header", name: "X-API-Key" },
   skipDnsValidation: true,
-  customizeRequest({ headers }) {
-    if (!headers.has("accept")) {
-      headers.set("accept", "application/json");
-    }
-  },
+  defaultHeaders: { accept: "application/json" },
 });
 
 export const credentialValidators: CredentialValidators = {
@@ -31,7 +28,6 @@ export const credentialValidators: CredentialValidators = {
     const userInfo = await getWaiverForeverUserInfo(input.apiKey, fetcher, signal, "validate");
     return {
       profile: { displayName: userInfo.username ?? "WaiverForever API Key" },
-      grantedScopes: [],
       metadata: {
         username: userInfo.username,
         apiBaseUrl: waiverforeverApiBaseUrl,

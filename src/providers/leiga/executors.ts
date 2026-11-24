@@ -1,11 +1,17 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString, requiredRecord } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
@@ -13,7 +19,6 @@ import {
 
 const service = "leiga";
 const leigaApiBaseUrl = "https://app.leiga.com/openapi/api";
-const leigaDefaultRequestTimeoutMs = 30_000;
 
 type LeigaPhase = "validate" | "execute";
 type LeigaActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
@@ -137,6 +142,16 @@ export const leigaActionHandlers: ProviderActionHandlers<"leiga", LeigaActionHan
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, leigaActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: leigaApiBaseUrl,
+  auth: { type: "api_key_header", name: "accessToken" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     return validateLeigaCredential({
@@ -163,7 +178,6 @@ async function validateLeigaCredential(context: ApiKeyProviderContext): Promise<
       accountId: firstProject ? String(firstProject.id) : undefined,
       displayName: optionalString(firstProject?.pname) ?? optionalString(firstProject?.pkey) ?? "Leiga API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: leigaApiBaseUrl,
       validationEndpoint: "/project/list",
@@ -177,15 +191,15 @@ async function validateLeigaCredential(context: ApiKeyProviderContext): Promise<
 async function requestLeigaJson(
   input: LeigaRequestInput & { context: ApiKeyProviderContext },
 ): Promise<Record<string, unknown>> {
-  const timeout = createProviderTimeout(input.context.signal, leigaDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
 
   try {
     const response = await input.context.fetcher(buildLeigaUrl(input.path, input.query ?? {}), {
       method: input.method,
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
-        accessToken: input.context.apiKey,
+        "accessToken": input.context.apiKey,
         "user-agent": providerUserAgent,
       },
       body: input.body ? JSON.stringify(input.body) : undefined,

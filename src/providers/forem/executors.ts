@@ -4,22 +4,23 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
-import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
+import { compactObject, optionalRawString, optionalRecord, optionalString } from "../../core/cast.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
-  defineProviderExecutors,
-  defineProviderProxy,
+  isAbortLikeError,
   ProviderRequestError,
   providerUserAgent,
-  requireApiKeyCredential,
+  defaultProviderRequestTimeoutMs,
 } from "../provider-runtime.ts";
 import { foremArticleMutableKeys } from "./actions.ts";
 
 const service = "forem";
 const foremDefaultBaseUrl = "https://dev.to";
 const foremApiPathPrefix = "/api";
-const foremDefaultRequestTimeoutMs = 30_000;
 
 type ForemPhase = "validate" | "execute";
 type ForemMethod = "GET" | "POST" | "PUT";
@@ -241,7 +242,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: userId === undefined ? "api_key" : `forem:${baseUrl}:${userId}`,
         displayName: email ?? username ?? name ?? "Forem API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         baseUrl,
         apiBaseUrl: buildForemApiBaseUrl(baseUrl),
@@ -264,7 +264,7 @@ async function requestForemJson<T>(context: ForemActionContext, input: ForemRequ
   }
 
   const body = input.body ? JSON.stringify(input.body) : undefined;
-  const timeoutSignal = AbortSignal.timeout(foremDefaultRequestTimeoutMs);
+  const timeoutSignal = AbortSignal.timeout(defaultProviderRequestTimeoutMs);
   const signal = context.signal ? AbortSignal.any([context.signal, timeoutSignal]) : timeoutSignal;
 
   try {
@@ -284,7 +284,7 @@ async function requestForemJson<T>(context: ForemActionContext, input: ForemRequ
     if (error instanceof ProviderRequestError) {
       throw error;
     }
-    if (timeoutSignal.aborted && isAbortError(error)) {
+    if (timeoutSignal.aborted && isAbortLikeError(error)) {
       throw new ProviderRequestError(504, "Forem request timed out", error);
     }
 
@@ -298,7 +298,7 @@ async function requestForemJson<T>(context: ForemActionContext, input: ForemRequ
 
 function buildForemHeaders(apiKey: string, hasBody: boolean): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/vnd.forem.api-v1+json",
+    "accept": "application/vnd.forem.api-v1+json",
     "api-key": apiKey,
     "user-agent": providerUserAgent,
   };
@@ -416,12 +416,12 @@ function buildArticleRequestBody(input: Record<string, unknown>): Record<string,
   return {
     article: compactObject({
       title: readOptionalTrimmedString(input.title),
-      body_markdown: readOptionalString(input.bodyMarkdown),
+      body_markdown: optionalRawString(input.bodyMarkdown),
       published: typeof input.published === "boolean" ? input.published : undefined,
       series: readOptionalNullableString(input.series),
       main_image: readOptionalNullableString(input.mainImage),
       canonical_url: readOptionalNullableString(input.canonicalUrl),
-      description: readOptionalString(input.description),
+      description: optionalRawString(input.description),
       tags: readOptionalStringList(input.tags)?.join(", "),
       organization_id:
         input.organizationId === null ? null : readOptionalPositiveInteger(input.organizationId, "organizationId"),
@@ -454,12 +454,8 @@ function buildForemApiBaseUrl(baseUrl: string): string {
   return `${baseUrl}${foremApiPathPrefix}`;
 }
 
-function readOptionalString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
 function readOptionalTrimmedString(value: unknown): string | undefined {
-  const raw = readOptionalString(value);
+  const raw = optionalRawString(value);
   if (raw === undefined) {
     return undefined;
   }
@@ -471,7 +467,7 @@ function readOptionalNullableString(value: unknown): string | null | undefined {
   if (value === null) {
     return null;
   }
-  return readOptionalString(value);
+  return optionalRawString(value);
 }
 
 function readRequiredString(value: unknown, fieldName: string): string {
@@ -523,10 +519,6 @@ function assertCommentTarget(input: Record<string, unknown>): void {
   if (hasArticleId === hasPodcastEpisodeId) {
     throw new ProviderRequestError(400, "exactly one of articleId or podcastEpisodeId is required");
   }
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
 }
 
 async function foremProxyBaseUrl(context: ExecutionContext, service: string): Promise<string> {

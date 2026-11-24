@@ -1,12 +1,11 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
@@ -14,14 +13,12 @@ import {
 
 const service = "fullenrich";
 const fullenrichApiBaseUrl = "https://app.fullenrich.com/api/v2";
-const fullenrichRequestTimeoutMs = 30_000;
 
 type FullenrichPhase = "validate" | "execute";
-type FullenrichActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type FullenrichActionHandler = (input: Record<string, unknown>, context: FullenrichActionContext) => Promise<unknown>;
+type FullenrichActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 interface FullenrichRequestOptions {
-  context: FullenrichActionContext;
+  context: ApiKeyProviderContext;
   path: string;
   method?: "GET" | "POST";
   body?: Record<string, unknown>;
@@ -107,7 +104,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: workspaceId ?? "api_key",
         displayName: workspaceId ? `FullEnrich workspace ${workspaceId}` : "FullEnrich API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         workspaceId,
         validationEndpoint: "/account/keys/verify",
@@ -145,11 +141,11 @@ function validateCompanyLookupInput(input: Record<string, unknown>): void {
 }
 
 async function requestFullenrichJson(options: FullenrichRequestOptions): Promise<Record<string, unknown>> {
-  const timeout = createProviderTimeout(options.context.signal, fullenrichRequestTimeoutMs);
+  const timeout = createProviderTimeout(options.context.signal);
   try {
     const headers: Record<string, string> = {
-      accept: "application/json",
-      authorization: `Bearer ${options.context.apiKey}`,
+      "accept": "application/json",
+      "authorization": `Bearer ${options.context.apiKey}`,
       "user-agent": providerUserAgent,
     };
     if (options.body) {

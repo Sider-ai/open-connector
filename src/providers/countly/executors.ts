@@ -1,14 +1,15 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
 
 import { compactObject, optionalRecord, optionalString, optionalStringArray, requiredString } from "../../core/cast.ts";
-import { isPrivateNetworkAccessAllowed } from "../../core/request.ts";
+import { assertPublicHttpUrl, isPrivateNetworkAccessAllowed } from "../../core/request.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderFetch,
-  defineProviderExecutors,
-  defineProviderProxy,
+  providerInputError,
   ProviderRequestError,
   providerUserAgent,
-  requireApiKeyCredential,
 } from "../provider-runtime.ts";
 
 const service = "countly";
@@ -19,18 +20,20 @@ interface Context {
   fetcher: typeof fetch;
   signal?: AbortSignal;
 }
-const inputError = (message: string) => new ProviderRequestError(400, message);
 
-function normalizeBaseUrl(value: unknown): string {
-  const text = requiredString(value, "baseUrl", inputError);
-  let url: URL;
-  try {
-    url = new URL(text);
-  } catch {
-    throw inputError("baseUrl must be a valid http(s) URL");
+export function normalizeBaseUrl(
+  value: unknown,
+  allowPrivateNetwork: boolean = isPrivateNetworkAccessAllowed(),
+): string {
+  const text = requiredString(value, "baseUrl", providerInputError);
+  const url = assertPublicHttpUrl(text, {
+    fieldName: "baseUrl",
+    createError: providerInputError,
+    allowPrivateNetwork,
+  });
+  if (url.username || url.password || url.pathname !== "/") {
+    throw providerInputError("baseUrl must be an HTTP(S) instance root URL without credentials or a path");
   }
-  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.pathname !== "/")
-    throw inputError("baseUrl must be an HTTP(S) instance root URL without credentials or a path");
   url.search = "";
   url.hash = "";
   const normalized = url.toString();
@@ -41,7 +44,7 @@ async function request(context: Context, path: string, query: Record<string, unk
   url.searchParams.set("api_key", context.apiKey);
   for (const [key, value] of Object.entries(query)) if (value !== undefined) url.searchParams.set(key, String(value));
   const response = await context.fetcher(url, {
-    headers: { accept: "application/json", "user-agent": providerUserAgent },
+    headers: { "accept": "application/json", "user-agent": providerUserAgent },
     signal: context.signal,
   });
   const text = await response.text();
@@ -87,14 +90,16 @@ const handlers = {
   async get_app_details(input: Record<string, unknown>, context: Context) {
     return {
       details: record(
-        await request(context, "/o/apps/details", { app_id: requiredString(input.appId, "appId", inputError) }),
+        await request(context, "/o/apps/details", { app_id: requiredString(input.appId, "appId", providerInputError) }),
       ),
     };
   },
   async get_dashboard_analytics(input: Record<string, unknown>, context: Context) {
     return {
       analytics: record(
-        await request(context, "/o/analytics/dashboard", { app_id: requiredString(input.appId, "appId", inputError) }),
+        await request(context, "/o/analytics/dashboard", {
+          app_id: requiredString(input.appId, "appId", providerInputError),
+        }),
       ),
     };
   },
@@ -105,7 +110,7 @@ const handlers = {
           context,
           "/o/analytics/sessions",
           compactObject({
-            app_id: requiredString(input.appId, "appId", inputError),
+            app_id: requiredString(input.appId, "appId", providerInputError),
             period: optionalString(input.period),
           }),
         ),
@@ -115,14 +120,14 @@ const handlers = {
   async list_event_analytics(input: Record<string, unknown>, context: Context) {
     const event = optionalString(input.event);
     const events = optionalStringArray(input.events);
-    if (!event && !events?.length) throw inputError("event or events is required");
+    if (!event && !events?.length) throw providerInputError("event or events is required");
     return {
       events: records(
         await request(
           context,
           "/o/analytics/events",
           compactObject({
-            app_id: requiredString(input.appId, "appId", inputError),
+            app_id: requiredString(input.appId, "appId", providerInputError),
             event,
             events: events ? JSON.stringify(events) : undefined,
             segmentation: optionalString(input.segmentation),
@@ -174,7 +179,6 @@ export const credentialValidators: CredentialValidators = {
           optionalString(user.email) ??
           "Countly API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({ baseUrl, apiBaseUrl: baseUrl, validationEndpoint: validationPath, userId }),
     };
   },

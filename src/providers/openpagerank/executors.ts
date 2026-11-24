@@ -1,9 +1,10 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "openpagerank";
 const openPageRankApiBaseUrl = "https://openpagerank.com/api/v1.0";
@@ -22,6 +23,16 @@ export const openPageRankActionHandlers: ProviderActionHandlers<"openpagerank", 
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, openPageRankActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: openPageRankApiBaseUrl,
+  auth: { type: "api_key_header", name: "API-OPR" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     await openPageRankGetJson(
@@ -37,9 +48,7 @@ export const credentialValidators: CredentialValidators = {
     return {
       profile: {
         displayName: "OpenPageRank API Key",
-        grantedScopes: [],
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: openPageRankApiBaseUrl,
         validationEndpoint: openPageRankLookupPath,
@@ -64,7 +73,7 @@ function readDomains(value: unknown): string[] {
 
 async function openPageRankGetJson(
   domains: string[],
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: OpenPageRankRequestPhase,
 ): Promise<unknown> {
   const url = new URL(`${openPageRankApiBaseUrl}${openPageRankLookupPath}`);
@@ -78,7 +87,7 @@ async function openPageRankGetJson(
       method: "GET",
       headers: {
         "API-OPR": context.apiKey,
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
       signal: context.signal,

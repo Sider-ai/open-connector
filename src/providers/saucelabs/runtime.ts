@@ -7,7 +7,13 @@ import {
   optionalString,
   requiredString,
 } from "../../core/cast.ts";
-import { createProviderTimeout, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import {
+  createProviderTimeout,
+  providerUserAgent,
+  ProviderRequestError,
+  providerInputError,
+  providerResponseError,
+} from "../provider-runtime.ts";
 
 const saucelabsDataCenters = ["us-west-1", "us-east-4", "eu-central-1"] as const;
 type SaucelabsDataCenter = (typeof saucelabsDataCenters)[number];
@@ -29,7 +35,7 @@ interface SaucelabsValidationResult {
 }
 
 export function resolveSaucelabsCredential(input: Record<string, unknown>): SaucelabsCredential {
-  const apiKey = requiredString(input.apiKey, "apiKey", (message) => new ProviderRequestError(400, message));
+  const apiKey = requiredString(input.apiKey, "apiKey", providerInputError);
   const username = requireString(input.username, "username");
   const dataCenter = requireString(input.dataCenter, "dataCenter");
   if (!saucelabsDataCenters.includes(dataCenter as SaucelabsDataCenter)) {
@@ -240,8 +246,8 @@ async function requestSaucelabs(input: {
     const response = await input.fetcher(url, {
       method: input.method ?? "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Basic ${Buffer.from(`${input.credential.username}:${input.credential.apiKey}`).toString("base64")}`,
+        "accept": "application/json",
+        "authorization": `Basic ${Buffer.from(`${input.credential.username}:${input.credential.apiKey}`).toString("base64")}`,
         ...(input.body === undefined ? {} : { "content-type": "application/json" }),
         "user-agent": providerUserAgent,
       },
@@ -285,8 +291,8 @@ function createSaucelabsError(response: Response, payload: unknown, phase: Reque
     return new ProviderRequestError(phase === "validate" ? 400 : 401, message);
   }
   if (response.status === 429) return new ProviderRequestError(429, message);
-  if (response.status >= 400 && response.status < 500) return new ProviderRequestError(400, message);
-  return new ProviderRequestError(502, message);
+  if (response.status >= 400 && response.status < 500) return providerInputError(message);
+  return providerResponseError(message);
 }
 
 function stringifyInteger(value: unknown) {

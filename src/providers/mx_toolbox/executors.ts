@@ -4,16 +4,13 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import {
-  defineProviderExecutors,
-  defineProviderProxy,
-  ProviderRequestError,
-  providerUserAgent,
-  requireApiKeyCredential,
-} from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerInputError, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "mx_toolbox";
 const mxToolboxLookupApiBaseUrl = "https://mxtoolbox.com";
@@ -100,7 +97,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "api_key",
         displayName: "MxToolbox API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: mxToolboxLookupApiBaseUrl,
         accountApiBaseUrl: mxToolboxAccountApiBaseUrl,
@@ -144,8 +140,8 @@ async function executeMxToolboxRequest(
     response = await context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: context.apiKey,
+        "accept": "application/json",
+        "authorization": context.apiKey,
         "user-agent": providerUserAgent,
       },
       signal: context.signal,
@@ -226,10 +222,6 @@ function extractMxToolboxErrorMessage(payload: unknown): string | undefined {
     optionalString(record.error) ??
     optionalString(record.Error)
   );
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }
 
 export const proxy: ProviderProxyExecutor = defineProviderProxy({

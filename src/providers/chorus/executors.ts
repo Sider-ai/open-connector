@@ -1,24 +1,17 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import {
-  createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  isAbortLikeError,
-  providerUserAgent,
-  ProviderRequestError,
-} from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError, runProviderRequest } from "../provider-runtime.ts";
 
 const service = "chorus";
 const chorusApiBaseUrl = "https://chorus.ai";
 const chorusValidationPath = "/api/v1/users/me";
-const chorusDefaultRequestTimeoutMs = 30_000;
 
 type ChorusPhase = "validate" | "execute";
 type ChorusAcceptHeader = "application/json" | "application/vnd.api+json";
-type ChorusContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
 type ChorusActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 export const chorusActionHandlers: ProviderActionHandlers<"chorus", ChorusActionHandler> = {
@@ -116,6 +109,16 @@ export const chorusActionHandlers: ProviderActionHandlers<"chorus", ChorusAction
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, chorusActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: chorusApiBaseUrl,
+  auth: { type: "api_key_header", name: "Authorization" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = await requestChorusJson({
@@ -140,7 +143,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: `chorus:user:${userId}`,
         displayName: buildChorusAccountLabel({ name, email, id: userId }),
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: chorusApiBaseUrl,
         validationEndpoint: chorusValidationPath,
@@ -157,20 +159,18 @@ async function requestChorusJson(input: {
   path: string;
   accept: ChorusAcceptHeader;
   phase: ChorusPhase;
-  context: ChorusContext;
+  context: ApiKeyProviderContext;
   query?: URLSearchParams;
 }): Promise<unknown> {
-  const timeout = createProviderTimeout(input.context.signal, chorusDefaultRequestTimeoutMs);
-
-  try {
+  return runProviderRequest({ signal: input.context.signal, label: "Chorus" }, async (signal) => {
     const response = await input.context.fetcher(buildChorusUrl(input.path, input.query), {
       method: "GET",
       headers: {
-        accept: input.accept,
-        authorization: input.apiKey,
+        "accept": input.accept,
+        "authorization": input.apiKey,
         "user-agent": providerUserAgent,
       },
-      signal: timeout.signal,
+      signal,
     });
     const payload = await readChorusPayload(response);
 
@@ -179,20 +179,7 @@ async function requestChorusJson(input: {
     }
 
     return payload;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-    if (timeout.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "Chorus request timed out");
-    }
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Chorus request failed: ${error.message}` : "Chorus request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+  });
 }
 
 function buildChorusUrl(path: string, query?: URLSearchParams): URL {

@@ -1,26 +1,19 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
-import {
-  compactObject,
-  optionalBoolean,
-  optionalInteger,
-  optionalRecord,
-  optionalString,
-  requiredString,
-} from "../../core/cast.ts";
+import { compactObject, optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 const service = "neverbounce";
 const neverbounceApiBaseUrl = "https://api.neverbounce.com/v4.2";
-const neverbounceDefaultRequestTimeoutMs = 30_000;
 
 type NeverBouncePhase = "validate" | "execute";
 type NeverBounceActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
@@ -87,6 +80,14 @@ export const neverbounceActionHandlers: ProviderActionHandlers<"neverbounce", Ne
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, neverbounceActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: neverbounceApiBaseUrl,
+  auth: { type: "api_key_query_or_form_body", name: "key" },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = optionalRecord(
@@ -106,7 +107,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "neverbounce",
         displayName: "NeverBounce API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: neverbounceApiBaseUrl,
         validationEndpoint: "/account/info",
@@ -119,7 +119,7 @@ export const credentialValidators: CredentialValidators = {
 
 async function requestNeverBounceJson(
   path: string,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: NeverBouncePhase,
   query: Record<string, string | undefined>,
   method: "GET" | "POST" = "GET",
@@ -134,7 +134,7 @@ async function requestNeverBounceJson(
 
 async function requestNeverBounceRaw(
   path: string,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: NeverBouncePhase,
   query: Record<string, string | undefined>,
   method: "GET" | "POST" = "GET",
@@ -150,10 +150,10 @@ async function requestNeverBounceRaw(
     }
   }
 
-  const timeout = createProviderTimeout(context.signal, neverbounceDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const headers: Record<string, string> = {
-      accept: options.accept,
+      "accept": options.accept,
       "user-agent": providerUserAgent,
     };
     let body: URLSearchParams | undefined;
@@ -312,10 +312,6 @@ function extractNeverBounceErrorMessage(payload: unknown): string | undefined {
     optionalString(record?.error_message) ??
     optionalString(record?.reason)
   );
-}
-
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function requiredJobId(value: unknown, fieldName: string): string {

@@ -1,20 +1,20 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { randomUUID } from "node:crypto";
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
+  providerInputError,
   providerUserAgent,
   ProviderRequestError,
 } from "../provider-runtime.ts";
 
 const service = "govee";
 const goveeApiBaseUrl = "https://openapi.api.govee.com";
-const goveeRequestTimeoutMs = 30_000;
 
 type GoveeRequestPhase = "validate" | "execute";
 
@@ -130,7 +130,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "api_key",
         displayName: deviceName ? `Govee: ${deviceName}` : "Govee API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: goveeApiBaseUrl,
         validationEndpoint: "/router/api/v1/user/devices",
@@ -171,14 +170,14 @@ function buildDevicePayload(input: Record<string, unknown>): Record<string, unkn
 }
 
 async function requestGovee(input: GoveeRequestInput): Promise<unknown> {
-  const timeout = createProviderTimeout(input.signal, goveeRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   let response: Response;
   let payload: unknown;
   try {
     response = await input.fetcher(`${goveeApiBaseUrl}${input.path}`, {
       method: input.method,
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "Govee-API-Key": input.apiKey,
         "user-agent": providerUserAgent,
         ...(input.body ? { "content-type": "application/json" } : {}),
@@ -271,8 +270,4 @@ function readGoveeErrorMessage(payload: unknown): string | undefined {
 
 function readGoveeMessage(payload: Record<string, unknown>): string | undefined {
   return optionalString(payload.message) ?? optionalString(payload.msg);
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

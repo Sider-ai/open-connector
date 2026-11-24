@@ -1,18 +1,12 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderRequestContext } from "../provider-runtime.ts";
 
 import { compactObject, optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
-import {
-  createProviderTimeout,
-  isAbortLikeError,
-  providerUserAgent,
-  ProviderRequestError,
-} from "../provider-runtime.ts";
+import { providerUserAgent, ProviderRequestError, runProviderRequest } from "../provider-runtime.ts";
 
 export const builderIoWriteApiBaseUrl = "https://builder.io";
 
 const builderIoApiBaseUrl = "https://cdn.builder.io";
-const builderIoDefaultRequestTimeoutMs = 30_000;
 
 type BuilderIoActionHandler = ProviderRuntimeHandler<ApiKeyProviderContext>;
 
@@ -148,44 +142,30 @@ async function requestBuilderIoJson(input: {
   url: URL;
   method: "GET" | "POST" | "PATCH" | "DELETE";
   body?: unknown;
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">;
+  context: ProviderRequestContext;
 }): Promise<unknown> {
   const headers: Record<string, string> = {
-    accept: "application/json",
-    authorization: `Bearer ${input.apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${input.apiKey}`,
     "user-agent": providerUserAgent,
   };
   if (input.body !== undefined) {
     headers["content-type"] = "application/json";
   }
 
-  const timeout = createProviderTimeout(input.context.signal, builderIoDefaultRequestTimeoutMs);
-  try {
+  return runProviderRequest({ signal: input.context.signal, label: "Builder.io" }, async (signal) => {
     const response = await input.context.fetcher(input.url, {
       method: input.method,
       headers,
       body: input.body === undefined ? undefined : JSON.stringify(input.body),
-      signal: timeout.signal,
+      signal,
     });
     const payload = await readBuilderIoPayload(response);
     if (!response.ok) {
       throw createBuilderIoError(response.status, payload);
     }
     return payload;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-    if (timeout.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "Builder.io request timed out");
-    }
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Builder.io request failed: ${error.message}` : "Builder.io request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+  });
 }
 
 function buildContentWriteBody(input: Record<string, unknown>): Record<string, unknown> {

@@ -1,6 +1,5 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-const crossrefApiBaseUrl = "https://api.crossref.org/v1";
-const crossrefRequestTimeoutMs = 30_000;
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+export const crossrefApiBaseUrl = "https://api.crossref.org/v1";
 const crossrefMaxResponseBytes = 4 * 1024 * 1024;
 const crossrefCursorPrefix = "crossref_cursor_v1.";
 
@@ -85,10 +84,10 @@ export const crossrefActionHandlers: ProviderActionHandlers<"crossref", Crossref
       path: "/works",
       params: compactObject({
         "query.bibliographic": readRequiredString(input.reference, "reference"),
-        sort: "score",
-        order: "desc",
-        rows: readOptionalIntegerParam(input.rows),
-        mailto: readOptionalString(input.mailto),
+        "sort": "score",
+        "order": "desc",
+        "rows": readOptionalIntegerParam(input.rows),
+        "mailto": readOptionalString(input.mailto),
       }),
       fetcher,
       apiKey,
@@ -229,7 +228,7 @@ export const crossrefActionHandlers: ProviderActionHandlers<"crossref", Crossref
 export async function validateCrossrefCredential(
   input: Record<string, string>,
   fetcher: typeof fetch,
-): Promise<{ profile: { displayName: string }; grantedScopes: string[]; metadata: Record<string, unknown> }> {
+): Promise<{ profile: { displayName: string }; metadata: Record<string, unknown> }> {
   const apiKey = requiredString(input.apiKey, "apiKey", providerInputError);
   const { response } = await requestCrossrefJson({
     path: "/works",
@@ -245,7 +244,6 @@ export async function validateCrossrefCredential(
 
   return {
     profile: { displayName: "Crossref Metadata Plus" },
-    grantedScopes: [],
     metadata: compactObject({
       apiPool: apiPool ?? undefined,
       rateLimit: response.headers.get("x-rate-limit-limit") ?? undefined,
@@ -281,11 +279,9 @@ async function requestCrossref(input: {
   apiKey?: string;
   phase?: "execute" | "validate";
 }) {
-  const timeoutHandle = createProviderTimeout(undefined, crossrefRequestTimeoutMs);
-
-  try {
+  return runProviderRequest({ label: "Crossref" }, async (signal) => {
     const headers = new Headers({
-      accept: input.accept,
+      "accept": input.accept,
       "user-agent": providerUserAgent,
     });
     if (input.apiKey) {
@@ -295,7 +291,7 @@ async function requestCrossref(input: {
     const response = await input.fetcher(buildCrossrefUrl(input.path, input.params), {
       method: "GET",
       headers,
-      signal: timeoutHandle.signal,
+      signal,
     });
     const body = await readCrossrefResponseText(response);
 
@@ -303,22 +299,7 @@ async function requestCrossref(input: {
       throw createCrossrefError(response.status, parseCrossrefPayload(body), input.phase ?? "execute", !!input.apiKey);
     }
     return { body, response };
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-
-    if (timeoutHandle.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "Crossref request timed out");
-    }
-
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Crossref request failed: ${error.message}` : "Crossref request failed",
-    );
-  } finally {
-    timeoutHandle.cleanup();
-  }
+  });
 }
 
 function buildCrossrefUrl(path: string, params: Record<string, string | undefined>) {
@@ -409,20 +390,20 @@ function buildIdentityParams(input: Record<string, unknown>) {
 
 function buildWorksParams(input: Record<string, unknown>) {
   return compactObject({
-    query: readOptionalString(input.query),
+    "query": readOptionalString(input.query),
     "query.bibliographic": readOptionalString(input.queryBibliographic),
     "query.title": readOptionalString(input.queryTitle),
     "query.author": readOptionalString(input.queryAuthor),
     "query.container-title": readOptionalString(input.queryContainerTitle),
-    filter: readOptionalString(input.filter),
-    sort: readOptionalString(input.sort),
-    order: readOptionalString(input.order),
-    facet: readOptionalString(input.facet),
-    rows: readOptionalIntegerParam(input.rows),
-    offset: readOptionalIntegerParam(input.offset),
-    cursor: readOptionalString(input.cursor),
-    sample: readOptionalIntegerParam(input.sample),
-    mailto: readOptionalString(input.mailto),
+    "filter": readOptionalString(input.filter),
+    "sort": readOptionalString(input.sort),
+    "order": readOptionalString(input.order),
+    "facet": readOptionalString(input.facet),
+    "rows": readOptionalIntegerParam(input.rows),
+    "offset": readOptionalIntegerParam(input.offset),
+    "cursor": readOptionalString(input.cursor),
+    "sample": readOptionalIntegerParam(input.sample),
+    "mailto": readOptionalString(input.mailto),
   });
 }
 
@@ -490,7 +471,7 @@ function createCrossrefError(status: number, payload: unknown, phase: "execute" 
     );
   }
   if (status === 401 && phase === "validate") {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (status === 401 && hasApiKey) {
     return new ProviderRequestError(401, message);
@@ -688,7 +669,7 @@ function normalizeDoi(value: string) {
 function readMessageObject(payload: Record<string, unknown>, message: string) {
   const record = optionalRecord(payload.message);
   if (!record) {
-    throw new ProviderRequestError(502, message);
+    throw providerResponseError(message);
   }
   return record;
 }
@@ -880,13 +861,6 @@ function numberToString(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? String(value) : undefined;
 }
 
-function isAbortLikeError(error: unknown) {
-  return error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
-}
 import { Buffer } from "node:buffer";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import {
@@ -897,4 +871,10 @@ import {
   optionalString,
   requiredString,
 } from "../../core/cast.ts";
-import { createProviderTimeout, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import {
+  providerInputError,
+  providerUserAgent,
+  ProviderRequestError,
+  runProviderRequest,
+  providerResponseError,
+} from "../provider-runtime.ts";

@@ -259,15 +259,15 @@ const categoryDetailsInputSchema = s.object(
 const productsInputSchema = s.object(
   "The input payload for listing Best Buy products.",
   {
-    sku: skuInputSchema,
-    upc: nonEmptyString("The product UPC to filter by."),
-    name: nonEmptyString(
+    "sku": skuInputSchema,
+    "upc": nonEmptyString("The product UPC to filter by."),
+    "name": nonEmptyString(
       "The product name filter. Plain values are converted into a name clause, and raw Best Buy name expressions are also accepted.",
     ),
-    salePrice: nonEmptyString(
+    "salePrice": nonEmptyString(
       "The salePrice filter. Values such as >100 are converted into a Best Buy comparison clause, and raw salePrice expressions are also accepted.",
     ),
-    categoryPathId: nonEmptyString("The Best Buy category identifier to filter products by."),
+    "categoryPathId": nonEmptyString("The Best Buy category identifier to filter products by."),
     "categoryPath.id": nonEmptyString(
       "The Best Buy category identifier alias used by the toolkit to filter products by.",
     ),
@@ -347,48 +347,56 @@ const storeDetailsInputSchema = s.object(
 export const bestbuyActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "get_categories",
+    operationType: "read",
     description: "List Best Buy categories with optional identifier or name filters.",
     inputSchema: categoriesInputSchema,
     outputSchema: categoriesOutputSchema,
   }),
   defineProviderAction(service, {
     name: "get_category_details",
+    operationType: "read",
     description: "Retrieve one Best Buy category by identifier.",
     inputSchema: categoryDetailsInputSchema,
     outputSchema: categorySchema,
   }),
   defineProviderAction(service, {
     name: "get_products",
+    operationType: "read",
     description: "List Best Buy products with optional SKU, UPC, name, category, or price filters.",
     inputSchema: productsInputSchema,
     outputSchema: productsOutputSchema,
   }),
   defineProviderAction(service, {
     name: "get_product_details",
+    operationType: "read",
     description: "Retrieve one Best Buy product by SKU.",
     inputSchema: productDetailsInputSchema,
     outputSchema: productSchema,
   }),
   defineProviderAction(service, {
     name: "get_reviews",
+    operationType: "read",
     description: "List Best Buy product reviews with optional SKU, reviewer, and rating filters.",
     inputSchema: reviewsInputSchema,
     outputSchema: reviewsOutputSchema,
   }),
   defineProviderAction(service, {
     name: "get_review_details",
+    operationType: "read",
     description: "Retrieve one Best Buy review by identifier.",
     inputSchema: reviewDetailsInputSchema,
     outputSchema: reviewSchema,
   }),
   defineProviderAction(service, {
     name: "get_stores",
+    operationType: "read",
     description: "List Best Buy stores with optional geographic and attribute filters.",
     inputSchema: storesInputSchema,
     outputSchema: storesOutputSchema,
   }),
   defineProviderAction(service, {
     name: "get_store_details",
+    operationType: "read",
     description: "Retrieve one Best Buy store by store identifier.",
     inputSchema: storeDetailsInputSchema,
     outputSchema: storeSchema,

@@ -4,16 +4,13 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
-  ProviderRequestError,
-  providerUserAgent,
-} from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerInputError, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "renderform";
 const renderformDocsBaseUrl = "https://renderform.io";
@@ -78,9 +75,7 @@ async function validateRenderformCredential(
     profile: {
       accountId: "renderform-api-key",
       displayName: "RenderForm API Key",
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: renderformApiBaseUrl,
       validationEndpoint: usagePath,
@@ -136,7 +131,7 @@ async function executeListTemplates(input: Record<string, unknown>, context: Api
 }
 
 async function executeGetTemplate(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
-  const templateId = requiredString(input.templateId, "templateId", inputError);
+  const templateId = requiredString(input.templateId, "templateId", providerInputError);
   const payload = await requestRenderformJson({
     url: new URL(`${getTemplatePath}/${encodeURIComponent(templateId)}`, renderformApiBaseUrl),
     init: {
@@ -161,7 +156,7 @@ async function executeRenderImage(input: Record<string, unknown>, context: ApiKe
       headers: buildHeaders(context.apiKey),
       body: JSON.stringify(
         compactObject({
-          template: requiredString(input.template, "template", inputError),
+          template: requiredString(input.template, "template", providerInputError),
           data: optionalRecord(input.data),
           fileName: optionalString(input.fileName),
           webhookUrl: optionalString(input.webhookUrl),
@@ -210,7 +205,7 @@ async function executeTakeScreenshot(input: Record<string, unknown>, context: Ap
       headers: buildHeaders(context.apiKey),
       body: JSON.stringify(
         compactObject({
-          url: requiredString(input.url, "url", inputError),
+          url: requiredString(input.url, "url", providerInputError),
           width: readRequiredInteger(input.width, "width"),
           height: readRequiredInteger(input.height, "height"),
           waitTime: optionalInteger(input.waitTime),
@@ -227,7 +222,7 @@ async function executeTakeScreenshot(input: Record<string, unknown>, context: Ap
 
 function buildHeaders(apiKey: string): Record<string, string> {
   return {
-    accept: "application/json",
+    "accept": "application/json",
     "content-type": "application/json",
     "user-agent": providerUserAgent,
     "x-api-key": apiKey,
@@ -547,10 +542,6 @@ function readIntegerWithDefault(value: unknown, defaultValue: number): number {
 
 function readBooleanWithDefault(value: unknown, defaultValue: boolean): boolean {
   return typeof value === "boolean" ? value : defaultValue;
-}
-
-function inputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }
 
 export const proxy: ProviderProxyExecutor = defineProviderProxy({

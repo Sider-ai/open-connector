@@ -1,6 +1,8 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
 
-import { defineApiKeyProviderExecutors, defineProviderProxy, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError } from "../provider-runtime.ts";
 import { tianyanchaActionHandlers, tianyanchaApiBaseUrl } from "./runtime.ts";
 
 const service = "tianyancha";
@@ -14,9 +16,7 @@ export const proxy: ProviderProxyExecutor = defineProviderProxy({
   baseUrl: tianyanchaApiBaseUrl,
   auth: { type: "api_key_header", name: "Authorization" },
   skipDnsValidation: true,
-  customizeRequest({ headers }) {
-    if (!headers.has("accept")) headers.set("accept", "application/json");
-  },
+  defaultHeaders: { accept: "application/json" },
 });
 
 export const credentialValidators: CredentialValidators = {
@@ -24,7 +24,6 @@ export const credentialValidators: CredentialValidators = {
     if (!input.apiKey.trim()) throw new ProviderRequestError(400, "Tianyancha API token is required");
     return {
       profile: { accountId: "api-token", displayName: "Tianyancha API Token" },
-      grantedScopes: [],
       metadata: { apiBaseUrl: tianyanchaApiBaseUrl, validationMode: "format_only" },
     };
   },

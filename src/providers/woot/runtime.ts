@@ -1,6 +1,7 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import {
   optionalBoolean,
@@ -14,14 +15,14 @@ import {
 import {
   createProviderTimeout,
   isAbortLikeError,
+  providerInputError,
   providerUserAgent,
   ProviderRequestError,
   readProviderTextBody,
+  providerResponseError,
 } from "../provider-runtime.ts";
 
 export const wootApiBaseUrl = "https://developer.woot.com";
-
-const wootRequestTimeoutMs = 30_000;
 
 type WootRequestPhase = "validate" | "execute";
 
@@ -41,7 +42,7 @@ interface WootJsonRequest {
 
 export const wootActionHandlers: ProviderActionHandlers<"woot", ProviderRuntimeHandler<ApiKeyProviderContext>> = {
   async list_feed(input, context) {
-    const feedName = requiredString(input.feedName, "feedName", inputError);
+    const feedName = requiredString(input.feedName, "feedName", providerInputError);
     const page = optionalInteger(input.page);
     const url = new URL(`/feed/${encodeURIComponent(feedName)}`, wootApiBaseUrl);
     if (page !== undefined) url.searchParams.set("page", String(page));
@@ -50,7 +51,7 @@ export const wootActionHandlers: ProviderActionHandlers<"woot", ProviderRuntimeH
   },
 
   async get_offers(input, context) {
-    const offerIds = requiredStringArray(input.offerIds, "offerIds", inputError);
+    const offerIds = requiredStringArray(input.offerIds, "offerIds", providerInputError);
     const payload = await requestWootJson({
       context,
       url: new URL("/getoffers", wootApiBaseUrl),
@@ -65,7 +66,7 @@ export const wootActionHandlers: ProviderActionHandlers<"woot", ProviderRuntimeH
   },
 
   async get_offer(input, context) {
-    const offerId = requiredString(input.offerId, "offerId", inputError);
+    const offerId = requiredString(input.offerId, "offerId", providerInputError);
     const payload = await requestWootJson({
       context,
       url: new URL(`/offers/${encodeURIComponent(offerId)}`, wootApiBaseUrl),
@@ -95,7 +96,6 @@ export async function validateWootCredential(
 
   return {
     profile: { accountId: "woot-api-key", displayName: "Woot API Key" },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: wootApiBaseUrl,
       validationEndpoint: "/feed/Featured?page=1",
@@ -104,12 +104,12 @@ export async function validateWootCredential(
 }
 
 async function requestWootJson(input: WootJsonRequest): Promise<unknown> {
-  const timeout = createProviderTimeout(input.context.signal, wootRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   try {
     const response = await input.context.fetcher(input.url, {
       method: input.method,
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         ...(input.body === undefined ? {} : { "content-type": "application/json" }),
         "user-agent": providerUserAgent,
         "x-api-key": input.context.apiKey,
@@ -145,9 +145,9 @@ async function readWootPayload(response: Response): Promise<unknown> {
 function createWootError(status: number, payload: unknown, phase: WootRequestPhase): ProviderRequestError {
   const message = extractWootErrorMessage(payload) ?? `Woot request failed with status ${status}`;
   if (status === 429) return new ProviderRequestError(429, message);
-  if (phase === "validate" && status >= 400 && status < 500) return new ProviderRequestError(400, message);
+  if (phase === "validate" && status >= 400 && status < 500) return providerInputError(message);
   if (status === 401 || status === 403) return new ProviderRequestError(status, message);
-  if (status === 400 || status === 404) return new ProviderRequestError(400, message);
+  if (status === 400 || status === 404) return providerInputError(message);
   return new ProviderRequestError(status >= 500 ? 502 : status, message);
 }
 
@@ -278,15 +278,15 @@ function normalizeNullablePriceRange(value: unknown): Record<string, unknown> | 
 
 function requireRecord(value: unknown, message: string): Record<string, unknown> {
   const record = optionalRecord(value);
-  if (!record) throw new ProviderRequestError(502, message);
+  if (!record) throw providerResponseError(message);
   return record;
 }
 
 function requireRecordArray(value: unknown, message: string): Array<Record<string, unknown>> {
-  if (!Array.isArray(value)) throw new ProviderRequestError(502, message);
+  if (!Array.isArray(value)) throw providerResponseError(message);
   return value.map((item) => {
     const record = optionalRecord(item);
-    if (!record) throw new ProviderRequestError(502, message);
+    if (!record) throw providerResponseError(message);
     return record;
   });
 }
@@ -317,8 +317,4 @@ function nullableInteger(value: unknown): number | null {
 
 function nullableBoolean(value: unknown): boolean | null {
   return optionalBoolean(value) ?? null;
-}
-
-function inputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

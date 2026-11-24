@@ -1,9 +1,9 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { providerUserAgent, ProviderRequestError, providerInputError } from "../provider-runtime.ts";
 
 export const dovetailApiBaseUrl = "https://dovetail.com/api";
 
@@ -47,7 +47,6 @@ export async function validateDovetailCredential(
 
   return {
     profile: { accountId: tokenId, displayName: subdomain },
-    grantedScopes: [],
     metadata: compactObject({
       tokenId,
       subdomain,
@@ -245,8 +244,8 @@ async function dovetailFetch(input: {
 
 function buildDovetailHeaders(apiKey: string, hasBody: boolean) {
   const headers: Record<string, string> = {
-    Accept: "application/json",
-    Authorization: `Bearer ${apiKey}`,
+    "Accept": "application/json",
+    "Authorization": `Bearer ${apiKey}`,
     "User-Agent": providerUserAgent,
   };
 
@@ -276,11 +275,11 @@ function buildDovetailError(status: number, payload: unknown, phase: DovetailReq
     (phase === "validate" ? "invalid Dovetail personal API key" : `Dovetail request failed with ${status}`);
 
   if (status === 400) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   if (status === 401) {
-    return new ProviderRequestError(phase === "validate" ? 400 : 409, message);
+    return new ProviderRequestError(phase === "validate" ? 400 : 401, message);
   }
 
   if (status === 403) {
@@ -302,7 +301,7 @@ function buildProjectsQuery(input: Record<string, unknown>) {
   return compactObject({
     "page[start_cursor]": readOptionalInputString(input, "startCursor"),
     "page[limit]": readOptionalNumber(input.limit),
-    sort: readOptionalInputString(input, "sort"),
+    "sort": readOptionalInputString(input, "sort"),
     "filter[title][contains]": readOptionalInputString(input, "titleContains"),
   });
 }
@@ -311,7 +310,7 @@ function buildDataQuery(input: Record<string, unknown>) {
   return compactObject({
     "page[start_cursor]": readOptionalInputString(input, "startCursor"),
     "page[limit]": readOptionalNumber(input.limit),
-    sort: readOptionalInputString(input, "sort"),
+    "sort": readOptionalInputString(input, "sort"),
     "filter[project_id]": readOptionalInputString(input, "projectId"),
     "filter[title][contains]": readOptionalInputString(input, "titleContains"),
     "filter[created_at][gte]": readOptionalInputString(input, "createdAtGte"),

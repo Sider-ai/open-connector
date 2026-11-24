@@ -1,9 +1,14 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
-import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { createProviderTimeout, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
+import {
+  createProviderTimeout,
+  providerUserAgent,
+  ProviderRequestError,
+  requiredInputString,
+} from "../provider-runtime.ts";
 
 export interface FormstackDocumentsContext {
   values: Record<string, string>;
@@ -115,7 +120,7 @@ export const formstackDocumentsActionHandlers: ProviderActionHandlers<
 export async function validateFormstackDocumentsCredential(
   input: Record<string, string>,
   fetcher: typeof fetch,
-): Promise<{ profile: { displayName: string }; grantedScopes: string[] }> {
+): Promise<{ profile: { displayName: string } }> {
   const payload = await request({
     credentials: readCredentials(input),
     path: "/documents",
@@ -128,7 +133,6 @@ export async function validateFormstackDocumentsCredential(
   requireArray(payload, "credential validation");
   return {
     profile: { displayName: "Formstack Documents API Key" },
-    grantedScopes: [],
   };
 }
 async function requestDocument(input: Record<string, unknown>, context: FormstackDocumentsContext, operation: string) {
@@ -164,8 +168,8 @@ async function request(options: {
     const response = await options.fetcher(url, {
       method: options.method,
       headers: {
-        accept: "application/json",
-        authorization: `Basic ${Buffer.from(`${options.credentials.apiKey}:${options.credentials.apiSecret}`).toString("base64")}`,
+        "accept": "application/json",
+        "authorization": `Basic ${Buffer.from(`${options.credentials.apiKey}:${options.credentials.apiSecret}`).toString("base64")}`,
         ...(options.body ? { "content-type": "application/json" } : {}),
         "user-agent": providerUserAgent,
       },
@@ -204,10 +208,6 @@ function readCredentials(values: Record<string, string>): Credentials {
     apiKey: requiredInputString(values.apiKey, "apiKey"),
     apiSecret: requiredInputString(values.apiSecret, "apiSecret"),
   };
-}
-
-function requiredInputString(value: unknown, field: string): string {
-  return requiredString(value, field, (message) => new ProviderRequestError(400, message));
 }
 
 function validateCreateDocumentInput(input: Record<string, unknown>): void {

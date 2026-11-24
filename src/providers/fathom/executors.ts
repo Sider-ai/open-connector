@@ -1,8 +1,10 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalBoolean, optionalInteger, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "fathom";
 const fathomApiBaseUrl = "https://api.usefathom.com";
@@ -195,6 +197,14 @@ export const fathomActionHandlers: ProviderActionHandlers<"fathom", FathomAction
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, fathomActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: fathomApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = await requestFathomJson({
@@ -218,7 +228,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: accountId ? `fathom:account:${accountId}` : "fathom",
         displayName: name ?? email ?? "Fathom API Token",
       },
-      grantedScopes: [],
       metadata: compactObject({
         validationEndpoint: fathomValidationPath,
         accountId,
@@ -268,8 +277,8 @@ async function fathomFetch(input: FathomRequestOptions): Promise<Response> {
 
 function fathomHeaders(apiKey: string, hasBody: boolean): Record<string, string> {
   return {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     ...(hasBody ? { "content-type": "application/x-www-form-urlencoded" } : {}),
     "user-agent": providerUserAgent,
   };

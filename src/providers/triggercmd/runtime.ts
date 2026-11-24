@@ -1,6 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
 import {
@@ -12,14 +11,12 @@ import {
 
 export const triggercmdApiBaseUrl = "https://www.triggercmd.com";
 
-const triggercmdRequestTimeoutMs = 30_000;
 const listCommandsPath = "/api/command/list";
 
 type TriggercmdRequestPhase = "validate" | "execute";
-type TriggercmdContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
 type TriggercmdActionHandler = (
   input: Record<string, unknown>,
-  context: TriggercmdContext,
+  context: ApiKeyProviderContext,
 ) => Promise<Record<string, unknown>>;
 
 interface TriggercmdRequestInput {
@@ -84,7 +81,6 @@ export async function validateTriggercmdCredential(
     profile: {
       displayName: "TRIGGERcmd API Token",
     },
-    grantedScopes: [],
     metadata: {
       validationEndpoint: listCommandsPath,
       commandCount: records.length,
@@ -93,12 +89,12 @@ export async function validateTriggercmdCredential(
 }
 
 async function requestTriggercmdPayload(input: TriggercmdRequestInput): Promise<unknown> {
-  const timeout = createProviderTimeout(input.signal, triggercmdRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   let response: Response;
   try {
     const headers: Record<string, string> = {
-      accept: "application/json",
-      authorization: `Bearer ${input.apiKey}`,
+      "accept": "application/json",
+      "authorization": `Bearer ${input.apiKey}`,
       "user-agent": providerUserAgent,
     };
     if (input.body !== undefined) {

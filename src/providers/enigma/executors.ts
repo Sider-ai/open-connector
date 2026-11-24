@@ -1,21 +1,20 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
+  looseArray,
   optionalBoolean,
+  optionalBooleanOrNull,
   optionalInteger,
   optionalNumber,
   optionalRecord,
   optionalString,
 } from "../../core/cast.ts";
-import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
-  providerProxyEndpointPrefixes,
-  ProviderRequestError,
-} from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy, providerProxyEndpointPrefixes } from "../provider-proxy.ts";
+import { ProviderRequestError, providerInputError } from "../provider-runtime.ts";
 
 const service = "enigma";
 const enigmaGraphqlApiUrl = "https://api.enigma.com/graphql";
@@ -356,7 +355,6 @@ export const credentialValidators: CredentialValidators = {
         accountId,
         displayName,
       },
-      grantedScopes: [],
       metadata: {
         validationEndpoint: "/graphql",
         account,
@@ -400,8 +398,8 @@ async function enigmaSearchGraphql(
 
   return {
     accepted: response.status === 202,
-    results: normalizeUnknownArray(response.data.search),
-    backgroundTasks: normalizeUnknownArray(response.extensions.backgroundTasks),
+    results: looseArray(response.data.search),
+    backgroundTasks: looseArray(response.extensions.backgroundTasks),
   };
 }
 
@@ -425,7 +423,7 @@ async function enigmaGetBusiness(
     "execute",
   );
 
-  const results = normalizeUnknownArray(response.data.search);
+  const results = looseArray(response.data.search);
   return {
     business: results[0] ?? null,
   };
@@ -495,7 +493,7 @@ async function enigmaCreateList(
   const payload = optionalRecord(response.data.createList);
   return {
     list: payload?.list ?? null,
-    searchPreview: normalizeUnknownArray(payload?.search)[0] ?? null,
+    searchPreview: looseArray(payload?.search)[0] ?? null,
   };
 }
 
@@ -580,9 +578,9 @@ async function enigmaGetGraphqlSchemaExtended(context: ApiKeyProviderContext): P
 
   const schema = optionalRecord(response.data._schemaExtended);
   return {
-    types: normalizeUnknownArray(schema?.types),
-    projections: normalizeUnknownArray(schema?.projections),
-    dataAssetMetadata: normalizeUnknownArray(schema?.dataAssetMetadata),
+    types: looseArray(schema?.types),
+    projections: looseArray(schema?.projections),
+    dataAssetMetadata: looseArray(schema?.dataAssetMetadata),
   };
 }
 
@@ -618,7 +616,7 @@ async function enigmaVerifyBusinessV2(
     response = await context.fetcher(enigmaKybApiUrl, {
       method: "POST",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
         "x-api-key": context.apiKey,
       },
@@ -655,7 +653,7 @@ async function enigmaGraphqlRequest<TData>(
     response = await fetcher(enigmaGraphqlApiUrl, {
       method: "POST",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
         "x-api-key": apiKey,
       },
@@ -710,7 +708,7 @@ function createEnigmaError(response: Response, payload: unknown, phase: EnigmaRe
   }
 
   if (phase === "validate" && (status === 401 || status === 403)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   if (phase === "execute" && status === 401) {
@@ -722,7 +720,7 @@ function createEnigmaError(response: Response, payload: unknown, phase: EnigmaRe
   }
 
   if (status === 400 || status === 404 || status === 422) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   return new ProviderRequestError(status >= 500 ? 502 : status, message);
@@ -902,12 +900,12 @@ function normalizeAccount(value: unknown): Record<string, string | number | bool
     customerId: optionalString(record.customerId) ?? null,
     pricingPlan: optionalString(record.pricingPlan) ?? null,
     customerEmail: optionalString(record.customerEmail) ?? null,
-    autoRenewEnabled: nullableBoolean(record.autoRenewEnabled),
+    autoRenewEnabled: optionalBooleanOrNull(record.autoRenewEnabled),
     billingAccountId: optionalString(record.billingAccountId) ?? null,
-    creditsAvailable: nullableBoolean(record.creditsAvailable),
+    creditsAvailable: optionalBooleanOrNull(record.creditsAvailable),
     autoRechargeLimitUsd: optionalNumber(record.autoRechargeLimitUsd) ?? null,
-    autoRechargeCurrentState: nullableBoolean(record.autoRechargeCurrentState),
-    autoRechargeDesiredState: nullableBoolean(record.autoRechargeDesiredState),
+    autoRechargeCurrentState: optionalBooleanOrNull(record.autoRechargeCurrentState),
+    autoRechargeDesiredState: optionalBooleanOrNull(record.autoRechargeDesiredState),
     autoRechargeThresholdAmount: optionalNumber(record.autoRechargeThresholdAmount) ?? null,
     autoRechargeRechargeToAmount: optionalNumber(record.autoRechargeRechargeToAmount) ?? null,
     autoRechargeReenableAfterTimestamp: optionalString(record.autoRechargeReenableAfterTimestamp) ?? null,
@@ -952,13 +950,11 @@ function normalizeKybResponse(value: unknown): Record<string, unknown> {
     riskSummary: riskSummary
       ? {
           overallRisk: optionalString(riskSummary.overall_risk ?? riskSummary.overallRisk) ?? null,
-          tasks: normalizeUnknownArray(riskSummary.tasks),
+          tasks: looseArray(riskSummary.tasks),
         }
       : undefined,
-    registeredEntityMatchCount: normalizeUnknownArray(
-      record.registered_entity_matches ?? record.registeredEntityMatches,
-    ).length,
-    brandMatchCount: normalizeUnknownArray(record.brand_matches ?? record.brandMatches).length,
+    registeredEntityMatchCount: looseArray(record.registered_entity_matches ?? record.registeredEntityMatches).length,
+    brandMatchCount: looseArray(record.brand_matches ?? record.brandMatches).length,
     raw: record,
   };
 }
@@ -1179,10 +1175,6 @@ function normalizeKybAttrs(value: unknown): string | undefined {
   return normalized.length > 0 ? normalized.join(",") : undefined;
 }
 
-function normalizeUnknownArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
 function normalizeStringArrayValue(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
@@ -1293,10 +1285,6 @@ function pickOptionalListType(input: Record<string, unknown>, ...keys: string[])
     return value;
   }
   throw new ProviderRequestError(400, `unsupported list type: ${value}`);
-}
-
-function nullableBoolean(value: unknown): boolean | null {
-  return typeof value === "boolean" ? value : null;
 }
 
 export const proxy: ProviderProxyExecutor = defineProviderProxy({

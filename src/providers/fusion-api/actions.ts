@@ -4,6 +4,7 @@ import type { FusionApiInputField, FusionApiInputFieldKind, FusionApiOperation }
 
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
+import { ocrActions } from "./ocr-actions.ts";
 import { fusionApiOperations } from "./operations.ts";
 
 const service = "fusion-api";
@@ -18,8 +19,8 @@ const processingStateSchema = s.object("The Fusion API task is still processing.
   state: s.literal("processing", { description: "Task state." }),
   progress: s.number("Task progress reported by Fusion API."),
 });
-const missingStateSchema = s.object("The Fusion API task was not found.", {
-  state: s.literal("not_found", { description: "Task state." }),
+const missingStateSchema = s.object("The Fusion API task failed or was not found.", {
+  state: s.stringEnum(["failed", "not_found"], { description: "Task state." }),
   error: s.string("Error message returned by Fusion API."),
 });
 const taskResultSchema = s.union(
@@ -41,18 +42,25 @@ const submitOutputSchema = s.object("The Fusion API task submission handle.", {
 });
 const syncActionOutputSchema = s.unknown("The normalized Fusion API action result.");
 
-export const fusionApiActions: ProviderActionDefinition<string>[] = fusionApiOperations.map((operation) =>
-  defineProviderAction(service, {
-    name: operation.actionName,
-    description: operation.description,
-    inputSchema: buildInputSchema(operation),
-    outputSchema: buildOutputSchema(operation),
-    followUpActions: buildFollowUpActions(operation),
-    asyncLifecycle: buildAsyncLifecycle(operation),
-  }),
-);
+export const fusionApiActions: ProviderActionDefinition<string>[] = [
+  ...ocrActions,
+  ...fusionApiOperations
+    .filter((operation) => operation.tag !== "oomol-ocr")
+    .map((operation) =>
+      defineProviderAction(service, {
+        name: operation.actionName,
+        operationType: operation.operationType,
+        description: operation.description,
+        inputSchema: buildInputSchema(operation),
+        outputSchema: buildOutputSchema(operation),
+        followUpActions: buildFollowUpActions(operation),
+        asyncLifecycle: buildAsyncLifecycle(operation),
+      }),
+    ),
+];
 
 function buildInputSchema(operation: FusionApiOperation): JsonSchema {
+  if (operation.inputSchema) return operation.inputSchema;
   const properties = Object.fromEntries(
     operation.inputFields.map((field) => [field.name, buildFieldSchema(field)] as const),
   );
@@ -123,6 +131,7 @@ function fieldNameLooksLikeUrls(name: string): boolean {
 }
 
 function buildOutputSchema(operation: FusionApiOperation): JsonSchema {
+  if (operation.outputSchema) return operation.outputSchema;
   if (operation.actionName.endsWith("_submit")) {
     return submitOutputSchema;
   }

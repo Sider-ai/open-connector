@@ -1,11 +1,18 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
-import { compactObject, optionalInteger, optionalRecord, optionalString, stringArray } from "../../core/cast.ts";
+import {
+  compactObject,
+  optionalBoolean,
+  optionalInteger,
+  optionalRecord,
+  optionalString,
+  stringArray,
+} from "../../core/cast.ts";
 import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
-const giphyApiBaseUrl = "https://api.giphy.com/v1";
+export const giphyApiBaseUrl = "https://api.giphy.com/v1";
 const giphyValidationPath = "/gifs/trending";
 
 type QueryValue = string | number | boolean | undefined;
@@ -179,7 +186,6 @@ export async function validateGiphyCredential(
       accountId: "giphy",
       displayName: "GIPHY API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       validationEndpoint: "/v1/gifs/trending",
       sampleGifId: typeof sampleGifId === "string" ? sampleGifId : undefined,
@@ -319,7 +325,7 @@ function buildGiphyUrl(path: string, query: Record<string, QueryValue>): string 
 
 function giphyHeaders(): Record<string, string> {
   return {
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
   };
 }
@@ -331,10 +337,6 @@ function toGiphyContextQuery(input: Record<string, unknown>): Record<string, Que
     country_code: optionalString(input.countryCode),
     region: optionalString(input.region),
   });
-}
-
-function optionalBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
 }
 
 function toPagination(value: unknown, count: number): Record<string, number> {

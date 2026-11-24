@@ -1,18 +1,17 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import {
-  createProviderTimeout,
-  isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
+  runProviderRequest,
+  providerInputError,
 } from "../provider-runtime.ts";
 
 export const keywordApiBaseUrl = "https://app.keyword.com";
 
 const keywordApiPathPrefix = "/api/v2";
-const keywordDefaultRequestTimeoutMs = 30_000;
 
 type KeywordRequestPhase = "validate" | "execute";
 
@@ -92,7 +91,6 @@ export async function validateKeywordCredential(input: {
       accountId: user.id,
       displayName: readAccountLabel(user),
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: keywordApiBaseUrl,
       validationEndpoint: `${keywordApiPathPrefix}/users/self`,
@@ -107,39 +105,22 @@ async function requestKeywordJson(
     query?: Record<string, string | undefined>;
   },
 ) {
-  const timeout = createProviderTimeout(context.signal, keywordDefaultRequestTimeoutMs);
-
-  try {
+  return runProviderRequest({ signal: context.signal, label: "Keyword.com" }, async (signal) => {
     const response = await context.fetcher(buildKeywordUrl(request.path, request.query), {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${context.apiKey}`,
         "user-agent": providerUserAgent,
       },
-      signal: timeout.signal,
+      signal,
     });
     const payload = await readKeywordPayload(response);
     if (!response.ok) {
       throw createKeywordError(response, payload, context.phase);
     }
     return payload;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-
-    if (timeout.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "Keyword.com request timed out");
-    }
-
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Keyword.com request failed: ${error.message}` : "Keyword.com request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+  });
 }
 
 function buildKeywordUrl(path: string, query: Record<string, string | undefined> = {}) {
@@ -173,7 +154,7 @@ function createKeywordError(response: Response, payload: unknown, phase: Keyword
   }
 
   if (phase === "validate" && response.status >= 400 && response.status < 500) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   return new ProviderRequestError(response.status || 502, message);

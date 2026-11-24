@@ -3,7 +3,7 @@ import type { ActionDefinition } from "../../core/types.ts";
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
 
-const service = "leadboxer" as const;
+const service = "leadboxer";
 
 const datasetIdSchema = s.optional(
   s.nonEmptyString("The LeadBoxer dataset ID whose credits should be charged for the lookup."),
@@ -72,6 +72,7 @@ const domainLookupOutputSchema = s.looseRequiredObject("The organization enrichm
 export const leadboxerActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "lookup_ip",
+    operationType: "read",
     description: "Enrich an IPv4 or IPv6 address with LeadBoxer organization, network, and geolocation data.",
     inputSchema: s.object(
       "The input payload for a LeadBoxer IP address lookup.",
@@ -85,6 +86,7 @@ export const leadboxerActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "lookup_domain",
+    operationType: "read",
     description: "Enrich a domain name with LeadBoxer organization and firmographic data.",
     inputSchema: s.object(
       "The input payload for a LeadBoxer domain lookup.",

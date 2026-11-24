@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import {
@@ -10,7 +10,7 @@ import {
   ProviderRequestError,
 } from "../provider-runtime.ts";
 
-const trentChatApiBaseUrl = "https://chat.trent.ai";
+export const trentChatApiBaseUrl: string = "https://chat.trent.ai";
 const trentChatPath = "/v1/chat";
 const trentRenewalUrl = "https://app.trent.ai/api-keys/renew?client=openclaw";
 const trentDefaultRequestTimeoutMs = 300_000;
@@ -33,9 +33,7 @@ export async function validateTrentCredential(apiKey: string): Promise<Credentia
     profile: {
       accountId: "trent-api-key",
       displayName: "Trent API Key",
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: trentChatApiBaseUrl,
       validationMode: "local_non_empty_key",
@@ -76,8 +74,8 @@ async function requestTrentChatJson(input: {
     response = await input.fetcher(new URL(trentChatPath, trentChatApiBaseUrl), {
       method: "POST",
       headers: {
-        accept: "text/event-stream, application/json",
-        authorization: input.apiKey,
+        "accept": "text/event-stream, application/json",
+        "authorization": input.apiKey,
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },

@@ -1,5 +1,5 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
 import type { RingbaActionName } from "./actions.ts";
 
 import { optionalObjectArray, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
@@ -37,7 +37,6 @@ export async function validateRingbaCredential(
   fetcher: typeof fetch,
 ): Promise<{
   profile: { accountId: string; displayName: string };
-  grantedScopes: string[];
   metadata: Record<string, unknown>;
 }> {
   const payload = optionalRecord(await requestJson(accountsPath, apiKey, fetcher, "validate"));
@@ -46,9 +45,6 @@ export async function validateRingbaCredential(
     const accountId = optionalString(account.accountId) ?? optionalString(account.id);
     return accountId ? [accountId] : [];
   });
-  if (accessibleAccountIds.length === 0) {
-    throw new ProviderRequestError(502, "Ringba returned no accessible account");
-  }
   const normalizedRequestedAccountId = requestedAccountId?.trim() || undefined;
   if (normalizedRequestedAccountId && !accessibleAccountIds.includes(normalizedRequestedAccountId)) {
     throw new ProviderRequestError(400, "Ringba accountId is not accessible with the provided API token");
@@ -63,7 +59,6 @@ export async function validateRingbaCredential(
       accountId: normalizedRequestedAccountId ?? "ringba",
       displayName: optionalString(selectedAccount?.name) ?? "Ringba API Token",
     },
-    grantedScopes: [],
     metadata: {
       accountId: normalizedRequestedAccountId,
       accessibleAccountIds,
@@ -111,7 +106,7 @@ function requiredInput(input: Record<string, unknown>, field: string): string {
 
 async function requestJson(path: string, apiKey: string, fetcher: typeof fetch, phase: Phase): Promise<unknown> {
   const response = await fetcher(new URL(`${ringbaApiBaseUrl}${path}`), {
-    headers: { accept: "application/json", authorization: `Token ${apiKey}`, "user-agent": providerUserAgent },
+    headers: { "accept": "application/json", "authorization": `Token ${apiKey}`, "user-agent": providerUserAgent },
   });
   const text = await response.text();
   let payload: unknown = null;

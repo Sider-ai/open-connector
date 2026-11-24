@@ -1,15 +1,14 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
-import { optionalInteger, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
+import { looseArray, optionalInteger, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
 import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 export const bestbuyApiOrigin = "https://api.bestbuy.com";
 const bestbuyApiBasePath = "/v1";
 const bestbuyValidationCategoryId = "abcat0010000";
 
-type BestbuyActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
 type BestbuyActionHandler = ProviderRuntimeHandler<ApiKeyProviderContext>;
 
 export const bestbuyActionHandlers: ProviderActionHandlers<"bestbuy", BestbuyActionHandler> = {
@@ -53,14 +52,13 @@ export async function validateBestbuyCredential(
     { apiKey, fetcher, signal },
     "validate",
   );
-  const categories = readArray(payload.categories);
+  const categories = looseArray(payload.categories);
 
   return {
     profile: {
       accountId: "bestbuy-api-key",
       displayName: "Best Buy API Key",
     },
-    grantedScopes: [],
     metadata: {
       validationEndpoint: `/v1/categories(id=${bestbuyValidationCategoryId})`,
       apiBaseUrl: bestbuyApiOrigin,
@@ -69,7 +67,7 @@ export async function validateBestbuyCredential(
   };
 }
 
-async function getCategories(input: Record<string, unknown>, context: BestbuyActionContext): Promise<unknown> {
+async function getCategories(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   return bestbuyGetJson(
     buildBestbuyCollectionPath("categories", buildCategoriesClauses(input)),
     buildBestbuyListQuery(input),
@@ -78,7 +76,7 @@ async function getCategories(input: Record<string, unknown>, context: BestbuyAct
   );
 }
 
-async function getCategoryDetails(input: Record<string, unknown>, context: BestbuyActionContext): Promise<unknown> {
+async function getCategoryDetails(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await bestbuyGetJson(
     buildBestbuyCollectionPath("categories", [`id=${String(input.id)}`]),
     {
@@ -92,7 +90,7 @@ async function getCategoryDetails(input: Record<string, unknown>, context: Bestb
   return pickFirstCollectionItem(payload, "categories", `category ${String(input.id)}`);
 }
 
-async function getProducts(input: Record<string, unknown>, context: BestbuyActionContext): Promise<unknown> {
+async function getProducts(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   return bestbuyGetJson(
     buildBestbuyCollectionPath("products", buildProductsClauses(input)),
     buildBestbuyListQuery(input),
@@ -101,7 +99,7 @@ async function getProducts(input: Record<string, unknown>, context: BestbuyActio
   );
 }
 
-async function getProductDetails(input: Record<string, unknown>, context: BestbuyActionContext): Promise<unknown> {
+async function getProductDetails(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await bestbuyGetJson(
     buildBestbuyCollectionPath("products", [`sku=${String(input.sku)}`]),
     {
@@ -115,7 +113,7 @@ async function getProductDetails(input: Record<string, unknown>, context: Bestbu
   return pickFirstCollectionItem(payload, "products", `product ${String(input.sku)}`);
 }
 
-async function getReviews(input: Record<string, unknown>, context: BestbuyActionContext): Promise<unknown> {
+async function getReviews(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   validateReviewScoreRange(input);
   return bestbuyGetJson(
     buildBestbuyCollectionPath("reviews", buildReviewClauses(input)),
@@ -125,7 +123,7 @@ async function getReviews(input: Record<string, unknown>, context: BestbuyAction
   );
 }
 
-async function getReviewDetails(input: Record<string, unknown>, context: BestbuyActionContext): Promise<unknown> {
+async function getReviewDetails(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await bestbuyGetJson(
     buildBestbuyCollectionPath("reviews", [`id=${String(input.id)}`]),
     {
@@ -139,7 +137,7 @@ async function getReviewDetails(input: Record<string, unknown>, context: Bestbuy
   return pickFirstCollectionItem(payload, "reviews", `review ${String(input.id)}`);
 }
 
-async function getStores(input: Record<string, unknown>, context: BestbuyActionContext): Promise<unknown> {
+async function getStores(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   return bestbuyGetJson(
     buildBestbuyCollectionPath("stores", buildStoreClauses(input)),
     buildBestbuyListQuery(input),
@@ -148,7 +146,7 @@ async function getStores(input: Record<string, unknown>, context: BestbuyActionC
   );
 }
 
-async function getStoreDetails(input: Record<string, unknown>, context: BestbuyActionContext): Promise<unknown> {
+async function getStoreDetails(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await bestbuyGetJson(
     buildBestbuyCollectionPath("stores", [`storeId=${String(input.storeId)}`]),
     {
@@ -165,7 +163,7 @@ async function getStoreDetails(input: Record<string, unknown>, context: BestbuyA
 async function bestbuyGetJson(
   path: string,
   query: Record<string, string | number | undefined>,
-  context: BestbuyActionContext,
+  context: ApiKeyProviderContext,
   mode: "validate" | "execute",
 ): Promise<Record<string, unknown>> {
   const url = buildBestbuyUrl(path, query, context.apiKey);
@@ -431,7 +429,7 @@ function pickFirstCollectionItem(
   collectionKey: string,
   label: string,
 ): Record<string, unknown> {
-  const items = readArray(payload[collectionKey]);
+  const items = looseArray(payload[collectionKey]);
   if (items.length === 0) {
     throw new ProviderRequestError(404, `${label} was not found`);
   }
@@ -446,7 +444,7 @@ function pickFirstCollectionItem(
 
 function bestbuyHeaders(): Record<string, string> {
   return {
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
   };
 }
@@ -513,10 +511,6 @@ async function readJsonObject(response: Response): Promise<Record<string, unknow
 
 function toErrorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : "bestbuy request failed";
-}
-
-function readArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
 }
 
 function readRequiredNumber(value: unknown, fieldName: string): number {

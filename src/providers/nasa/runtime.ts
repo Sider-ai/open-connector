@@ -1,23 +1,14 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
-import {
-  compactObject,
-  optionalBoolean,
-  optionalInteger,
-  optionalRecord,
-  optionalString,
-  requiredString,
-} from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { compactObject, optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
+import { providerUserAgent, ProviderRequestError, requiredInputString } from "../provider-runtime.ts";
 
 export const nasaApiBaseUrl = "https://api.nasa.gov";
 
 type QueryValue = string | number | boolean | undefined;
 type NasaRequestPhase = "validate" | "execute";
-type NasaActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type NasaActionHandler = (input: Record<string, unknown>, context: NasaActionContext) => Promise<unknown>;
+type NasaActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 type EpicImageKind = "natural" | "enhanced" | "aerosol" | "cloud";
 
 export const nasaActionHandlers: ProviderActionHandlers<"nasa", NasaActionHandler> = {
@@ -70,7 +61,7 @@ export const nasaActionHandlers: ProviderActionHandlers<"nasa", NasaActionHandle
     return executeEpicImages("natural", undefined, context);
   },
   get_epic_natural_date(input, context) {
-    return executeEpicImages("natural", readInputString(input.date, "date"), context);
+    return executeEpicImages("natural", requiredInputString(input.date, "date"), context);
   },
   list_epic_natural_dates(_input, context) {
     return executeEpicDateList("natural", context);
@@ -79,7 +70,7 @@ export const nasaActionHandlers: ProviderActionHandlers<"nasa", NasaActionHandle
     return executeEpicImages("enhanced", undefined, context);
   },
   get_epic_enhanced_date(input, context) {
-    return executeEpicImages("enhanced", readInputString(input.date, "date"), context);
+    return executeEpicImages("enhanced", requiredInputString(input.date, "date"), context);
   },
   list_epic_enhanced_dates(_input, context) {
     return executeEpicDateList("enhanced", context);
@@ -88,7 +79,7 @@ export const nasaActionHandlers: ProviderActionHandlers<"nasa", NasaActionHandle
     return executeEpicImages("aerosol", undefined, context);
   },
   get_epic_aerosol_date(input, context) {
-    return executeEpicImages("aerosol", readInputString(input.date, "date"), context);
+    return executeEpicImages("aerosol", requiredInputString(input.date, "date"), context);
   },
   list_epic_aerosol_dates(_input, context) {
     return executeEpicDateList("aerosol", context);
@@ -97,7 +88,7 @@ export const nasaActionHandlers: ProviderActionHandlers<"nasa", NasaActionHandle
     return executeEpicImages("cloud", undefined, context);
   },
   get_epic_cloud_date(input, context) {
-    return executeEpicImages("cloud", readInputString(input.date, "date"), context);
+    return executeEpicImages("cloud", requiredInputString(input.date, "date"), context);
   },
   list_epic_cloud_dates(_input, context) {
     return executeEpicDateList("cloud", context);
@@ -128,7 +119,6 @@ export async function validateNasaCredential(
       accountId: "api_key",
       displayName: "NASA API Key",
     },
-    grantedScopes: [],
     metadata: {
       validationEndpoint: "/neo/rest/v1/neo/browse",
       apiBaseUrl: nasaApiBaseUrl,
@@ -136,7 +126,7 @@ export async function validateNasaCredential(
   };
 }
 
-async function executeGetApod(input: Record<string, unknown>, context: NasaActionContext): Promise<unknown> {
+async function executeGetApod(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const payload = readResponseObject(
     await nasaGetJson(
       "/planetary/apod",
@@ -165,7 +155,7 @@ async function executeGetApod(input: Record<string, unknown>, context: NasaActio
   };
 }
 
-async function executeBrowseNeo(input: Record<string, unknown>, context: NasaActionContext): Promise<unknown> {
+async function executeBrowseNeo(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const payload = readResponseObject(
     await nasaGetJson(
       "/neo/rest/v1/neo/browse",
@@ -188,8 +178,8 @@ async function executeBrowseNeo(input: Record<string, unknown>, context: NasaAct
   };
 }
 
-async function executeGetNeoLookup(input: Record<string, unknown>, context: NasaActionContext): Promise<unknown> {
-  const asteroidId = encodeURIComponent(readInputString(input.asteroidId, "asteroidId"));
+async function executeGetNeoLookup(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
+  const asteroidId = encodeURIComponent(requiredInputString(input.asteroidId, "asteroidId"));
   const payload = readResponseObject(
     await nasaGetJson(`/neo/rest/v1/neo/${asteroidId}`, {}, context, "execute"),
     "get_neo_lookup response",
@@ -202,9 +192,9 @@ async function executeGetNeoLookup(input: Record<string, unknown>, context: Nasa
 
 async function executeSearchNearEarthObjects(
   input: Record<string, unknown>,
-  context: NasaActionContext,
+  context: ApiKeyProviderContext,
 ): Promise<unknown> {
-  const startDate = readInputString(input.startDate, "startDate");
+  const startDate = requiredInputString(input.startDate, "startDate");
   const endDate = optionalString(input.endDate);
   validateNeoSearchWindow(startDate, endDate);
   const payload = readResponseObject(
@@ -240,7 +230,7 @@ async function executeSearchNearEarthObjects(
 async function executeDonkiList(
   path: string,
   input: Record<string, unknown>,
-  context: NasaActionContext,
+  context: ApiKeyProviderContext,
 ): Promise<unknown> {
   const payload = readResponseArray(
     await nasaGetJson(path, buildDonkiQuery(input), context, "execute"),
@@ -255,7 +245,7 @@ async function executeDonkiList(
 async function executeEpicImages(
   kind: EpicImageKind,
   date: string | undefined,
-  context: NasaActionContext,
+  context: ApiKeyProviderContext,
 ): Promise<unknown> {
   const path = date ? `/EPIC/api/${kind}/date/${date}` : `/EPIC/api/${kind}`;
   const payload = readResponseArray(await nasaGetJson(path, {}, context, "execute"), `${path} response`);
@@ -265,7 +255,7 @@ async function executeEpicImages(
   };
 }
 
-async function executeEpicDateList(kind: EpicImageKind, context: NasaActionContext): Promise<unknown> {
+async function executeEpicDateList(kind: EpicImageKind, context: ApiKeyProviderContext): Promise<unknown> {
   try {
     const payload = readResponseArray(
       await nasaGetJson(`/EPIC/api/${kind}/all`, {}, context, "execute"),
@@ -309,7 +299,7 @@ function buildDonkiQuery(input: Record<string, unknown>): Record<string, QueryVa
 async function nasaGetJson(
   path: string,
   query: Record<string, QueryValue>,
-  context: NasaActionContext,
+  context: ApiKeyProviderContext,
   phase: NasaRequestPhase,
 ): Promise<unknown> {
   const url = new URL(path, nasaApiBaseUrl);
@@ -326,7 +316,7 @@ async function nasaGetJson(
     response = await context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
       signal: context.signal,
@@ -439,7 +429,7 @@ function normalizeNearEarthObject(payload: Record<string, unknown>) {
     ),
     orbitalData: readOptionalObject(payload.orbital_data),
     links: payload.links ? normalizeLinks(payload.links) : undefined,
-    isSentryObject: readOptionalBoolean(payload.is_sentry_object),
+    isSentryObject: optionalBoolean(payload.is_sentry_object),
     sentryDataUrl: readOptionalString(payload.sentry_data),
   };
 }
@@ -699,16 +689,8 @@ function readRequiredBoolean(value: unknown, fieldName: string): boolean {
   return value;
 }
 
-function readOptionalBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
-}
-
 function readOptionalObject(value: unknown): Record<string, unknown> | undefined {
   return optionalRecord(value);
-}
-
-function readInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function firstNonEmptyString(...values: unknown[]): string | undefined {

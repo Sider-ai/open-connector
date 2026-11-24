@@ -1,5 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
@@ -7,13 +7,13 @@ import { assertPublicHttpUrl } from "../../core/request.ts";
 import {
   createProviderTimeout,
   isAbortLikeError,
+  providerInputError,
   providerUserAgent,
   ProviderRequestError,
+  defaultProviderRequestTimeoutMs,
 } from "../provider-runtime.ts";
 
 export const oomnitzaValidationPath = "/api/v3/assets";
-
-const oomnitzaRequestTimeoutMs = 30_000;
 
 type OomnitzaRequestMode = "validate" | "execute";
 
@@ -55,7 +55,7 @@ export const oomnitzaActionHandlers: ProviderActionHandlers<"oomnitza", Oomnitza
     return normalizeOomnitzaListPayload(payload, "assets");
   },
   async get_asset(input, context) {
-    const id = requiredString(input.id, "id", requestInputError);
+    const id = requiredString(input.id, "id", providerInputError);
     const payload = await requestOomnitzaJson({
       ...context,
       path: `/api/v3/assets/${encodeURIComponent(id)}`,
@@ -78,7 +78,7 @@ export const oomnitzaActionHandlers: ProviderActionHandlers<"oomnitza", Oomnitza
     return normalizeOomnitzaListPayload(payload, "users");
   },
   async get_user(input, context) {
-    const username = requiredString(input.username, "username", requestInputError);
+    const username = requiredString(input.username, "username", providerInputError);
     const payload = await requestOomnitzaJson({
       ...context,
       path: `/api/v3/users/${encodeURIComponent(username)}`,
@@ -112,7 +112,6 @@ export async function validateOomnitzaCredential(
       accountId: `oomnitza:${credential.host}`,
       displayName: `Oomnitza ${credential.host}`,
     },
-    grantedScopes: [],
     metadata: {
       baseUrl: credential.baseUrl,
       host: credential.host,
@@ -133,13 +132,13 @@ export function resolveOomnitzaCredential(apiKey: string, baseUrlInput?: string)
 }
 
 async function requestOomnitzaJson(input: OomnitzaRequestInput): Promise<unknown> {
-  const timeout = createProviderTimeout(input.signal, oomnitzaRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   try {
     const response = await input.fetcher(buildOomnitzaUrl(input.baseUrl, input.path, input.query), {
       method: "GET",
       headers: {
-        accept: "application/json",
-        Authorization2: input.apiKey,
+        "accept": "application/json",
+        "Authorization2": input.apiKey,
         "user-agent": providerUserAgent,
       },
       signal: timeout.signal,
@@ -156,7 +155,7 @@ async function requestOomnitzaJson(input: OomnitzaRequestInput): Promise<unknown
     if (timeout.didTimeout() || isAbortLikeError(error)) {
       throw new ProviderRequestError(
         504,
-        `Oomnitza request timed out after ${Math.ceil(oomnitzaRequestTimeoutMs / 1000)} seconds`,
+        `Oomnitza request timed out after ${Math.ceil(defaultProviderRequestTimeoutMs / 1000)} seconds`,
       );
     }
     const message = error instanceof Error && error.message.trim() ? error.message : "request failed";
@@ -368,8 +367,4 @@ function trimTrailingSlash(value: string): string {
     normalized = normalized.slice(0, -1);
   }
   return normalized;
-}
-
-function requestInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

@@ -1,8 +1,13 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { BearerProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { BearerProviderContext } from "../provider-executors.ts";
 
-import { defineBearerProviderExecutors } from "../provider-runtime.ts";
-import { surveyMonkeyActionHandlers, validateSurveyMonkeyCredential } from "./runtime.ts";
+import { defineBearerProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import {
+  normalizeSurveyMonkeyApiBaseUrl,
+  surveyMonkeyActionHandlers,
+  validateSurveyMonkeyCredential,
+} from "./runtime.ts";
 
 const handlers = Object.fromEntries(
   Object.entries(surveyMonkeyActionHandlers).map(([name, handler]) => [
@@ -14,6 +19,18 @@ const handlers = Object.fromEntries(
 
 export const executors: ProviderExecutors = defineBearerProviderExecutors("survey_monkey", handlers, {
   skipDnsValidation: true,
+});
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service: "survey_monkey",
+  async baseUrl(context) {
+    const credential = await context.getCredential("survey_monkey");
+    const metadata = credential && "metadata" in credential ? credential.metadata : undefined;
+    return normalizeSurveyMonkeyApiBaseUrl(metadata?.apiBaseUrl ?? "https://api.surveymonkey.com");
+  },
+  auth: { type: "bearer" },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
 });
 
 export const credentialValidators: CredentialValidators = {

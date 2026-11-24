@@ -1,6 +1,9 @@
 import type { FeishuJsonRequest } from "./client.ts";
 
-import { ProviderRequestError } from "../../provider-runtime.ts";
+import { optionalNumber } from "../../../core/cast.ts";
+import { providerInputError } from "../../provider-runtime.ts";
+import { fetchFeishuNote } from "./note-runtime.ts";
+import { requireFeishuResponseString } from "./response.ts";
 
 interface MinutesActionHandler {
   (input: Record<string, unknown>): Promise<unknown>;
@@ -54,7 +57,7 @@ async function replaceMinutesSpeaker(input: Record<string, unknown>, request: Fe
   const fromUserId = optionalString(input.fromUserId);
   const toUserId = requiredString(input.toUserId, "toUserId");
   if (Boolean(fromSpeakerId) === Boolean(fromUserId)) {
-    throw invalidInput("provide exactly one of fromSpeakerId or fromUserId");
+    throw providerInputError("provide exactly one of fromSpeakerId or fromUserId");
   }
   await request({
     method: "PUT",
@@ -95,7 +98,7 @@ async function replaceMinutesSummary(input: Record<string, unknown>, request: Fe
   const token = requiredString(input.minuteToken, "minuteToken");
   const summary = requiredString(input.summary, "summary").trim();
   if (!summary) {
-    throw invalidInput("summary must contain non-whitespace text");
+    throw providerInputError("summary must contain non-whitespace text");
   }
   await request({
     method: "PUT",
@@ -145,6 +148,7 @@ async function searchMinutes(input: Record<string, unknown>, request: FeishuJson
     },
     body: compact({
       query: optionalString(input.query),
+      sorter: "create_time_desc",
       filter: Object.keys(filter).length > 0 ? filter : undefined,
     }),
   });
@@ -184,7 +188,7 @@ async function getDownloadMetadata(input: Record<string, unknown>, request: Feis
   const data = await request({ path: `/minutes/v1/minutes/${encode(token)}/media` });
   return {
     minuteToken: token,
-    downloadUrl: requiredString(data.download_url, "download_url"),
+    downloadUrl: requireFeishuResponseString(data.download_url, "download_url"),
     raw: data,
   };
 }
@@ -214,14 +218,30 @@ async function searchMeetings(input: Record<string, unknown>, request: FeishuJso
 
 async function getMeeting(input: Record<string, unknown>, request: FeishuJsonRequest) {
   const meetingId = requiredString(input.meetingId, "meetingId");
+  const path = `/vc/v1/meetings/${encode(meetingId)}`;
   const data = await request({
-    path: `/vc/v1/meetings/${encode(meetingId)}`,
+    path,
     query: {
       with_participants: input.includeParticipants === true,
       query_mode: 0,
     },
   });
-  return { meeting: recordValue(data.meeting) };
+  const meeting = recordValue(data.meeting);
+  if (input.includeArtifacts !== true) {
+    return { meeting };
+  }
+  const noteId = optionalString(meeting.note_id);
+  if (!noteId) {
+    return { meeting, relatedArtifacts: {} };
+  }
+  const note = await fetchFeishuNote(noteId, request);
+  return {
+    meeting,
+    relatedArtifacts: {
+      note_doc_token: note.noteDocumentToken,
+      verbatim_doc_token: note.verbatimDocumentToken,
+    },
+  };
 }
 
 async function getRecording(input: Record<string, unknown>, request: FeishuJsonRequest) {
@@ -247,7 +267,7 @@ function timeRange(start: unknown, end: unknown) {
 
 function requireSearch(query: unknown, filter: Record<string, unknown>, subject: string) {
   if (!optionalString(query) && Object.keys(filter).length === 0) {
-    throw invalidInput(`${subject} search requires query or at least one filter`);
+    throw providerInputError(`${subject} search requires query or at least one filter`);
   }
 }
 
@@ -279,7 +299,7 @@ function requiredString(value: unknown, field: string) {
   if (typeof value === "string" && value.length > 0) {
     return value;
   }
-  throw invalidInput(`${field} must be a non-empty string`);
+  throw providerInputError(`${field} must be a non-empty string`);
 }
 
 function optionalString(value: unknown) {
@@ -294,13 +314,9 @@ function optionalStringArray(value: unknown) {
   return values.length > 0 ? values : undefined;
 }
 
-function optionalNumber(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
 function requireReplacements(value: unknown) {
   if (!Array.isArray(value) || value.length === 0) {
-    throw invalidInput("replacements must contain at least one item");
+    throw providerInputError("replacements must contain at least one item");
   }
   return value.map((item) => {
     const record = recordValue(item);
@@ -320,7 +336,7 @@ interface MinutesTodoMutation {
 
 function requireTodoMutations(value: unknown): MinutesTodoMutation[] {
   if (!Array.isArray(value) || value.length === 0) {
-    throw invalidInput("todos must contain at least one item");
+    throw providerInputError("todos must contain at least one item");
   }
   return value.map((item, index) => {
     const record = recordValue(item);
@@ -335,15 +351,11 @@ function requireTodoMutations(value: unknown): MinutesTodoMutation[] {
     } else if (operation === "delete" && todoId && !content && isDone === undefined) {
       return { operation, todoId };
     } else {
-      throw invalidInput(`todos.${index} fields do not match operation ${operation}`);
+      throw providerInputError(`todos.${index} fields do not match operation ${operation}`);
     }
   });
 }
 
 function encode(value: string) {
   return encodeURIComponent(value);
-}
-
-function invalidInput(message: string) {
-  return new ProviderRequestError(400, message);
 }

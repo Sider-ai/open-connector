@@ -8,12 +8,9 @@ import type {
 import type { OktaContext } from "./runtime.ts";
 
 import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import {
-  defineProviderExecutors,
-  defineProviderProxy,
-  providerUserAgent,
-  ProviderRequestError,
-} from "../provider-runtime.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerInputError, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 import { normalizeOktaOrgUrl, oktaActionHandlers, oktaApiTokenHelpUrl, validateOktaCredential } from "./runtime.ts";
 
 const service = "okta";
@@ -108,8 +105,4 @@ function resolveOktaOAuthOrgUrl(metadata: Record<string, unknown>): string {
 function readOktaGrantedScopes(value: unknown, fallback: string[]): string[] {
   const scope = optionalString(value);
   return scope ? [...new Set(scope.split(/\s+/u).filter(Boolean))] : fallback;
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

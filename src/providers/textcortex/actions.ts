@@ -3,7 +3,7 @@ import type { ActionDefinition } from "../../core/types.ts";
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
 
-const service = "textcortex" as const;
+const service = "textcortex";
 
 function defineAction(
   input: Omit<Parameters<typeof defineProviderAction>[1], "name"> & { service?: string; name: string },
@@ -65,6 +65,7 @@ const chatChoiceSchema = s.object(
 const listModelsAction = defineAction({
   service,
   name: "list_models",
+  operationType: "read",
   description: "List TextCortex models available to the API key.",
   requiredScopes: [],
   inputSchema: s.object("The input payload for listing TextCortex models.", {}),
@@ -77,6 +78,7 @@ const listModelsAction = defineAction({
 const retrieveModelAction = defineAction({
   service,
   name: "retrieve_model",
+  operationType: "read",
   description: "Retrieve metadata for one TextCortex model by model id.",
   requiredScopes: [],
   inputSchema: s.object("The input payload for retrieving a TextCortex model.", {
@@ -90,6 +92,7 @@ const retrieveModelAction = defineAction({
 const createChatCompletionAction = defineAction({
   service,
   name: "create_chat_completion",
+  operationType: "read",
   description: "Create a non-streaming OpenAI-compatible chat completion with TextCortex.",
   requiredScopes: [],
   inputSchema: s.object(
@@ -163,7 +166,3 @@ export const textcortexActions: ActionDefinition[] = [
   retrieveModelAction,
   createChatCompletionAction,
 ];
-
-export const textcortexActionByName: Map<string, ActionDefinition> = new Map(
-  textcortexActions.map((action) => [action.name, action] as const),
-);

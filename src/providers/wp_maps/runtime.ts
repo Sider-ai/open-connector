@@ -1,9 +1,9 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
 import type { WpMapsActionName } from "./actions.ts";
 
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { providerInputError, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 export const wpMapsApiBaseUrl = "https://svr.wpmaps.net/v1";
 interface WpMapsCredential {
@@ -48,22 +48,22 @@ export const wpMapsActionHandlers: ProviderActionHandlers<"wp_maps", ProviderRun
 
 export function readWpMapsCredential(accessToken: string, values: Record<string, unknown>): WpMapsCredential {
   return {
-    accessToken: requiredString(accessToken, "apiKey", invalidCredential),
-    clientId: requiredString(values.clientId, "clientId", invalidCredential),
+    accessToken: requiredString(accessToken, "apiKey", providerInputError),
+    clientId: requiredString(values.clientId, "clientId", providerInputError),
   };
 }
 export async function validateWpMapsCredential(
   accessToken: string,
   values: Record<string, string>,
   fetcher: typeof fetch,
-): Promise<{ profile: { displayName: string }; grantedScopes: string[] }> {
+): Promise<{ profile: { displayName: string } }> {
   const credential = readWpMapsCredential(accessToken, values);
   const payload = optionalRecord(
     await requestJson("/products/all", "GET", credential, undefined, undefined, fetcher, "validate"),
   );
   if (!Array.isArray(payload?.data) || !Array.isArray(payload.header))
     throw new ProviderRequestError(502, "WP Maps returned an invalid product list");
-  return { profile: { displayName: "WP Maps Account" }, grantedScopes: [] };
+  return { profile: { displayName: "WP Maps Account" } };
 }
 
 function request(
@@ -96,7 +96,7 @@ async function requestJson(
   url.searchParams.set("access_token", credential.accessToken);
   url.searchParams.set("client_id", credential.clientId);
   if (language) url.searchParams.set("lang", language);
-  const headers = new Headers({ accept: "application/json", "user-agent": providerUserAgent });
+  const headers = new Headers({ "accept": "application/json", "user-agent": providerUserAgent });
   if (body !== undefined) headers.set("content-type", "application/json");
   const response = await fetcher(url, {
     method,
@@ -128,7 +128,4 @@ function positiveInteger(value: unknown, field: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value <= 0)
     throw new ProviderRequestError(400, `WP Maps ${field} must be a positive integer`);
   return value;
-}
-function invalidCredential(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

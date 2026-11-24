@@ -1,22 +1,22 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidationResult } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
+  optionalBoolean,
   optionalNumber as asOptionalNumber,
   optionalRecord as asOptionalObject,
   optionalString as asOptionalString,
   requiredString,
 } from "../../core/cast.ts";
 import {
-  createProviderTimeout,
-  isAbortLikeError,
   ProviderRequestError,
   providerUserAgent,
+  runProviderRequest,
+  providerInputError,
 } from "../provider-runtime.ts";
 
 export const timelinkApiBaseUrl: string = "https://api.timelink.io/api/v1";
-const timelinkRequestTimeoutMs = 30_000;
 
 type TimelinkPhase = "validate" | "execute";
 type TimelinkActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
@@ -42,8 +42,8 @@ export const timelinkActionHandlers: ProviderActionHandlers<"timelink", Timelink
         search: readOptionalString(input.search),
         ids: readOptionalStringArray(input.ids),
         orders: readOptionalOrderArray(input.orders),
-        active: readOptionalBoolean(input.active),
-        withLimitedPartOfProjects: readOptionalBoolean(input.withLimitedPartOfProjects),
+        active: optionalBoolean(input.active),
+        withLimitedPartOfProjects: optionalBoolean(input.withLimitedPartOfProjects),
         projectsLimit: readOptionalInteger(input.projectsLimit),
       }),
       fetcher: context.fetcher,
@@ -77,7 +77,7 @@ export const timelinkActionHandlers: ProviderActionHandlers<"timelink", Timelink
         search: readOptionalString(input.search),
         ids: readOptionalStringArray(input.ids),
         orders: readOptionalOrderArray(input.orders),
-        active: readOptionalBoolean(input.active),
+        active: optionalBoolean(input.active),
         client_id: readOptionalString(input.clientId),
       }),
       fetcher: context.fetcher,
@@ -111,7 +111,7 @@ export const timelinkActionHandlers: ProviderActionHandlers<"timelink", Timelink
         search: readOptionalString(input.search),
         ids: readOptionalStringArray(input.ids),
         orders: readOptionalOrderArray(input.orders),
-        active: readOptionalBoolean(input.active),
+        active: optionalBoolean(input.active),
       }),
       fetcher: context.fetcher,
       phase: "execute",
@@ -144,13 +144,13 @@ export const timelinkActionHandlers: ProviderActionHandlers<"timelink", Timelink
         search: readOptionalString(input.search),
         ids: readOptionalStringArray(input.ids),
         orders: readOptionalOrderArray(input.orders),
-        withRelations: readOptionalBoolean(input.withRelations),
+        withRelations: optionalBoolean(input.withRelations),
         start: readOptionalString(input.start),
         end: readOptionalString(input.end),
-        onlyDeleted: readOptionalBoolean(input.onlyDeleted),
-        isInterrupt: readOptionalBoolean(input.isInterrupt),
-        isBilled: readOptionalBoolean(input.isBilled),
-        isBillable: readOptionalBoolean(input.isBillable),
+        onlyDeleted: optionalBoolean(input.onlyDeleted),
+        isInterrupt: optionalBoolean(input.isInterrupt),
+        isBilled: optionalBoolean(input.isBilled),
+        isBillable: optionalBoolean(input.isBillable),
         searchInDescription: readOptionalString(input.searchInDescription),
         clientId: readOptionalString(input.clientId),
         projectId: readOptionalString(input.projectId),
@@ -158,7 +158,7 @@ export const timelinkActionHandlers: ProviderActionHandlers<"timelink", Timelink
         userId: readOptionalString(input.userId),
         userIds: readOptionalStringArray(input.userIds),
         extToolId: readOptionalString(input.extToolId),
-        exact: readOptionalBoolean(input.exact),
+        exact: optionalBoolean(input.exact),
       }),
       fetcher: context.fetcher,
       phase: "execute",
@@ -188,7 +188,7 @@ export const timelinkActionHandlers: ProviderActionHandlers<"timelink", Timelink
       token: context.apiKey,
       query: buildListQuery({
         limit: readOptionalInteger(input.limit),
-        withRelations: readOptionalBoolean(input.withRelations),
+        withRelations: optionalBoolean(input.withRelations),
       }),
       fetcher: context.fetcher,
       phase: "execute",
@@ -223,7 +223,7 @@ export const timelinkActionHandlers: ProviderActionHandlers<"timelink", Timelink
         search: readOptionalString(input.search),
         ids: readOptionalStringArray(input.ids),
         orders: readOptionalOrderArray(input.orders),
-        active: readOptionalBoolean(input.active),
+        active: optionalBoolean(input.active),
       }),
       fetcher: context.fetcher,
       phase: "execute",
@@ -278,7 +278,7 @@ export const timelinkActionHandlers: ProviderActionHandlers<"timelink", Timelink
 export async function validateTimelinkCredential(
   input: Record<string, string>,
   fetcher: typeof fetch,
-): Promise<import("../../core/types.ts").CredentialValidationResult> {
+): Promise<CredentialValidationResult> {
   const payload = await requestTimelinkJson({
     path: "/token",
     token: requiredString(input.apiKey, "apiKey", (message) => new ProviderRequestError(401, message)),
@@ -290,8 +290,7 @@ export async function validateTimelinkCredential(
   const token = normalizeToken(readDataObject(payload));
 
   return {
-    profile: { accountId: String(token.id), displayName: token.name, grantedScopes: [] },
-    grantedScopes: [],
+    profile: { accountId: String(token.id), displayName: token.name },
     metadata: compactObject({
       validationEndpoint: "/token",
       tokenId: token.id,
@@ -309,17 +308,15 @@ async function requestTimelinkJson(input: {
   fetcher: typeof fetch;
   phase: TimelinkPhase;
 }) {
-  const timeoutHandle = createProviderTimeout(undefined, timelinkRequestTimeoutMs);
-
-  try {
+  return runProviderRequest({ label: "Timelink" }, async (signal) => {
     const response = await input.fetcher(buildTimelinkUrl(input.path, input.query), {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${input.token}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${input.token}`,
         "user-agent": providerUserAgent,
       },
-      signal: timeoutHandle.signal,
+      signal,
     });
     const payload = await readTimelinkPayload(response);
 
@@ -333,22 +330,7 @@ async function requestTimelinkJson(input: {
     }
 
     return payloadRecord;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-
-    if (timeoutHandle.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "Timelink request timed out");
-    }
-
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Timelink request failed: ${error.message}` : "Timelink request failed",
-    );
-  } finally {
-    timeoutHandle.cleanup();
-  }
+  });
 }
 
 function buildTimelinkUrl(path: string, query: Record<string, string[] | string | undefined>) {
@@ -393,7 +375,7 @@ function createTimelinkError(status: number, payload: unknown, phase: TimelinkPh
   }
 
   if (phase === "validate" && (status === 401 || status === 403)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   if (phase === "execute" && (status === 401 || status === 403)) {
@@ -674,10 +656,6 @@ function readOptionalInteger(value: unknown) {
     return undefined;
   }
   return value;
-}
-
-function readOptionalBoolean(value: unknown) {
-  return typeof value === "boolean" ? value : undefined;
 }
 
 function readNullableBoolean(value: unknown) {

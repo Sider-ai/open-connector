@@ -1,18 +1,10 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRawString, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import {
-  createProviderTimeout,
-  isAbortLikeError,
-  providerUserAgent,
-  ProviderRequestError,
-} from "../provider-runtime.ts";
+import { providerUserAgent, ProviderRequestError, runProviderRequest } from "../provider-runtime.ts";
 
 export const smtp2goApiBaseUrl = "https://api.smtp2go.com/v3";
-
-const smtp2goDefaultRequestTimeoutMs = 30_000;
 
 type Smtp2goPhase = "validate" | "execute";
 type Smtp2goActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
@@ -185,9 +177,7 @@ export async function validateSmtp2goCredential(
   return {
     profile: {
       displayName: "SMTP2GO API Key",
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: compactObject({
       validationEndpoint: "/api_keys/permissions",
       permissionCount: permissions.length,
@@ -199,22 +189,20 @@ export async function validateSmtp2goCredential(
 async function requestSmtp2goJson(input: {
   path: string;
   body: Record<string, unknown>;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   phase: Smtp2goPhase;
 }): Promise<Record<string, unknown>> {
-  const timeout = createProviderTimeout(input.context.signal, smtp2goDefaultRequestTimeoutMs);
-
-  try {
+  return runProviderRequest({ signal: input.context.signal, label: "SMTP2GO" }, async (signal) => {
     const response = await input.context.fetcher(buildSmtp2goUrl(input.path), {
       method: "POST",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
         "user-agent": providerUserAgent,
         "X-Smtp2go-Api-Key": input.context.apiKey,
       },
       body: JSON.stringify(input.body),
-      signal: timeout.signal,
+      signal,
     });
     const payload = await readSmtp2goPayload(response);
 
@@ -227,22 +215,7 @@ async function requestSmtp2goJson(input: {
       throw new ProviderRequestError(502, "SMTP2GO returned an invalid payload");
     }
     return payloadRecord;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-
-    if (timeout.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "SMTP2GO request timed out");
-    }
-
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `SMTP2GO request failed: ${error.message}` : "SMTP2GO request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+  });
 }
 
 function buildSmtp2goUrl(path: string): string {

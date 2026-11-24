@@ -1,9 +1,9 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { providerUserAgent, ProviderRequestError, providerInputError } from "../provider-runtime.ts";
 
 export const instatusApiBaseUrl = "https://api.instatus.com";
 
@@ -134,7 +134,7 @@ export async function validateInstatusCredential(
   fetcher: typeof fetch,
   signal?: AbortSignal,
 ): Promise<CredentialValidationResult> {
-  let apiKey = requiredString(input.apiKey, "apiKey", (message) => new ProviderRequestError(400, message));
+  let apiKey = requiredString(input.apiKey, "apiKey", providerInputError);
   let payload = await requestInstatusJson("/v1/user", { method: "GET" }, { apiKey, fetcher, signal }, "validate");
   let profile = optionalRecord(payload);
   let email = optionalString(profile?.email);
@@ -145,7 +145,6 @@ export async function validateInstatusCredential(
       accountId: optionalString(profile?.id) ?? email ?? "instatus:api_key",
       displayName: name ?? email ?? "Instatus API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: instatusApiBaseUrl,
       userId: optionalString(profile?.id),
@@ -227,8 +226,8 @@ async function requestInstatusJson(
 
 function instatusHeaders(apiKey: string, hasBody: boolean) {
   return {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "user-agent": providerUserAgent,
     ...(hasBody ? { "content-type": "application/json" } : {}),
   };
@@ -255,7 +254,7 @@ function createInstatusError(response: Response, payload: unknown, phase: Instat
   }
 
   if (phase === "validate" && (response.status === 401 || response.status === 403)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   if (phase === "execute" && (response.status === 401 || response.status === 403)) {
@@ -263,7 +262,7 @@ function createInstatusError(response: Response, payload: unknown, phase: Instat
   }
 
   if ([400, 404, 422].includes(response.status)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   return new ProviderRequestError(response.status || 500, message);

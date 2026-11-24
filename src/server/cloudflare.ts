@@ -1,28 +1,29 @@
 import type { CatalogStore } from "../catalog-store.ts";
 import type { AssetsBinding, KVNamespaceBinding, R2BucketBinding } from "./cloudflare/cloudflare-bindings.ts";
 import type { CloudflareEnv } from "./cloudflare/cloudflare-env.ts";
+import type { McpOAuthHandler } from "./cloudflare/mcp-oauth.ts";
 import type { ConnectApp } from "./connect-app.ts";
 import type { Logger } from "./logger.ts";
 import type { ISecretCodec } from "./secrets/secret-codec-core.ts";
 
 import { ActionPolicyService, parseActionPolicyList } from "../core/action-policy.ts";
-import {
-  parseEgressTrustedHosts,
-  parsePrivateNetworkAccessFlag,
-  setEgressTrustedHosts,
-  setPrivateNetworkAccessAllowed,
-} from "../core/request.ts";
+import { PromiseCache } from "../core/promise-cache.ts";
+import { parseEgressTrustedHosts, parsePrivateNetworkAccessFlag } from "../core/request.ts";
+import { readMcpOAuthClientMetadata } from "../custom-mcp/definition.ts";
 import { ProviderLoader } from "../providers/provider-loader.ts";
 import { executorModules } from "../providers/registry.cloudflare.generated.ts";
+import { SaasCleanupService } from "../saas/saas-cleanup-service.ts";
 import { isConsoleShellPath } from "./api/console-paths.ts";
+import { DEFAULT_OAUTH_CLOSE_DELAY_SECONDS, parseOAuthResultOrigins } from "./api/oauth-completion-page.ts";
 import { loadCatalogFromAssets } from "./cloudflare/catalog-assets.ts";
-import { readPositiveInteger, resolvePublicOrigin } from "./cloudflare/cloudflare-env.ts";
-import { IsolatePromiseCache } from "./cloudflare/isolate-promise-cache.ts";
+import { readNonNegativeInteger, readPositiveInteger, resolvePublicOrigin } from "./cloudflare/cloudflare-env.ts";
 import { createConnectApp } from "./connect-app.ts";
+import { preloadOptionalServerModules } from "./connect-server.ts";
 import { KVTransitFileService } from "./files/kv-transit-files.ts";
 import { R2TransitFileService } from "./files/r2-transit-files.ts";
+import { parseMcpOutputMode } from "./mcp-settings.ts";
 import { createWorkerSecretCodec } from "./secrets/worker-secret-codec.ts";
-import { D1RuntimeDatabase } from "./storage/d1-runtime-store.ts";
+import { D1RuntimeDatabase } from "./storage/d1/runtime-store.ts";
 import { DEFAULT_RUN_LIMIT } from "./storage/runtime-store.ts";
 
 interface CloudflareExecutionContext {
@@ -30,32 +31,83 @@ interface CloudflareExecutionContext {
   passThroughOnException(): void;
 }
 
-const catalogCache = new IsolatePromiseCache<CatalogStore>();
-const secretCodecCache = new IsolatePromiseCache<ISecretCodec>();
-const appCache = new IsolatePromiseCache<ConnectApp>();
+const catalogCache = new PromiseCache<CatalogStore>();
+const secretCodecCache = new PromiseCache<ISecretCodec>();
+const appCache = new PromiseCache<ConnectApp>();
+const mcpOAuthCache = new PromiseCache<McpOAuthHandler>();
 
 export default {
-  async fetch(request: Request, env: CloudflareEnv, _ctx: CloudflareExecutionContext): Promise<Response> {
-    setPrivateNetworkAccessAllowed(parsePrivateNetworkAccessFlag(env.OOMOL_CONNECT_ALLOW_PRIVATE_NETWORK));
-    setEgressTrustedHosts(parseEgressTrustedHosts(env.OOMOL_CONNECT_EGRESS_TRUSTED_HOSTS));
-    const publicOrigin = resolvePublicOrigin(request, env);
-    const { app } = await appCache.get(createCacheKey(env, publicOrigin), () => createCloudflareApp(env, publicOrigin));
-    const response = await app.fetch(request, env);
-    if (response.status === 404 && env.ASSETS && shouldServeAsset(request)) {
-      return env.ASSETS.fetch(request);
+  async scheduled(_event: unknown, env: CloudflareEnv, ctx: CloudflareExecutionContext): Promise<void> {
+    const database = new D1RuntimeDatabase(env.DB, {
+      secretCodec: await createSecretCodec(env.OOMOL_CONNECT_ENCRYPTION_KEY),
+    });
+    const cleanup = new SaasCleanupService({
+      network: {
+        allowPrivateNetwork: parsePrivateNetworkAccessFlag(env.OOMOL_CONNECT_ALLOW_PRIVATE_NETWORK),
+        trustedHosts: parseEgressTrustedHosts(env.OOMOL_CONNECT_EGRESS_TRUSTED_HOSTS),
+      },
+      store: database.saasProjectStore,
+      requests: database.connectionRequestStore,
+      logger: workerLogger,
+    });
+    const triggerCleanup = async () => {
+      if (!(await database.triggerStore.listFlowTriggersForMaintenance(Date.now(), 1)).length) return;
+      const origin = env.OOMOL_CONNECT_ORIGIN ?? "https://connector.invalid";
+      const { triggerMaintenance } = await appCache.get(createCacheKey(env, origin), () =>
+        createCloudflareApp(env, origin),
+      );
+      await triggerMaintenance.run();
+    };
+    ctx.waitUntil(Promise.all([cleanup.run(), triggerCleanup()]).then(() => undefined));
+  },
+  async fetch(request: Request, env: CloudflareEnv, ctx: CloudflareExecutionContext): Promise<Response> {
+    if (env.OAUTH_KV) {
+      if (
+        !env.OOMOL_CONNECT_ORIGIN?.trim() ||
+        !env.OOMOL_CONNECT_ADMIN_TOKEN?.trim() ||
+        !env.OOMOL_CONNECT_ENCRYPTION_KEY?.trim()
+      ) {
+        return new Response("MCP OAuth requires a configured origin, administrator token, and encryption key.", {
+          status: 503,
+        });
+      }
+      const origin = env.OOMOL_CONNECT_ORIGIN.trim().replace(/\/+$/, "");
+      const oauth = await mcpOAuthCache.get(origin, async () => {
+        const { createMcpOAuthHandler } = await import("./cloudflare/mcp-oauth.ts");
+        return createMcpOAuthHandler(origin, fetchRuntime);
+      });
+      return oauth.fetch(request, env, ctx);
     }
-
-    return response;
+    return fetchRuntime(request, env);
   },
 };
+
+async function fetchRuntime(request: Request, env: CloudflareEnv): Promise<Response> {
+  const publicOrigin = resolvePublicOrigin(request, env);
+  const { app } = await appCache.get(createCacheKey(env, publicOrigin), () => createCloudflareApp(env, publicOrigin));
+  const response = await app.fetch(request, env);
+  if (response.status === 404 && env.ASSETS && shouldServeAsset(request)) {
+    return env.ASSETS.fetch(request);
+  }
+
+  return response;
+}
 
 async function createCloudflareApp(env: CloudflareEnv, publicOrigin: string): Promise<ConnectApp> {
   const assets = env.ASSETS;
   if (!assets) {
     throw new Error("Cloudflare ASSETS binding is required to load the catalog");
   }
+  // The Node server defers the MCP and docs modules to their first request so its startup graph stays small.
+  // Workers keep paying their evaluation here, at app creation, so the first /mcp or /docs request of an isolate
+  // is served the same way as every later one.
+  await preloadOptionalServerModules();
   const secretCodec = await createSecretCodec(env.OOMOL_CONNECT_ENCRYPTION_KEY);
   return await createConnectApp({
+    network: {
+      allowPrivateNetwork: parsePrivateNetworkAccessFlag(env.OOMOL_CONNECT_ALLOW_PRIVATE_NETWORK),
+      trustedHosts: parseEgressTrustedHosts(env.OOMOL_CONNECT_EGRESS_TRUSTED_HOSTS),
+    },
     catalog: await loadCatalogOnce(assets),
     providerLoader: new ProviderLoader(executorModules),
     runtimeDatabase: new D1RuntimeDatabase(env.DB, {
@@ -79,16 +131,28 @@ async function createCloudflareApp(env: CloudflareEnv, publicOrigin: string): Pr
           });
     })(),
     publicOrigin,
+    configuredOrigin: env.OOMOL_CONNECT_ORIGIN,
     secretCodec,
     adminToken: env.OOMOL_CONNECT_ADMIN_TOKEN,
     runtimeToken: env.OOMOL_CONNECT_RUNTIME_TOKEN,
+    eventVerifyToken: env.OOMOL_CONNECT_EVENT_VERIFY_TOKEN,
+    mcpOutputMode: parseMcpOutputMode(env.OOMOL_CONNECT_MCP_OUTPUT_MODE),
+    requireRuntimeAuth: Boolean(env.OAUTH_KV),
     actionPolicy: new ActionPolicyService({
       allowedActions: parseActionPolicyList(env.OOMOL_CONNECT_ALLOWED_ACTIONS),
       blockedActions: parseActionPolicyList(env.OOMOL_CONNECT_BLOCKED_ACTIONS),
       allowedProxies: parseActionPolicyList(env.OOMOL_CONNECT_ALLOWED_PROXIES),
       blockedProxies: parseActionPolicyList(env.OOMOL_CONNECT_BLOCKED_PROXIES),
+      allowedTriggers: parseActionPolicyList(env.OOMOL_CONNECT_ALLOWED_TRIGGERS),
+      blockedTriggers: parseActionPolicyList(env.OOMOL_CONNECT_BLOCKED_TRIGGERS),
     }),
     allowedCustomOAuth: parseActionPolicyList(env.OOMOL_CONNECT_ALLOWED_CUSTOM_OAUTH),
+    oauthResultOrigins: parseOAuthResultOrigins(env.OOMOL_CONNECT_OAUTH_RESULT_ORIGINS),
+    customMcpOAuthClient: readMcpOAuthClientMetadata({
+      clientName: env.OOMOL_CONNECT_CUSTOM_MCP_CLIENT_NAME,
+      logoUri: env.OOMOL_CONNECT_CUSTOM_MCP_CLIENT_LOGO_URI,
+      clientUri: env.OOMOL_CONNECT_CUSTOM_MCP_CLIENT_URI,
+    }),
     logger: workerLogger,
     computeRuntimeAuthConfigured: false,
     // Cloudflare compresses on egress itself: Response defaults to
@@ -100,6 +164,10 @@ async function createCloudflareApp(env: CloudflareEnv, publicOrigin: string): Pr
     // `encodeBody: "manual"`, so application-level compression stays off here.
     // https://developers.cloudflare.com/workers/runtime-apis/response/
     compressApiResponses: false,
+    oauthCloseDelaySeconds: readNonNegativeInteger(
+      env.OOMOL_CONNECT_OAUTH_CLOSE_DELAY_SECONDS,
+      DEFAULT_OAUTH_CLOSE_DELAY_SECONDS,
+    ),
   });
 }
 
@@ -138,17 +206,30 @@ function createSecretCodec(encryptionKey: string | undefined): Promise<ISecretCo
 function createCacheKey(env: CloudflareEnv, publicOrigin: string): string {
   return JSON.stringify({
     publicOrigin,
+    allowPrivateNetwork: parsePrivateNetworkAccessFlag(env.OOMOL_CONNECT_ALLOW_PRIVATE_NETWORK),
+    trustedHosts: parseEgressTrustedHosts(env.OOMOL_CONNECT_EGRESS_TRUSTED_HOSTS),
+    configuredOrigin: env.OOMOL_CONNECT_ORIGIN ?? null,
     adminToken: env.OOMOL_CONNECT_ADMIN_TOKEN ?? "",
     runtimeToken: env.OOMOL_CONNECT_RUNTIME_TOKEN ?? "",
+    eventVerifyToken: env.OOMOL_CONNECT_EVENT_VERIFY_TOKEN ?? "",
+    mcpOutputMode: env.OOMOL_CONNECT_MCP_OUTPUT_MODE ?? "",
+    requireRuntimeAuth: Boolean(env.OAUTH_KV),
     encryptionKey: env.OOMOL_CONNECT_ENCRYPTION_KEY ?? "",
     allowedActions: env.OOMOL_CONNECT_ALLOWED_ACTIONS ?? "",
     blockedActions: env.OOMOL_CONNECT_BLOCKED_ACTIONS ?? "",
     allowedProxies: env.OOMOL_CONNECT_ALLOWED_PROXIES ?? "",
+    allowedTriggers: env.OOMOL_CONNECT_ALLOWED_TRIGGERS ?? "",
+    blockedTriggers: env.OOMOL_CONNECT_BLOCKED_TRIGGERS ?? "",
     blockedProxies: env.OOMOL_CONNECT_BLOCKED_PROXIES ?? "",
     allowedCustomOAuth: env.OOMOL_CONNECT_ALLOWED_CUSTOM_OAUTH ?? "",
+    oauthResultOrigins: env.OOMOL_CONNECT_OAUTH_RESULT_ORIGINS ?? "",
+    customMcpClientName: env.OOMOL_CONNECT_CUSTOM_MCP_CLIENT_NAME ?? "",
+    customMcpClientLogoUri: env.OOMOL_CONNECT_CUSTOM_MCP_CLIENT_LOGO_URI ?? "",
+    customMcpClientUri: env.OOMOL_CONNECT_CUSTOM_MCP_CLIENT_URI ?? "",
     transitFileTtlSeconds: env.OOMOL_CONNECT_TRANSIT_FILE_TTL_SECONDS ?? "",
     transitFileMaxBytes: env.OOMOL_CONNECT_TRANSIT_FILE_MAX_BYTES ?? "",
     runLimit: env.OOMOL_CONNECT_RUN_LIMIT ?? "",
+    oauthCloseDelaySeconds: env.OOMOL_CONNECT_OAUTH_CLOSE_DELAY_SECONDS ?? "",
   });
 }
 

@@ -4,22 +4,26 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
 import { createHash, createHmac } from "node:crypto";
-import { compactObject, optionalRecord, optionalString, requiredRecord, requiredString } from "../../core/cast.ts";
+import { compactObject, optionalRecord, optionalString, requiredRecord } from "../../core/cast.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
 import {
-  createProviderFetch,
   createProviderProxyUrl,
-  defineProviderExecutors,
   normalizeProviderProxyHeaders,
-  ProviderRequestError,
-  providerUserAgent,
   readProviderProxyErrorMessage,
   readProviderProxyResponse,
-  requireApiKeyCredential,
   toProviderProxyError,
+} from "../provider-proxy.ts";
+import {
+  createProviderFetch,
+  ProviderRequestError,
+  providerUserAgent,
+  requiredInputString,
+  defaultProviderRequestTimeoutMs,
 } from "../provider-runtime.ts";
 
 const service = "feishu_custom_bot";
@@ -27,7 +31,6 @@ const feishuCustomBotApiBaseUrl = "https://open.feishu.cn";
 const feishuCustomBotWebhookPathPrefix = "/open-apis/bot/v2/hook/";
 const feishuCustomBotAllowedWebhookHosts = new Set([new URL(feishuCustomBotApiBaseUrl).host]);
 const feishuCustomBotMaxPayloadBytes = 20 * 1024;
-const feishuCustomBotRequestTimeoutMs = 30_000;
 
 const feishuCustomBotFetch = createProviderFetch({ skipDnsValidation: true });
 const feishuCustomBotProbeBadRequestCode = 9499;
@@ -86,7 +89,7 @@ export const feishuCustomBotActionHandlers: ProviderActionHandlers<"feishu_custo
         {
           msg_type: "text",
           content: {
-            text: requiredFeishuCustomBotString(input.text, "text"),
+            text: requiredInputString(input.text, "text"),
           },
         },
         context,
@@ -108,7 +111,7 @@ export const feishuCustomBotActionHandlers: ProviderActionHandlers<"feishu_custo
         {
           msg_type: "image",
           content: {
-            image_key: requiredFeishuCustomBotString(input.imageKey, "imageKey"),
+            image_key: requiredInputString(input.imageKey, "imageKey"),
           },
         },
         context,
@@ -119,7 +122,7 @@ export const feishuCustomBotActionHandlers: ProviderActionHandlers<"feishu_custo
         {
           msg_type: "share_chat",
           content: {
-            share_chat_id: requiredFeishuCustomBotString(input.shareChatId, "shareChatId"),
+            share_chat_id: requiredInputString(input.shareChatId, "shareChatId"),
           },
         },
         context,
@@ -144,7 +147,7 @@ export const executors: ProviderExecutors = defineProviderExecutors<FeishuCustom
     const credential = await requireApiKeyCredential(context, service);
     return {
       apiKey: credential.apiKey,
-      signingSecret: readOptionalFeishuCustomBotField(credential.values.signingSecret),
+      signingSecret: optionalString(credential.values.signingSecret),
       fetcher,
       signal: context.signal,
     };
@@ -174,7 +177,7 @@ export const proxy: ProviderProxyExecutor = async (input, context) => {
     }
 
     const requestBody = JSON.stringify(
-      buildFeishuCustomBotRequestPayload(payload, readOptionalFeishuCustomBotField(credential.values.signingSecret)),
+      buildFeishuCustomBotRequestPayload(payload, optionalString(credential.values.signingSecret)),
     );
     if (Buffer.byteLength(requestBody, "utf8") > feishuCustomBotMaxPayloadBytes) {
       throw new ProviderRequestError(400, "Feishu custom bot request body must not exceed 20 KB");
@@ -231,7 +234,7 @@ export const credentialValidators: CredentialValidators = {
     const credential = resolveFeishuCustomBotApiKey(input.apiKey);
     await validateFeishuCustomBotCredential({
       webhookUrl: credential.webhookUrl,
-      signingSecret: readOptionalFeishuCustomBotField(input.values.signingSecret),
+      signingSecret: optionalString(input.values.signingSecret),
       fetcher,
       signal,
     });
@@ -241,11 +244,10 @@ export const credentialValidators: CredentialValidators = {
         accountId: buildFeishuCustomBotProviderAccountId(credential.webhookToken),
         displayName: buildFeishuCustomBotAccountLabel(credential.webhookToken),
       },
-      grantedScopes: [],
       metadata: compactObject({
         webhookHost: new URL(credential.webhookUrl).host,
         webhookPathSuffix: maskFeishuCustomBotToken(credential.webhookToken),
-        securityMode: readOptionalFeishuCustomBotField(input.values.signingSecret) ? "signed" : "unsigned",
+        securityMode: optionalString(input.values.signingSecret) ? "signed" : "unsigned",
         validationMode: "invalid_msg_type_probe",
         credentialKind: "webhook_token",
       }),
@@ -429,7 +431,7 @@ function normalizeFeishuCustomBotError(
 }
 
 function resolveFeishuCustomBotApiKey(apiKey: string): FeishuCustomBotCredential {
-  const trimmed = requiredFeishuCustomBotString(apiKey, "apiKey");
+  const trimmed = requiredInputString(apiKey, "apiKey");
   if (trimmed.includes("://")) {
     const webhook = parseFeishuCustomBotWebhookUrl(trimmed);
     return {
@@ -476,7 +478,7 @@ function extractFeishuCustomBotToken(webhook: URL): string {
 }
 
 function normalizeFeishuCustomBotWebhookToken(value: string): string {
-  const trimmed = requiredFeishuCustomBotString(value, "apiKey");
+  const trimmed = requiredInputString(value, "apiKey");
   if (trimmed.includes("/")) {
     throw new ProviderRequestError(400, "apiKey must be a Feishu webhook token or webhook URL");
   }
@@ -516,21 +518,13 @@ function readFeishuCustomBotFallbackMessage(rawText: string): string | undefined
   return optionalString(rawText);
 }
 
-function requiredFeishuCustomBotString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
-}
-
 function requiredFeishuCustomBotObject(value: unknown, fieldName: string): Record<string, unknown> {
   return requiredRecord(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
-function readOptionalFeishuCustomBotField(value: unknown): string | undefined {
-  return optionalString(value);
-}
-
 function createFeishuCustomBotRequestSignal(parent?: AbortSignal): FeishuCustomBotRequestSignal {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), feishuCustomBotRequestTimeoutMs);
+  const timeout = setTimeout(() => controller.abort(), defaultProviderRequestTimeoutMs);
   const abortFromParent = (): void => controller.abort(parent?.reason);
   if (parent?.aborted) {
     controller.abort(parent.reason);

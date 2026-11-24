@@ -1,12 +1,11 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
   isAbortLikeError,
   ProviderRequestError,
   providerUserAgent,
@@ -15,11 +14,9 @@ import {
 const service = "freepik";
 const freepikApiBaseUrl = "https://api.magnific.com";
 const freepikResourcesPath = "/v1/resources";
-const freepikRequestTimeoutMs = 30_000;
 
 type FreepikPhase = "validate" | "execute";
-type FreepikActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type FreepikActionHandler = (input: Record<string, unknown>, context: FreepikActionContext) => Promise<unknown>;
+type FreepikActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 export const freepikActionHandlers: ProviderActionHandlers<"freepik", FreepikActionHandler> = {
   async search_resources(input, context) {
@@ -79,7 +76,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "api_key",
         displayName: "Magnific API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: freepikApiBaseUrl,
         validationEndpoint: freepikResourcesPath,
@@ -161,7 +157,7 @@ function buildDownloadResourcePath(input: Record<string, unknown>): string {
 }
 
 async function requestFreepikJson(input: {
-  context: FreepikActionContext;
+  context: ApiKeyProviderContext;
   path: string;
   query?: Record<string, string | undefined>;
   acceptLanguage?: string;
@@ -174,7 +170,7 @@ async function requestFreepikJson(input: {
     }
   }
 
-  const timeout = createProviderTimeout(input.context.signal, freepikRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   try {
     const response = await input.context.fetcher(url, {
       method: "GET",
@@ -206,7 +202,7 @@ async function requestFreepikJson(input: {
 
 function freepikHeaders(apiKey: string, acceptLanguage: string | undefined): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     "x-magnific-api-key": apiKey,
   };

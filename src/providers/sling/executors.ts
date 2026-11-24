@@ -1,19 +1,19 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalBoolean, optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
-  createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  isAbortLikeError,
   ProviderRequestError,
   providerUserAgent,
+  requiredResponseRecord,
+  runProviderRequest,
 } from "../provider-runtime.ts";
 
 const service = "sling";
 const slingApiBaseUrl = "https://api.getsling.com/v1";
-const slingRequestTimeoutMs = 30_000;
 
 type SlingPhase = "validate" | "execute";
 type SlingQueryValue = string | number | boolean | readonly (string | number)[];
@@ -81,6 +81,14 @@ export const slingActionHandlers: ProviderActionHandlers<"sling", SlingActionHan
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, slingActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: slingApiBaseUrl,
+  auth: { type: "api_key_header", name: "Authorization" },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const session = await requestSlingJson({
@@ -91,7 +99,7 @@ export const credentialValidators: CredentialValidators = {
       phase: "validate",
       signal,
     });
-    const sessionRecord = requiredProviderRecord(session, "Sling session");
+    const sessionRecord = requiredResponseRecord(session, "Sling session");
     const user = optionalRecord(sessionRecord.user);
     const org = optionalRecord(sessionRecord.org);
     const accountId = typeof user?.id === "number" || typeof user?.id === "string" ? String(user.id) : "api_key";
@@ -103,9 +111,7 @@ export const credentialValidators: CredentialValidators = {
       profile: {
         accountId,
         displayName: fullName || email || orgName || "Sling Account",
-        grantedScopes: [],
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: slingApiBaseUrl,
         orgId: typeof sessionRecord.orgId === "number" ? sessionRecord.orgId : undefined,
@@ -142,30 +148,20 @@ async function requestSlingJson(input: {
   phase: SlingPhase;
   signal?: AbortSignal;
 }): Promise<unknown> {
-  const timeout = createProviderTimeout(input.signal, slingRequestTimeoutMs);
-  try {
+  return runProviderRequest({ signal: input.signal, label: "Sling" }, async (signal) => {
     const response = await input.fetcher(buildSlingUrl(input.path, input.query), {
       method: "GET",
       headers: {
-        Authorization: input.apiKey,
-        Accept: "application/json",
+        "Authorization": input.apiKey,
+        "Accept": "application/json",
         "User-Agent": providerUserAgent,
       },
-      signal: timeout.signal,
+      signal,
     });
     const payload = await readSlingPayload(response, { allowPlainText: !response.ok });
     if (!response.ok) throw createSlingError(response.status, payload, input.phase);
     return payload ?? {};
-  } catch (error) {
-    if (error instanceof ProviderRequestError) throw error;
-    if (timeout.didTimeout() || isAbortLikeError(error)) throw new ProviderRequestError(504, "Sling request timed out");
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Sling request failed: ${error.message}` : "Sling request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+  });
 }
 
 function buildSlingUrl(path: string, query: Record<string, SlingQueryValue | undefined>): URL {
@@ -257,10 +253,4 @@ function readStringArray(value: unknown): string[] | undefined {
 
 function readOptionalNumber(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
-}
-
-function requiredProviderRecord(value: unknown, label: string): Record<string, unknown> {
-  const record = optionalRecord(value);
-  if (!record) throw new ProviderRequestError(502, `${label} must be an object`);
-  return record;
 }

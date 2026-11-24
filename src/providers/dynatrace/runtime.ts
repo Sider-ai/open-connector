@@ -1,7 +1,15 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
-import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import {
+  compactObject,
+  optionalInteger,
+  optionalRecord,
+  optionalString,
+  optionalStringArray,
+  rawStringOrNull,
+  requiredString,
+} from "../../core/cast.ts";
 import { assertPublicHttpUrl, queryParams } from "../../core/request.ts";
 import {
   createProviderTimeout,
@@ -17,12 +25,6 @@ export interface DynatraceContext {
   signal?: AbortSignal;
 }
 
-interface DynatraceValidationCheck {
-  path: string;
-  query: Record<string, string | number | undefined>;
-  scope: string;
-}
-
 interface DynatraceRequestOptions {
   apiKey: string;
   environmentUrl: string;
@@ -31,26 +33,12 @@ interface DynatraceRequestOptions {
   signal?: AbortSignal;
   phase: DynatraceRequestPhase;
   query?: Record<string, string | number | undefined>;
+  method?: "GET" | "POST";
+  body?: Record<string, unknown>;
 }
 
-const dynatraceDefaultRequestTimeoutMs = 30_000;
 const dynatraceCredentialHelpUrl =
   "https://docs.dynatrace.com/docs/manage/identity-access-management/access-tokens-and-oauth-clients/access-tokens";
-const validationChecks: DynatraceValidationCheck[] = [
-  {
-    path: "/api/v2/problems",
-    query: { pageSize: 1 },
-    scope: "problems.read",
-  },
-  {
-    path: "/api/v2/entities",
-    query: {
-      pageSize: 1,
-      entitySelector: 'type("HOST")',
-    },
-    scope: "entities.read",
-  },
-];
 
 type DynatraceRequestPhase = "validate" | "execute";
 type DynatraceActionHandler = (input: Record<string, unknown>, context: DynatraceContext) => Promise<unknown>;
@@ -68,7 +56,7 @@ export const dynatraceActionHandlers: ProviderActionHandlers<"dynatrace", Dynatr
       problems: readObjectArray(record.problems).map(normalizeProblem),
       totalCount: readNullableInteger(record.totalCount),
       pageSize: readNullableInteger(record.pageSize),
-      nextPageKey: readNullableString(record.nextPageKey),
+      nextPageKey: rawStringOrNull(record.nextPageKey),
       raw: record,
     };
   },
@@ -84,7 +72,7 @@ export const dynatraceActionHandlers: ProviderActionHandlers<"dynatrace", Dynatr
       entities: readObjectArray(record.entities).map(normalizeEntity),
       totalCount: readNullableInteger(record.totalCount),
       pageSize: readNullableInteger(record.pageSize),
-      nextPageKey: readNullableString(record.nextPageKey),
+      nextPageKey: rawStringOrNull(record.nextPageKey),
       raw: record,
     };
   },
@@ -113,42 +101,17 @@ export async function validateDynatraceCredential(
   signal?: AbortSignal,
 ): Promise<CredentialValidationResult> {
   const environmentUrl = normalizeDynatraceEnvironmentUrl(environmentUrlInput);
-  const grantedScopes: string[] = [];
-  const validationEndpoints: string[] = [];
-  const permissionErrors: ProviderRequestError[] = [];
-
-  for (const check of validationChecks) {
-    try {
-      await requestDynatraceJson({
-        apiKey,
-        environmentUrl,
-        path: check.path,
-        query: check.query,
-        fetcher,
-        signal,
-        phase: "validate",
-      });
-      grantedScopes.push(check.scope);
-      validationEndpoints.push(check.path);
-    } catch (error) {
-      if (error instanceof ProviderRequestError && (error.status === 401 || error.status === 403)) {
-        permissionErrors.push(error);
-        continue;
-      }
-      throw error;
-    }
-  }
-
-  if (grantedScopes.length === 0) {
-    const permissionError = permissionErrors[0];
-    throw (
-      permissionError ??
-      new ProviderRequestError(
-        400,
-        "Dynatrace API token must include at least one supported scope: problems.read or entities.read",
-      )
-    );
-  }
+  const payload = await requestDynatraceJson({
+    apiKey,
+    environmentUrl,
+    path: "/api/v2/apiTokens/lookup",
+    method: "POST",
+    body: { token: apiKey },
+    fetcher,
+    signal,
+    phase: "validate",
+  });
+  const token = readObjectPayload(payload);
 
   const accountLabel = readDynatraceAccountLabel(environmentUrl);
   return {
@@ -156,10 +119,10 @@ export async function validateDynatraceCredential(
       accountId: `dynatrace:${accountLabel}`,
       displayName: accountLabel,
     },
-    grantedScopes,
+    grantedScopes: optionalStringArray(token.scopes) ?? [],
     metadata: {
       environmentUrl,
-      validationEndpoints,
+      validationEndpoint: "/api/v2/apiTokens/lookup",
       credentialHelpUrl: dynatraceCredentialHelpUrl,
     },
   };
@@ -192,11 +155,12 @@ async function requestDynatraceJson(options: DynatraceRequestOptions): Promise<u
     url.searchParams.set(key, value);
   }
 
-  const timeout = createProviderTimeout(options.signal, dynatraceDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(options.signal);
   try {
     const response = await options.fetcher(url, {
-      method: "GET",
+      method: options.method ?? "GET",
       headers: dynatraceHeaders(options.apiKey),
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
       signal: timeout.signal,
     });
     const payload = await readResponsePayload(response);
@@ -223,8 +187,9 @@ async function requestDynatraceJson(options: DynatraceRequestOptions): Promise<u
 
 function dynatraceHeaders(apiKey: string): Record<string, string> {
   return {
-    accept: "application/json",
-    authorization: `Api-Token ${apiKey}`,
+    "accept": "application/json",
+    "content-type": "application/json",
+    "authorization": `Api-Token ${apiKey}`,
     "user-agent": providerUserAgent,
   };
 }
@@ -252,20 +217,20 @@ function buildEntityListQuery(input: Record<string, unknown>): Record<string, st
 
 function normalizeProblem(record: Record<string, unknown>): Record<string, unknown> {
   return {
-    problemId: readNullableString(record.problemId),
-    displayId: readNullableString(record.displayId),
-    title: readNullableString(record.title),
-    status: readNullableString(record.status),
-    severityLevel: readNullableString(record.severityLevel),
+    problemId: rawStringOrNull(record.problemId),
+    displayId: rawStringOrNull(record.displayId),
+    title: rawStringOrNull(record.title),
+    status: rawStringOrNull(record.status),
+    severityLevel: rawStringOrNull(record.severityLevel),
     raw: record,
   };
 }
 
 function normalizeEntity(record: Record<string, unknown>): Record<string, unknown> {
   return {
-    entityId: readNullableString(record.entityId),
-    displayName: readNullableString(record.displayName),
-    type: readNullableString(record.type),
+    entityId: rawStringOrNull(record.entityId),
+    displayName: rawStringOrNull(record.displayName),
+    type: rawStringOrNull(record.type),
     raw: record,
   };
 }
@@ -286,10 +251,6 @@ function readDynatraceAccountLabel(environmentUrl: string): string {
 
 function trimTrailingSlash(value: string): string {
   return value.endsWith("/") ? value.slice(0, -1) : value;
-}
-
-function readNullableString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
 }
 
 function readNullableInteger(value: unknown): number | null {

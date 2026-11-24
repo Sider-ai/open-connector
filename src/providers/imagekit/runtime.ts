@@ -1,13 +1,11 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
 import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import { createProviderTimeout, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 export const imagekitApiBaseUrl = "https://api.imagekit.io";
-
-const imagekitRequestTimeoutMs = 30_000;
 
 type ImagekitRequestPhase = "validate" | "execute";
 
@@ -77,7 +75,6 @@ export async function validateImagekitCredential(
       accountId: "api_key",
       displayName: "ImageKit API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: imagekitApiBaseUrl,
       validationEndpoint: "/v1/files",
@@ -227,7 +224,7 @@ async function imagekitGetJson(input: Omit<ImagekitRequestInput, "method" | "bod
 }
 
 async function imagekitRequest(input: ImagekitRequestInput): Promise<unknown> {
-  const timeout = createProviderTimeout(input.signal, imagekitRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   let response: Response;
   try {
     response = await input.fetcher(buildImagekitUrl(input.path, input.query), {
@@ -268,8 +265,8 @@ function buildImagekitUrl(path: string, query: Record<string, string | undefined
 
 function imagekitHeaders(apiKey: string, hasBody: boolean): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
-    authorization: `Basic ${Buffer.from(`${apiKey}:`, "utf8").toString("base64")}`,
+    "accept": "application/json",
+    "authorization": `Basic ${Buffer.from(`${apiKey}:`, "utf8").toString("base64")}`,
     "user-agent": providerUserAgent,
   };
   if (hasBody) {

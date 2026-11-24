@@ -4,17 +4,14 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
 import { compactJson } from "../../core/request.ts";
-import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
-  ProviderRequestError,
-  providerUserAgent,
-} from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "waterfall";
 const waterfallApiBaseUrl = "https://api.waterfall.io";
@@ -117,7 +114,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "waterfall:api_key",
         displayName: "Waterfall API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: waterfallApiBaseUrl,
         balanceRemainingUsd: optionalNumber(record.balance_remaining_usd),
@@ -196,7 +192,7 @@ async function requestWaterfall(input: {
 
 function buildWaterfallHeaders(apiKey: string, hasBody: boolean): Headers {
   const headers = new Headers({
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     "x-api-key": apiKey,
   });

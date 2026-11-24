@@ -1,13 +1,16 @@
-import type { CredentialValidators, ExecutionContext, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type {
+  CredentialValidators,
+  ExecutionContext,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalBoolean, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import {
-  defineProviderExecutors,
-  providerUserAgent,
-  ProviderRequestError,
-  requireApiKeyCredential,
-} from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "qlty";
 const qltyApiBaseUrl = "https://api.qlty.sh";
@@ -79,10 +82,10 @@ export const qltyActionHandlers: ProviderActionHandlers<"qlty", QltyActionHandle
         search: buildSearchParams({
           "page[limit]": input.limit,
           "page[offset]": input.offset,
-          category: input.category,
-          level: input.level,
-          status: input.status,
-          tool: trimSearchValue(input.tool),
+          "category": input.category,
+          "level": input.level,
+          "status": input.status,
+          "tool": trimSearchValue(input.tool),
         }),
       },
       context,
@@ -123,6 +126,16 @@ export const executors: ProviderExecutors = defineProviderExecutors<QltyActionCo
   },
 });
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: qltyApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const user = await requestQlty(
@@ -143,7 +156,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: `qlty:${userId}`,
         displayName: optionalString(user.name) ?? login ?? email ?? "Qlty API Token",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: qltyApiBaseUrl,
         validationEndpoint: "/user",
@@ -175,8 +187,8 @@ async function requestQlty(
     response = await context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${context.apiKey}`,
         "user-agent": providerUserAgent,
       },
       signal: context.signal,

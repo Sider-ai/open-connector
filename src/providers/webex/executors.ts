@@ -1,10 +1,24 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
 
-import { defineOAuthProviderExecutors, ProviderRequestError } from "../provider-runtime.ts";
+import { defineOAuthProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError } from "../provider-runtime.ts";
 import { webexActionHandlers, webexApiBaseUrl } from "./runtime.ts";
 
-export const executors: ProviderExecutors = defineOAuthProviderExecutors("webex", webexActionHandlers, {
+const service = "webex";
+
+export const executors: ProviderExecutors = defineOAuthProviderExecutors(service, webexActionHandlers, {
   skipDnsValidation: true,
+});
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: webexApiBaseUrl,
+  auth: { type: "oauth_bearer" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
 });
 
 export const credentialValidators: CredentialValidators = {
@@ -19,7 +33,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: typeof person.id === "string" ? person.id : undefined,
         displayName: typeof person.displayName === "string" ? person.displayName : "Webex User",
       },
-      grantedScopes: input.profile.grantedScopes,
     };
   },
 };

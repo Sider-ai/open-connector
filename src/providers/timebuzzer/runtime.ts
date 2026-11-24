@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -20,7 +20,6 @@ import {
 
 export const timebuzzerApiBaseUrl = "https://my.timebuzzer.com";
 const apiPath = "/open-api";
-const timeoutMs = 30_000;
 
 export const timebuzzerActionHandlers: ProviderActionHandlers<
   "timebuzzer",
@@ -93,7 +92,6 @@ export async function validateTimebuzzerCredential(
   const email = optionalString(payload.email);
   return {
     profile: { displayName: [firstName, lastName].filter(Boolean).join(" ") || email || "timeBuzzer API Key" },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: timebuzzerApiBaseUrl,
       validationEndpoint: `${apiPath}/account/me`,
@@ -130,13 +128,13 @@ async function requestTimebuzzer(
 ): Promise<unknown> {
   const url = new URL(`${apiPath}${path}`, timebuzzerApiBaseUrl);
   for (const [name, value] of Object.entries(options.query ?? {})) url.searchParams.set(name, value);
-  const timeout = createProviderTimeout(context.signal, timeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const response = await context.fetcher(url, {
       method: options.method ?? "GET",
       headers: {
-        accept: "application/json",
-        authorization: `APIKey ${context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `APIKey ${context.apiKey}`,
         "user-agent": providerUserAgent,
         ...(options.body ? { "content-type": "application/json" } : {}),
       },

@@ -1,6 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
 import {
@@ -14,14 +13,12 @@ import {
 export const lodgifyApiBaseUrl = "https://api.lodgify.com";
 
 const lodgifyValidationPath = "/v2/properties";
-const lodgifyDefaultRequestTimeoutMs = 30_000;
 
 type LodgifyPhase = "validate" | "execute";
-type LodgifyActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
 
 interface LodgifyRequestInput {
   path: string;
-  context: LodgifyActionContext;
+  context: ApiKeyProviderContext;
   phase: LodgifyPhase;
   query?: Record<string, string | undefined>;
 }
@@ -73,9 +70,7 @@ export async function validateLodgifyCredential(
     profile: {
       accountId: "lodgify-api-key",
       displayName: "Lodgify API Key",
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: lodgifyApiBaseUrl,
       validationEndpoint: lodgifyValidationPath,
@@ -86,7 +81,7 @@ export async function validateLodgifyCredential(
   };
 }
 
-async function listProperties(input: Record<string, unknown>, context: LodgifyActionContext): Promise<unknown> {
+async function listProperties(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await requestLodgifyJson({
     path: "/v2/properties",
     context,
@@ -106,7 +101,7 @@ async function listProperties(input: Record<string, unknown>, context: LodgifyAc
   };
 }
 
-async function getProperty(input: Record<string, unknown>, context: LodgifyActionContext): Promise<unknown> {
+async function getProperty(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const propertyId = readPositiveInteger(input.propertyId, "propertyId");
   const payload = await requestLodgifyJson({
     path: `/v2/properties/${propertyId}`,
@@ -121,7 +116,7 @@ async function getProperty(input: Record<string, unknown>, context: LodgifyActio
   };
 }
 
-async function listPropertyRooms(input: Record<string, unknown>, context: LodgifyActionContext): Promise<unknown> {
+async function listPropertyRooms(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const propertyId = readPositiveInteger(input.propertyId, "propertyId");
   const payload = await requestLodgifyJson({
     path: `/v2/properties/${propertyId}/rooms`,
@@ -138,7 +133,7 @@ async function listPropertyRooms(input: Record<string, unknown>, context: Lodgif
 
 async function getPropertyAvailability(
   input: Record<string, unknown>,
-  context: LodgifyActionContext,
+  context: ApiKeyProviderContext,
 ): Promise<unknown> {
   const propertyId = readPositiveInteger(input.propertyId, "propertyId");
   const payload = await requestLodgifyJson({
@@ -158,15 +153,15 @@ async function getPropertyAvailability(
   };
 }
 
-async function getQuote(input: Record<string, unknown>, context: LodgifyActionContext): Promise<unknown> {
+async function getQuote(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const propertyId = readPositiveInteger(input.propertyId, "propertyId");
   const payload = await requestLodgifyJson({
     path: `/v2/quote/${propertyId}`,
     context,
     phase: "execute",
     query: {
-      from: requireDateString(input.from, "from"),
-      to: requireDateString(input.to, "to"),
+      "from": requireDateString(input.from, "from"),
+      "to": requireDateString(input.to, "to"),
       "roomTypes[0].Id": String(readPositiveInteger(input.roomTypeId, "roomTypeId")),
       "guest_breakdown[adults]": String(readPositiveInteger(input.adults, "adults")),
     },
@@ -179,7 +174,7 @@ async function getQuote(input: Record<string, unknown>, context: LodgifyActionCo
   };
 }
 
-async function listBookings(input: Record<string, unknown>, context: LodgifyActionContext): Promise<unknown> {
+async function listBookings(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await requestLodgifyJson({
     path: "/v2/reservations/bookings",
     context,
@@ -199,7 +194,7 @@ async function listBookings(input: Record<string, unknown>, context: LodgifyActi
   };
 }
 
-async function getBooking(input: Record<string, unknown>, context: LodgifyActionContext): Promise<unknown> {
+async function getBooking(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const bookingId = readPositiveInteger(input.bookingId, "bookingId");
   const payload = await requestLodgifyJson({
     path: `/v2/reservations/bookings/${bookingId}`,
@@ -215,13 +210,13 @@ async function getBooking(input: Record<string, unknown>, context: LodgifyAction
 }
 
 async function requestLodgifyJson(input: LodgifyRequestInput): Promise<unknown> {
-  const timeout = createProviderTimeout(input.context.signal, lodgifyDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
 
   try {
     const response = await input.context.fetcher(buildLodgifyUrl(input.path, input.query), {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
         "X-ApiKey": input.context.apiKey,
       },

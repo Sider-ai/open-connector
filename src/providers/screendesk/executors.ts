@@ -1,0 +1,29 @@
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { screendeskActionHandlers, screendeskApiBaseUrl, validateScreendeskCredential } from "./runtime.ts";
+
+const service = "screendesk";
+
+export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, screendeskActionHandlers, {
+  skipDnsValidation: true,
+});
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: screendeskApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  defaultHeaders: { accept: "application/json" },
+  skipDnsValidation: true,
+});
+
+export const credentialValidators: CredentialValidators = {
+  async apiKey(input, { fetcher, signal }) {
+    await validateScreendeskCredential({ apiKey: input.apiKey, fetcher, signal });
+    return {
+      profile: { displayName: "Screendesk API Token" },
+      metadata: { apiBaseUrl: screendeskApiBaseUrl, validationEndpoint: "/recordings" },
+    };
+  },
+};

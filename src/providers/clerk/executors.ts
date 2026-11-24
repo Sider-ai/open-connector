@@ -1,10 +1,16 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
-import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { optionalRecord, optionalString } from "../../core/cast.ts";
 import { compactJson } from "../../core/request.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent, requiredInputString } from "../provider-runtime.ts";
 
 const service = "clerk";
 const clerkApiBaseUrl = "https://api.clerk.com/v1";
@@ -103,6 +109,16 @@ export const clerkActionHandlers: ProviderActionHandlers<"clerk", ClerkActionHan
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, clerkActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: clerkApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   apiKey(input, { fetcher, signal }) {
     return validateClerkCredential({ apiKey: input.apiKey, fetcher, signal });
@@ -129,7 +145,6 @@ async function validateClerkCredential(input: {
       accountId: instanceId ?? "clerk-api-key",
       displayName: instanceName ? `Clerk: ${instanceName}` : "Clerk API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: clerkApiBaseUrl,
       validationEndpoint: "/instance",
@@ -170,7 +185,7 @@ function buildUserFilterQuery(input: Record<string, unknown>, extraKeys: string[
 async function requestClerk(input: {
   path: string;
   method: string;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   phase: ClerkRequestPhase;
   query?: Array<[string, unknown]>;
   body?: Record<string, unknown>;
@@ -214,8 +229,8 @@ async function requestClerk(input: {
 
 function clerkHeaders(apiKey: string, hasBody: boolean): Headers {
   const headers = new Headers({
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "user-agent": providerUserAgent,
   });
   if (hasBody) {
@@ -287,8 +302,4 @@ function extractClerkErrorMessage(payload: unknown): string | undefined {
     );
   }
   return optionalString(record.message) ?? optionalString(record.error);
-}
-
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }

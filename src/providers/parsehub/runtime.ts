@@ -1,11 +1,12 @@
 import type { CredentialValidationResult, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalNumber, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
-const parsehubApiBaseUrl = "https://www.parsehub.com/api/v2";
+export const parsehubApiBaseUrl = "https://www.parsehub.com/api/v2";
 const parsehubProjectsPath = "/projects";
 const parsehubValidationLimit = 1;
 
@@ -45,7 +46,6 @@ export async function validateParsehubCredential(
     profile: {
       accountId: "parsehub-api-key",
       displayName: "ParseHub API Key",
-      grantedScopes: [],
     },
     metadata: compactObject({
       apiBaseUrl: parsehubApiBaseUrl,
@@ -104,7 +104,7 @@ async function requestParsehubJson(input: {
     response = await input.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
     });

@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import {
   compactObject,
@@ -15,13 +15,13 @@ import { encodePathSegment } from "../../core/request.ts";
 import {
   createProviderTimeout,
   isAbortLikeError,
+  providerInputError,
+  providerResponseError,
   providerUserAgent,
   ProviderRequestError,
 } from "../provider-runtime.ts";
 
 export const wrikeApiBaseUrl = "https://www.wrike.com/api/v4";
-
-const wrikeDefaultRequestTimeoutMs = 30_000;
 
 type WrikeRequestPhase = "validate" | "execute";
 type WrikeActionHandler = ProviderRuntimeHandler<ApiKeyProviderContext>;
@@ -97,7 +97,6 @@ export async function validateWrikeCredential(
       accountId: contactId ? `wrike:${contactId}` : undefined,
       displayName: displayName || contactId || "Wrike Access Token",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: wrikeApiBaseUrl,
       contactId,
@@ -110,7 +109,7 @@ export async function validateWrikeCredential(
 
 async function executeListContacts(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await wrikeRequest({
-    ...requestContext(context),
+    ...context,
     method: "GET",
     path: "/contacts",
     phase: "execute",
@@ -122,7 +121,7 @@ async function executeListContacts(input: Record<string, unknown>, context: ApiK
 
 async function executeListFolders(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await wrikeRequest({
-    ...requestContext(context),
+    ...context,
     method: "GET",
     path: "/folders",
     phase: "execute",
@@ -135,7 +134,7 @@ async function executeListFolders(input: Record<string, unknown>, context: ApiKe
 async function executeGetFolders(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const folderIds = requireStringArray(input.folderIds, "folderIds");
   const payload = await wrikeRequest({
-    ...requestContext(context),
+    ...context,
     method: "GET",
     path: `/folders/${encodeWrikeIdList(folderIds)}`,
     phase: "execute",
@@ -146,9 +145,9 @@ async function executeGetFolders(input: Record<string, unknown>, context: ApiKey
 }
 
 async function executeCreateFolder(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
-  const folderId = requiredString(input.folderId, "folderId", invalidInputError);
+  const folderId = requiredString(input.folderId, "folderId", providerInputError);
   const payload = await wrikeRequest({
-    ...requestContext(context),
+    ...context,
     method: "POST",
     path: `/folders/${encodePathSegment(folderId)}/folders`,
     phase: "execute",
@@ -160,7 +159,7 @@ async function executeCreateFolder(input: Record<string, unknown>, context: ApiK
 
 async function executeListTasks(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await wrikeRequest({
-    ...requestContext(context),
+    ...context,
     method: "GET",
     path: "/tasks",
     phase: "execute",
@@ -185,7 +184,7 @@ async function executeListTasks(input: Record<string, unknown>, context: ApiKeyP
 async function executeGetTasks(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const taskIds = requireStringArray(input.taskIds, "taskIds");
   const payload = await wrikeRequest({
-    ...requestContext(context),
+    ...context,
     method: "GET",
     path: `/tasks/${encodeWrikeIdList(taskIds)}`,
     phase: "execute",
@@ -196,9 +195,9 @@ async function executeGetTasks(input: Record<string, unknown>, context: ApiKeyPr
 }
 
 async function executeCreateTask(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
-  const folderId = requiredString(input.folderId, "folderId", invalidInputError);
+  const folderId = requiredString(input.folderId, "folderId", providerInputError);
   const payload = await wrikeRequest({
-    ...requestContext(context),
+    ...context,
     method: "POST",
     path: `/folders/${encodePathSegment(folderId)}/tasks`,
     phase: "execute",
@@ -225,14 +224,14 @@ async function wrikeRequest(input: WrikeRequestOptions): Promise<Record<string, 
     appendQueryParam(url, key, value);
   }
 
-  const timeout = createProviderTimeout(input.signal, wrikeDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   let response: Response;
   try {
     response = await input.fetcher(url, {
       method: input.method,
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${input.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${input.apiKey}`,
         "user-agent": providerUserAgent,
       },
       signal: timeout.signal,
@@ -364,14 +363,6 @@ function normalizeTask(input: Record<string, unknown>): Record<string, unknown> 
   };
 }
 
-function requestContext(context: ApiKeyProviderContext): Pick<WrikeRequestOptions, "apiKey" | "fetcher" | "signal"> {
-  return {
-    apiKey: context.apiKey,
-    fetcher: context.fetcher,
-    signal: context.signal,
-  };
-}
-
 function encodeWrikeIdList(ids: string[]): string {
   return ids.map((id) => encodePathSegment(id)).join(",");
 }
@@ -381,7 +372,7 @@ function requireStringArray(value: unknown, fieldName: string): string[] {
     throw new ProviderRequestError(400, `${fieldName} must be a non-empty array`);
   }
 
-  return value.map((item, index) => requiredString(item, `${fieldName}[${index}]`, invalidInputError));
+  return value.map((item, index) => requiredString(item, `${fieldName}[${index}]`, providerInputError));
 }
 
 function readResponseObject(value: unknown): Record<string, unknown> {
@@ -444,12 +435,4 @@ function mapWrikeError(status: number, payload: unknown, phase: WrikeRequestPhas
   }
 
   return new ProviderRequestError(status >= 500 ? 502 : status, description, payload);
-}
-
-function invalidInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
-}
-
-function providerResponseError(message: string): ProviderRequestError {
-  return new ProviderRequestError(502, message);
 }

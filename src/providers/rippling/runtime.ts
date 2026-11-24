@@ -1,9 +1,10 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
-import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
+import { providerUserAgent, ProviderRequestError, requiredInputString } from "../provider-runtime.ts";
 
 export const ripplingApiBaseUrl = "https://rest.ripplingapis.com";
 
@@ -42,7 +43,7 @@ export const ripplingActionHandlers: ProviderActionHandlers<"rippling", Rippling
     return normalizeResourceResponse(
       await requestRippling({
         ...context,
-        path: `/workers/${encodeURIComponent(requiredProviderString(input.id, "id"))}/`,
+        path: `/workers/${encodeURIComponent(requiredInputString(input.id, "id"))}/`,
         query: buildQuery(input, ["expand"]),
       }),
     );
@@ -83,7 +84,6 @@ export async function validateRipplingCredential(
       accountId: companyId ?? "api_key",
       displayName: companyName ?? companyId ?? "Rippling API Token",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: ripplingApiBaseUrl,
       validationEndpoint: "/companies/",
@@ -116,8 +116,8 @@ async function requestRippling(input: RipplingRequestOptions): Promise<unknown> 
     response = await input.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${input.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${input.apiKey}`,
         "user-agent": providerUserAgent,
       },
       signal: input.signal,
@@ -217,8 +217,4 @@ function extractRipplingErrorMessage(body: unknown): string | undefined {
     return undefined;
   }
   return optionalString(firstError.message) ?? optionalString(firstError.detail) ?? optionalString(firstError.title);
-}
-
-function requiredProviderString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }

@@ -1,7 +1,9 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ApiKeyProviderContext, ProviderActionHandlers, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ApiKeyProviderContext, ProviderActionHandlers, ProviderRuntimeHandler } from "../provider-executors.ts";
 
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { basicAuthorizationHeader, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "dealroom";
 const baseUrl = "https://api.dealroom.co/api/v1/";
@@ -24,12 +26,19 @@ const handlers: ProviderActionHandlers<"dealroom", ProviderRuntimeHandler<ApiKey
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, handlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl,
+  auth: { type: "api_key_basic", suffix: ":" },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     await request("companies", { limit: 1 }, { apiKey: input.apiKey, fetcher, signal });
     return {
       profile: { accountId: "dealroom", displayName: "Dealroom API Key" },
-      grantedScopes: [],
       metadata: { apiBaseUrl: baseUrl, validationEndpoint: "/companies" },
     };
   },
@@ -65,8 +74,8 @@ async function request(path: string, body: Record<string, unknown>, context: Api
   const response = await context.fetcher(new URL(path, baseUrl), {
     method: "POST",
     headers: {
-      authorization: `Basic ${btoa(`${context.apiKey}:`)}`,
-      accept: "application/json",
+      "authorization": basicAuthorizationHeader(`${context.apiKey}:`),
+      "accept": "application/json",
       "content-type": "application/json",
       "user-agent": providerUserAgent,
     },

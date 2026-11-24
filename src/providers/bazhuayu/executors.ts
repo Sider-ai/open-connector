@@ -5,22 +5,19 @@ import type {
   ProxyRequestInput,
   ResolvedCredential,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
 import type { BazhuayuRuntimeContext } from "./runtime.ts";
 
+import { requireCustomCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors, mapProviderActionHandlers } from "../provider-executors.ts";
 import {
   createProviderProxyUrl,
-  createProviderTimeout,
-  defineProviderExecutors,
-  mapProviderActionHandlers,
   normalizeProviderProxyHeaders,
-  providerFetch,
-  providerUserAgent,
   readProviderProxyResponse,
-  requireCustomCredential,
   toProviderProxyError,
-} from "../provider-runtime.ts";
+} from "../provider-proxy.ts";
+import { createProviderTimeout, providerFetch, providerUserAgent } from "../provider-runtime.ts";
 import { bazhuayuActions } from "./actions.ts";
 import {
   bazhuayuApiBaseUrl,
@@ -34,7 +31,6 @@ import {
 } from "./runtime.ts";
 
 const service = "bazhuayu";
-const requestTimeoutMs = 30_000;
 
 const handlers: ProviderActionHandlers<
   "bazhuayu",
@@ -62,8 +58,7 @@ export const credentialValidators: CredentialValidators = {
   async customCredential(input, options) {
     const profile = await validateBazhuayuCredential(input.values, options.fetcher, options.signal);
     return {
-      profile: { ...profile, grantedScopes: [] },
-      grantedScopes: [],
+      profile: { ...profile },
       metadata: {
         apiBaseUrl: bazhuayuApiBaseUrl,
       },
@@ -115,7 +110,7 @@ async function fetchProxy(
       headers.set("content-type", "application/json");
     }
   }
-  const timeout = createProviderTimeout(parentSignal, requestTimeoutMs);
+  const timeout = createProviderTimeout(parentSignal);
   try {
     return await providerFetch(url, { ...init, signal: timeout.signal });
   } finally {

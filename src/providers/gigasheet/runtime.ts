@@ -1,5 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
@@ -71,7 +71,6 @@ export async function validateGigasheetCredential(
       accountId: username ? `gigasheet:${username}` : "gigasheet",
       displayName: username ?? "Gigasheet API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       validationEndpoint: gigasheetValidationPath,
       username,
@@ -256,7 +255,7 @@ async function requestGigasheet(input: GigasheetRequestInput): Promise<Response>
 
 function gigasheetHeaders(apiKey: string, includeBody: boolean): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     "X-GIGASHEET-TOKEN": apiKey,
   };

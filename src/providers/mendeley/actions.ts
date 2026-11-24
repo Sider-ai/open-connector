@@ -4,8 +4,7 @@ import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
 
 const service = "mendeley";
-const readScope = "mendeley.documents.read";
-const writeScope = "mendeley.documents.write";
+const documentScope = "all";
 
 const rawDocumentSchema = s.looseObject("The raw Mendeley document object.");
 const documentViewSchema = s.anyOf("The Mendeley document view to request.", [
@@ -43,8 +42,9 @@ const paginationProperties = {
 export const mendeleyActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "list_documents",
+    operationType: "read",
     description: "List document metadata from the authorized user's Mendeley library.",
-    requiredScopes: [readScope],
+    requiredScopes: [documentScope],
     inputSchema: s.object(
       "Input parameters for listing Mendeley documents.",
       {
@@ -74,8 +74,9 @@ export const mendeleyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_document",
+    operationType: "read",
     description: "Get document metadata from the authorized user's Mendeley library by ID.",
-    requiredScopes: [readScope],
+    requiredScopes: [documentScope],
     inputSchema: s.object(
       "Input parameters for getting a Mendeley document.",
       {
@@ -90,8 +91,9 @@ export const mendeleyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_document",
+    operationType: "write",
     description: "Create a document in the authorized user's Mendeley library from JSON metadata.",
-    requiredScopes: [writeScope],
+    requiredScopes: [documentScope],
     inputSchema: s.object("Metadata for creating a Mendeley document.", documentMetadataProperties, {
       optional: ["source", "year", "abstract", "authors", "identifiers", "tags"],
     }),
@@ -101,8 +103,9 @@ export const mendeleyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "update_document",
+    operationType: "write",
     description: "Update selected metadata fields on a Mendeley library document.",
-    requiredScopes: [writeScope],
+    requiredScopes: [documentScope],
     inputSchema: s.object(
       "Metadata fields to update on a Mendeley document.",
       {
@@ -119,8 +122,9 @@ export const mendeleyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "delete_document",
+    operationType: "destructive",
     description: "Permanently delete a document from the authorized user's Mendeley library.",
-    requiredScopes: [writeScope],
+    requiredScopes: [documentScope],
     inputSchema: s.object("Input parameters for deleting a Mendeley document.", {
       documentId: s.nonEmptyString("The Mendeley document UUID."),
     }),
@@ -131,8 +135,9 @@ export const mendeleyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "search_catalog",
+    operationType: "read",
     description: "Search Mendeley's public catalog for document metadata.",
-    requiredScopes: [readScope],
+    requiredScopes: [documentScope],
     inputSchema: s.object(
       "Input parameters for searching the Mendeley catalog.",
       {
@@ -152,8 +157,9 @@ export const mendeleyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_catalog_document",
+    operationType: "read",
     description: "Get a public Mendeley catalog document by its Mendeley ID.",
-    requiredScopes: [readScope],
+    requiredScopes: [documentScope],
     inputSchema: s.object("Input parameters for getting a catalog document.", {
       documentId: s.nonEmptyString("The Mendeley catalog document UUID."),
     }),
@@ -162,11 +168,6 @@ export const mendeleyActions: ActionDefinition[] = [
     }),
   }),
 ];
-
-export const mendeleyConnectorScopes: Record<string, string> = {
-  documentsRead: readScope,
-  documentsWrite: writeScope,
-};
 
 export const mendeleyProviderScopes: Record<string, string> = {
   all: "all",

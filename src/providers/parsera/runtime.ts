@@ -1,9 +1,10 @@
 import type { CredentialValidationResult, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const parseraApiBaseUrl = "https://api.parsera.org";
 const parseraValidationPath = "/readyz";
@@ -42,7 +43,6 @@ export async function validateParseraCredential(
     profile: {
       accountId: "parsera-api-key",
       displayName: "Parsera API Key",
-      grantedScopes: [],
     },
     metadata: compactObject({
       apiBaseUrl: parseraApiBaseUrl,
@@ -118,7 +118,7 @@ async function parseraPostJson(
 
 function parseraHeaders(apiKey: string, hasBody: boolean) {
   const headers: Record<string, string> = {
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     "X-API-KEY": apiKey,
   };

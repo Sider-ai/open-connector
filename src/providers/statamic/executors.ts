@@ -1,19 +1,18 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
-  createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  isAbortLikeError,
+  providerInputError,
   ProviderRequestError,
   providerUserAgent,
+  runProviderRequest,
 } from "../provider-runtime.ts";
 
 const service = "statamic";
 const statamicApiBaseUrl = "https://statamic.com/api/v1";
-const statamicDefaultRequestTimeoutMs = 30_000;
 
 type StatamicPhase = "validate" | "execute";
 type StatamicActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
@@ -48,7 +47,7 @@ export const statamicActionHandlers: ProviderActionHandlers<"statamic", Statamic
   async update_site(input, context) {
     assertSiteMutationInput(input, true);
     const payload = await requestStatamicJson({
-      path: `/sites/${encodeURIComponent(requiredString(input.key, "key", invalidInputError))}`,
+      path: `/sites/${encodeURIComponent(requiredString(input.key, "key", providerInputError))}`,
       method: "PATCH",
       context,
       body: buildSiteMutationBody(input),
@@ -61,7 +60,7 @@ export const statamicActionHandlers: ProviderActionHandlers<"statamic", Statamic
   },
   async delete_site(input, context) {
     const payload = await requestStatamicJson({
-      path: `/sites/${encodeURIComponent(requiredString(input.key, "key", invalidInputError))}`,
+      path: `/sites/${encodeURIComponent(requiredString(input.key, "key", providerInputError))}`,
       method: "DELETE",
       context,
       phase: "execute",
@@ -74,6 +73,14 @@ export const statamicActionHandlers: ProviderActionHandlers<"statamic", Statamic
 };
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, statamicActionHandlers);
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: statamicApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
 
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
@@ -93,7 +100,6 @@ export const credentialValidators: CredentialValidators = {
           ? `Statamic: ${optionalString(firstSite?.name)}`
           : "Statamic API Token",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: statamicApiBaseUrl,
         validationEndpoint: "/sites",
@@ -108,15 +114,14 @@ export const credentialValidators: CredentialValidators = {
 async function requestStatamicJson(input: {
   path: string;
   method: "GET" | "POST" | "PATCH" | "DELETE";
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   phase: StatamicPhase;
   body?: Record<string, unknown>;
 }): Promise<Record<string, unknown>> {
-  const timeout = createProviderTimeout(input.context.signal, statamicDefaultRequestTimeoutMs);
-  try {
+  return runProviderRequest({ signal: input.context.signal, label: "Statamic" }, async (signal) => {
     const headers: Record<string, string> = {
-      accept: "application/json",
-      authorization: `Bearer ${input.context.apiKey}`,
+      "accept": "application/json",
+      "authorization": `Bearer ${input.context.apiKey}`,
       "user-agent": providerUserAgent,
     };
     if (input.body !== undefined) {
@@ -127,7 +132,7 @@ async function requestStatamicJson(input: {
       method: input.method,
       headers,
       body: input.body === undefined ? undefined : JSON.stringify(input.body),
-      signal: timeout.signal,
+      signal,
     });
     const payload = await readStatamicPayload(response);
 
@@ -140,20 +145,7 @@ async function requestStatamicJson(input: {
       throw new ProviderRequestError(502, "Statamic returned an invalid payload");
     }
     return payloadRecord;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-    if (timeout.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "Statamic request timed out");
-    }
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Statamic request failed: ${error.message}` : "Statamic request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+  });
 }
 
 function buildStatamicUrl(path: string): string {
@@ -274,7 +266,7 @@ function readOptionalStringList(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) {
     throw new ProviderRequestError(400, "domains must be an array");
   }
-  return value.map((item) => requiredString(item, "domains item", invalidInputError));
+  return value.map((item) => requiredString(item, "domains item", providerInputError));
 }
 
 function readResponseStringList(value: unknown): string[] | undefined {
@@ -285,8 +277,4 @@ function readResponseStringList(value: unknown): string[] | undefined {
     throw new ProviderRequestError(502, "Statamic response has invalid domains field");
   }
   return value.filter((item): item is string => typeof item === "string");
-}
-
-function invalidInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

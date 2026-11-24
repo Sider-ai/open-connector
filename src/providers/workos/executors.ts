@@ -1,13 +1,23 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
-import { compactObject, optionalBoolean, optionalRecord, optionalString } from "../../core/cast.ts";
+import { compactObject, looseArray, optionalBoolean, optionalRecord, optionalString } from "../../core/cast.ts";
 import { encodePathSegment } from "../../core/request.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "workos";
 const workosApiBaseUrl = "https://api.workos.com";
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: workosApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
 
 type WorkosActionHandler = ProviderRuntimeHandler<ApiKeyProviderContext>;
 
@@ -123,7 +133,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "workos-api-key",
         displayName: "WorkOS API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: workosApiBaseUrl,
         validationEndpoint: "/organizations?limit=1",
@@ -147,7 +156,7 @@ async function executeListAction(
     phase: "execute",
   });
   return {
-    [listKey]: readArray(payload.data),
+    [listKey]: looseArray(payload.data),
     list_metadata: optionalRecord(payload.list_metadata) ?? {},
     raw: payload,
   };
@@ -227,8 +236,8 @@ async function workosRequest(input: {
 
 function workosHeaders(apiKey: string, extraHeaders: Record<string, string>): Headers {
   return new Headers({
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "user-agent": providerUserAgent,
     ...extraHeaders,
   });
@@ -335,8 +344,4 @@ function buildOrganizationMembershipBody(input: Record<string, unknown>): Record
 
 function readWrappedObject(payload: Record<string, unknown>, wrapperKey: string): Record<string, unknown> {
   return optionalRecord(payload[wrapperKey]) ?? payload;
-}
-
-function readArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
 }

@@ -1,19 +1,18 @@
 import type { CredentialValidationResult, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
-import type { ProspeoActionName } from "./actions.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
 import {
-  defineApiKeyProviderExecutors,
-  getProviderActionHandler,
+  isAbortLikeError,
+  requiredResponseRecord,
   ProviderRequestError,
   providerUserAgent,
+  defaultProviderRequestTimeoutMs,
 } from "../provider-runtime.ts";
 
 export const prospeoApiBaseUrl = "https://api.prospeo.io";
-
-const defaultRequestTimeoutMs = 30_000;
 
 type ProspeoMode = "validate" | "execute";
 
@@ -88,7 +87,7 @@ export const prospeoActionHandlers: ProviderActionHandlers<"prospeo", ProspeoAct
     );
 
     return {
-      people: readPayloadArray(payload, "people"),
+      people: readSearchResults(payload, "person"),
       pagination: readPagination(payload),
       raw: payload,
     };
@@ -105,7 +104,7 @@ export const prospeoActionHandlers: ProviderActionHandlers<"prospeo", ProspeoAct
     );
 
     return {
-      companies: readPayloadArray(payload, "companies"),
+      companies: readSearchResults(payload, "company"),
       pagination: readPagination(payload),
       raw: payload,
     };
@@ -150,9 +149,7 @@ export async function validateProspeoCredential(
     profile: {
       accountId: account.email ?? "prospeo",
       displayName: account.email ?? "Prospeo API Key",
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: prospeoApiBaseUrl,
       validationEndpoint: "/account-information",
@@ -161,25 +158,6 @@ export async function validateProspeoCredential(
       credits: account.credits ?? undefined,
     }),
   };
-}
-
-export async function executeProspeoAction(
-  input: {
-    actionName: ProspeoActionName;
-    input: Record<string, unknown>;
-    apiKey: string;
-  },
-  fetcher: typeof fetch,
-): Promise<unknown> {
-  const handler = getProviderActionHandler(prospeoActionHandlers, input.actionName);
-  if (!handler) {
-    throw new ProviderRequestError(400, `unknown prospeo action: ${input.actionName}`);
-  }
-
-  return handler(input.input, {
-    apiKey: input.apiKey,
-    fetcher,
-  });
 }
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(
@@ -192,7 +170,7 @@ export const executors: ProviderExecutors = defineApiKeyProviderExecutors(
 
 async function requestProspeoJson(input: ProspeoRequestInput, context: ProspeoRequestContext) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), defaultRequestTimeoutMs);
+  const timeout = setTimeout(() => controller.abort(), defaultProviderRequestTimeoutMs);
 
   try {
     const response = await context.fetcher(buildProspeoUrl(input.path), {
@@ -238,7 +216,7 @@ function buildProspeoUrl(path: string) {
 
 function buildProspeoHeaders(apiKey: string, hasBody: boolean) {
   return compactObject({
-    accept: "application/json",
+    "accept": "application/json",
     "content-type": hasBody ? "application/json" : undefined,
     "user-agent": providerUserAgent,
     "X-KEY": apiKey,
@@ -286,6 +264,11 @@ function readProspeoErrorMessage(payload: unknown) {
     return undefined;
   }
 
+  const code = optionalString(object.error_code)?.trim();
+  const detail = optionalString(object.filter_error)?.trim();
+  if (code || detail) {
+    return [code, detail].filter(Boolean).join(": ");
+  }
   return optionalString(object.message) || optionalString(object.error) || optionalString(object.detail) || undefined;
 }
 
@@ -312,23 +295,14 @@ function readPayloadRecord(payload: Record<string, unknown>, preferredKey: strin
   return optionalRecord(data[preferredKey]) ?? data;
 }
 
-function readPayloadArray(payload: Record<string, unknown>, preferredKey: string) {
-  const direct = payload[preferredKey];
-  if (Array.isArray(direct)) {
-    return normalizeArrayItems(direct);
+function readSearchResults(payload: Record<string, unknown>, key: "person" | "company"): Record<string, unknown>[] {
+  if (!Array.isArray(payload.results)) {
+    throw new ProviderRequestError(502, "Prospeo search response is missing results");
   }
-
-  const data = payload.data;
-  if (Array.isArray(data)) {
-    return normalizeArrayItems(data);
-  }
-
-  const dataObject = optionalRecord(data);
-  if (dataObject && Array.isArray(dataObject[preferredKey])) {
-    return normalizeArrayItems(dataObject[preferredKey]);
-  }
-
-  return [];
+  return payload.results.map((result) => {
+    const entry = requiredResponseRecord(result, "Prospeo search result");
+    return requiredResponseRecord(entry[key], `Prospeo search result ${key}`);
+  });
 }
 
 function normalizeArrayItems(items: unknown[]) {
@@ -345,7 +319,7 @@ function readPagination(payload: Record<string, unknown>) {
   }
 
   return {
-    total: readFirstInteger(pagination, ["total", "total_results", "totalResults", "count"]),
+    total: readFirstInteger(pagination, ["total_count", "total", "total_results", "totalResults", "count"]),
     page: readFirstInteger(pagination, ["page", "current_page", "currentPage"]),
     perPage: readFirstInteger(pagination, ["per_page", "perPage", "limit"]),
   };
@@ -532,11 +506,4 @@ function readFirstObject(input: Record<string, unknown>, keys: string[]) {
 function readNonEmptyString(value: unknown) {
   const text = optionalString(value);
   return text || undefined;
-}
-
-function isAbortLikeError(error: unknown) {
-  return (
-    error instanceof DOMException ||
-    (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))
-  );
 }

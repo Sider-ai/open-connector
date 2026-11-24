@@ -1,5 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -13,7 +13,12 @@ import {
   requiredString,
   stringArray,
 } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import {
+  providerInputError,
+  providerUserAgent,
+  ProviderRequestError,
+  requiredInputString,
+} from "../provider-runtime.ts";
 
 const mapleBillingApiBaseUrl = "https://api.getmeasure.com/api/v1";
 const mapleBillingCredentialHelpUrl = "https://docs.getmeasure.com/pages/guides/quickstart-with-api";
@@ -109,7 +114,6 @@ export async function validateMapleBillingCredential(
       accountId: `maple_billing:${companyId}`,
       displayName: `Measure ${companyId}`,
     },
-    grantedScopes: [],
     metadata: compactObject({
       companyId,
       apiBaseUrl: buildMapleBillingApiBaseUrl(companyId),
@@ -121,7 +125,7 @@ export async function validateMapleBillingCredential(
   };
 }
 
-function normalizeMapleBillingCompanyId(value: unknown): string {
+export function normalizeMapleBillingCompanyId(value: unknown): string {
   const normalized = optionalString(value);
   if (!normalized) {
     throw new ProviderRequestError(400, "companyId is required");
@@ -132,7 +136,7 @@ function normalizeMapleBillingCompanyId(value: unknown): string {
   return normalized;
 }
 
-function buildMapleBillingApiBaseUrl(companyId: string): string {
+export function buildMapleBillingApiBaseUrl(companyId: string): string {
   return `${mapleBillingApiBaseUrl}/companies/${encodeURIComponent(companyId)}`;
 }
 
@@ -328,8 +332,8 @@ async function requestMapleBillingJson(input: MapleBillingRequestInput): Promise
 function mapleBillingFetch(input: MapleBillingRequestInput): Promise<Response> {
   const url = new URL(pathWithoutLeadingSlash(input.path), `${buildMapleBillingApiBaseUrl(input.companyId)}/`);
   const headers = new Headers({
-    accept: "application/json",
-    authorization: `Bearer ${input.apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${input.apiKey}`,
     "content-type": "application/json",
     "user-agent": providerUserAgent,
   });
@@ -441,7 +445,7 @@ function buildCheckoutSessionBody(input: Record<string, unknown>): Record<string
     change_proration_type: optionalString(input.changeProrationType),
     change_reset_billing_anchor: optionalBoolean(input.changeResetBillingAnchor),
     change_timing: optionalString(input.changeTiming),
-    config_items: objectArray(input.configItems, "configItems", providerError),
+    config_items: objectArray(input.configItems, "configItems", providerInputError),
     customer_id: requiredInputString(input.customerId, "customerId"),
     discounts: optionalProviderObjectArray(input.discounts, "discounts"),
     metadata: optionalRecord(input.metadata),
@@ -532,10 +536,6 @@ function normalizeCheckoutSession(checkoutSession: Record<string, unknown>): Rec
   };
 }
 
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
-}
-
 function requiredOutputString(value: unknown, fieldName: string): string {
   return requiredString(
     value,
@@ -552,18 +552,16 @@ function optionalStringArray(value: unknown): string[] | undefined {
   if (value === undefined) {
     return undefined;
   }
-  return stringArray(value, "array", providerError).map((item, index) => requiredInputString(item, `array[${index}]`));
+  return stringArray(value, "array", providerInputError).map((item, index) =>
+    requiredInputString(item, `array[${index}]`),
+  );
 }
 
 function optionalProviderObjectArray(value: unknown, fieldName: string): Array<Record<string, unknown>> | undefined {
   if (value === undefined) {
     return undefined;
   }
-  return optionalObjectArray(value, fieldName, providerError);
-}
-
-function providerError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
+  return optionalObjectArray(value, fieldName, providerInputError);
 }
 
 function pathWithoutLeadingSlash(path: string): string {

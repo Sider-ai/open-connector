@@ -1,12 +1,12 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { createHash } from "node:crypto";
 import { optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
@@ -15,7 +15,6 @@ import {
 const service = "oncehub";
 const oncehubApiBaseUrl = "https://api.oncehub.com";
 const oncehubValidationPath = "/test";
-const oncehubRequestTimeoutMs = 30_000;
 
 type OncehubRequestPhase = "validate" | "execute";
 type OncehubActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
@@ -28,7 +27,7 @@ interface OncehubListInput {
 }
 
 interface OncehubRequestInput extends OncehubListInput {
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
 }
 
 interface OncehubCursors {
@@ -44,7 +43,7 @@ export const oncehubActionHandlers: ProviderActionHandlers<"oncehub", OncehubAct
       query: {
         ...input,
         "last_updated_time.gt": input.lastUpdatedTimeGt,
-        lastUpdatedTimeGt: undefined,
+        "lastUpdatedTimeGt": undefined,
       },
       phase: "execute",
     });
@@ -69,6 +68,16 @@ export const oncehubActionHandlers: ProviderActionHandlers<"oncehub", OncehubAct
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, oncehubActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: oncehubApiBaseUrl,
+  auth: { type: "api_key_header", name: "API-Key" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = await requestOncehubJson({
@@ -88,7 +97,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: `oncehub:api_key:${tokenHash}`,
         displayName: "OnceHub API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: oncehubApiBaseUrl,
         validationEndpoint: oncehubValidationPath,
@@ -132,12 +140,12 @@ async function requestOncehubJson(input: OncehubRequestInput): Promise<unknown> 
 }
 
 async function requestOncehubResponse(input: OncehubRequestInput): Promise<Response> {
-  const timeout = createProviderTimeout(input.context.signal, oncehubRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   try {
     return await input.context.fetcher(buildOncehubUrl(input.path, input.query), {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "api-key": input.context.apiKey,
         "user-agent": providerUserAgent,
       },

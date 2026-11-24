@@ -1,11 +1,10 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
-import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { ProviderRequestError, providerUserAgent, requiredResponseRecord } from "../provider-runtime.ts";
 
-const googleAddressValidationApiBaseUrl = "https://addressvalidation.googleapis.com";
+export const googleAddressValidationApiBaseUrl = "https://addressvalidation.googleapis.com";
 
 type GoogleAddressValidationActionHandler = (
   input: Record<string, unknown>,
@@ -52,7 +51,6 @@ export async function validateGoogleAddressValidationCredential(
       accountId: "google_address_validation",
       displayName: "Google Address Validation API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: googleAddressValidationApiBaseUrl,
       validationEndpoint: "/v1:validateAddress",
@@ -63,7 +61,7 @@ export async function validateGoogleAddressValidationCredential(
 async function googleAddressValidationRequest(
   path: string,
   body: Record<string, unknown>,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
   const url = new URL(path, googleAddressValidationApiBaseUrl);
   url.searchParams.set("key", context.apiKey);
@@ -101,7 +99,7 @@ async function googleAddressValidationRequest(
     return {};
   }
 
-  return requireObject(payload, "Google Address Validation response");
+  return requiredResponseRecord(payload, "Google Address Validation response");
 }
 
 async function readGoogleAddressValidationPayload(response: Response): Promise<unknown> {
@@ -136,12 +134,4 @@ function extractGoogleAddressValidationMessage(payload: unknown): string | undef
   const error = optionalRecord(record?.error);
 
   return optionalString(error?.message) ?? optionalString(record?.message);
-}
-
-function requireObject(value: unknown, label: string): Record<string, unknown> {
-  const record = optionalRecord(value);
-  if (!record) {
-    throw new ProviderRequestError(502, `${label} must be an object`);
-  }
-  return record;
 }

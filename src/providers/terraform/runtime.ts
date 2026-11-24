@@ -1,9 +1,8 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
-import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
+import { ProviderRequestError, providerUserAgent, requiredInputString } from "../provider-runtime.ts";
 
 export const terraformApiBaseUrl = "https://app.terraform.io/api/v2";
 
@@ -48,7 +47,7 @@ export const terraformActionHandlers: ProviderActionHandlers<"terraform", Terraf
   },
 
   async get_organization(input, context) {
-    const organizationName = requireInputString(input.organizationName, "organizationName");
+    const organizationName = requiredInputString(input.organizationName, "organizationName");
     const payload = await requestTerraformJson(
       {
         path: `/organizations/${encodeURIComponent(organizationName)}`,
@@ -63,7 +62,7 @@ export const terraformActionHandlers: ProviderActionHandlers<"terraform", Terraf
   },
 
   async list_workspaces(input, context) {
-    const organizationName = requireInputString(input.organizationName, "organizationName");
+    const organizationName = requiredInputString(input.organizationName, "organizationName");
     const payload = await requestTerraformJson(
       {
         path: `/organizations/${encodeURIComponent(organizationName)}/workspaces`,
@@ -79,7 +78,7 @@ export const terraformActionHandlers: ProviderActionHandlers<"terraform", Terraf
   },
 
   async get_workspace_by_id(input, context) {
-    const workspaceId = requireInputString(input.workspaceId, "workspaceId");
+    const workspaceId = requiredInputString(input.workspaceId, "workspaceId");
     const payload = await requestTerraformJson(
       {
         path: `/workspaces/${encodeURIComponent(workspaceId)}`,
@@ -94,8 +93,8 @@ export const terraformActionHandlers: ProviderActionHandlers<"terraform", Terraf
   },
 
   async get_workspace_by_name(input, context) {
-    const organizationName = requireInputString(input.organizationName, "organizationName");
-    const workspaceName = requireInputString(input.workspaceName, "workspaceName");
+    const organizationName = requiredInputString(input.organizationName, "organizationName");
+    const workspaceName = requiredInputString(input.workspaceName, "workspaceName");
     const payload = await requestTerraformJson(
       {
         path: `/organizations/${encodeURIComponent(organizationName)}/workspaces/${encodeURIComponent(workspaceName)}`,
@@ -110,7 +109,7 @@ export const terraformActionHandlers: ProviderActionHandlers<"terraform", Terraf
   },
 
   async list_workspace_runs(input, context) {
-    const workspaceId = requireInputString(input.workspaceId, "workspaceId");
+    const workspaceId = requiredInputString(input.workspaceId, "workspaceId");
     const payload = await requestTerraformJson(
       {
         path: `/workspaces/${encodeURIComponent(workspaceId)}/runs`,
@@ -132,7 +131,7 @@ export const terraformActionHandlers: ProviderActionHandlers<"terraform", Terraf
   },
 
   async get_run(input, context) {
-    const runId = requireInputString(input.runId, "runId");
+    const runId = requiredInputString(input.runId, "runId");
     const payload = await requestTerraformJson(
       {
         path: `/runs/${encodeURIComponent(runId)}`,
@@ -170,7 +169,6 @@ export async function validateTerraformCredential(
       accountId: userId,
       displayName: username ?? email ?? "Terraform API Token",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: terraformApiBaseUrl,
       validationEndpoint: terraformValidationPath,
@@ -183,7 +181,7 @@ export async function validateTerraformCredential(
 
 async function requestTerraformJson(
   options: TerraformRequestOptions,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
   const url = new URL(`${terraformApiBaseUrl}${options.path}`);
   for (const [key, value] of Object.entries(options.query ?? {})) {
@@ -195,8 +193,8 @@ async function requestTerraformJson(
   const response = await context.fetcher(url, {
     method: "GET",
     headers: {
-      accept: "application/vnd.api+json",
-      authorization: `Bearer ${context.apiKey}`,
+      "accept": "application/vnd.api+json",
+      "authorization": `Bearer ${context.apiKey}`,
       "content-type": "application/vnd.api+json",
       "user-agent": providerUserAgent,
     },
@@ -325,10 +323,6 @@ function optionalPositiveIntegerString(value: unknown, fieldName: string): strin
     throw new ProviderRequestError(400, `${fieldName} must be a positive integer`);
   }
   return String(parsed);
-}
-
-function requireInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function commaSeparated(value: unknown): string | undefined {

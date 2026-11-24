@@ -4,8 +4,7 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -15,14 +14,13 @@ import {
   optionalString,
   requiredString,
 } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy, providerProxyEndpointPrefixes } from "../provider-proxy.ts";
 import {
-  createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
-  isAbortLikeError,
-  providerProxyEndpointPrefixes,
+  providerInputError,
   ProviderRequestError,
   providerUserAgent,
+  runProviderRequest,
 } from "../provider-runtime.ts";
 
 const service = "zenrows";
@@ -110,7 +108,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: service,
         displayName: "ZenRows API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         validationEndpoint: "/v1/subscriptions/self/details/",
         apiBaseUrl: "https://api.zenrows.com/v1",
@@ -125,7 +122,7 @@ export const credentialValidators: CredentialValidators = {
 };
 
 async function requestZenrowsUsage(
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: ZenrowsPhase,
 ): Promise<Record<string, unknown>> {
   const response = await requestZenrowsUrl(zenrowsSubscriptionsApiUrl, {}, context, "header", phase);
@@ -135,7 +132,7 @@ async function requestZenrowsUsage(
 
 async function requestZenrowsRaw(
   query: Record<string, ZenrowsQueryValue>,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: ZenrowsPhase,
 ): Promise<Response> {
   return requestZenrowsUrl(zenrowsApiBaseUrl, query, context, "query", phase);
@@ -144,45 +141,33 @@ async function requestZenrowsRaw(
 async function requestZenrowsUrl(
   url: string,
   query: Record<string, ZenrowsQueryValue>,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   authLocation: ZenrowsAuthLocation,
   phase: ZenrowsPhase,
 ): Promise<Response> {
-  const timeout = createProviderTimeout(context.signal, zenrowsDefaultRequestTimeoutMs);
-
-  try {
-    const response = await context.fetcher(
-      buildZenrowsUrl(url, query, authLocation === "query" ? context.apiKey : undefined),
-      {
-        method: "GET",
-        headers: {
-          accept: "*/*",
-          ...(authLocation === "header" ? { "x-api-key": context.apiKey } : {}),
-          "user-agent": providerUserAgent,
+  return runProviderRequest(
+    { signal: context.signal, timeoutMs: zenrowsDefaultRequestTimeoutMs, label: "ZenRows" },
+    async (signal) => {
+      const response = await context.fetcher(
+        buildZenrowsUrl(url, query, authLocation === "query" ? context.apiKey : undefined),
+        {
+          method: "GET",
+          headers: {
+            "accept": "*/*",
+            ...(authLocation === "header" ? { "x-api-key": context.apiKey } : {}),
+            "user-agent": providerUserAgent,
+          },
+          signal,
         },
-        signal: timeout.signal,
-      },
-    );
+      );
 
-    if (!response.ok) {
-      throw createZenrowsError(response.status, await response.text(), phase);
-    }
+      if (!response.ok) {
+        throw createZenrowsError(response.status, await response.text(), phase);
+      }
 
-    return response;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-    if (timeout.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "ZenRows request timed out");
-    }
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `ZenRows request failed: ${error.message}` : "ZenRows request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+      return response;
+    },
+  );
 }
 
 function buildZenrowsUrl(url: string, query: Record<string, ZenrowsQueryValue>, apiKey: string | undefined): string {
@@ -322,10 +307,6 @@ function readOptionalHeaderInteger(headers: Headers, name: string): number | nul
 
   const value = Number(raw);
   return Number.isInteger(value) ? value : null;
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }
 
 export const proxy: ProviderProxyExecutor = defineProviderProxy({

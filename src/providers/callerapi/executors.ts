@@ -1,14 +1,10 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalBoolean, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
-import {
-  defineApiKeyProviderExecutors,
-  ProviderRequestError,
-  providerUserAgent,
-  setSearchParams,
-} from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent, setSearchParams } from "../provider-runtime.ts";
 
 const service = "callerapi";
 const callerapiApiBaseUrl = "https://api.callerapi.com";
@@ -40,6 +36,16 @@ const callerapiActionHandlers: ProviderActionHandlers<"callerapi", CallerapiActi
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, callerapiActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: callerapiApiBaseUrl,
+  auth: { type: "api_key_header", name: "x-auth" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = await requestCallerapi({
@@ -58,7 +64,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: email ?? "callerapi",
         displayName: email ?? "CallerAPI Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         validationEndpoint: "/api/me",
         apiBaseUrl: callerapiApiBaseUrl,
@@ -73,7 +78,7 @@ export const credentialValidators: CredentialValidators = {
 
 async function requestCallerapi(input: {
   path: string;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   phase: CallerapiRequestPhase;
   query?: Record<string, string | undefined>;
 }): Promise<Record<string, unknown>> {
@@ -86,7 +91,7 @@ async function requestCallerapi(input: {
     response = await input.context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
         "x-auth": input.context.apiKey,
       },

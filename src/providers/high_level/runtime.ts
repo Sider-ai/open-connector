@@ -1,6 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { createHash } from "node:crypto";
 import {
@@ -13,13 +12,12 @@ import {
 } from "../../core/cast.ts";
 import { createProviderTimeout, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
-const highLevelApiBaseUrl = "https://services.leadconnectorhq.com";
-const highLevelApiVersion = "2021-07-28";
-const highLevelDefaultRequestTimeoutMs = 30_000;
+export const highLevelApiBaseUrl = "https://services.leadconnectorhq.com";
+export const highLevelApiVersion = "2021-07-28";
 
 type HighLevelRequestPhase = "validate" | "execute";
 
-export interface HighLevelContext extends Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal"> {
+export interface HighLevelContext extends ApiKeyProviderContext {
   locationId: string;
 }
 
@@ -137,7 +135,6 @@ export async function validateHighLevelCredential(
       accountId: `high_level:${createHash("sha256").update(`${apiKey}:${locationId}`).digest("hex").slice(0, 16)}`,
       displayName: label,
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: highLevelApiBaseUrl,
       validationEndpoint,
@@ -151,7 +148,7 @@ export function readHighLevelLocationId(value: unknown): string {
 }
 
 async function requestHighLevelJson(input: HighLevelRequestInput): Promise<Record<string, unknown>> {
-  const timeout = createProviderTimeout(input.signal, highLevelDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   try {
     const response = await input.fetcher(buildHighLevelUrl(input.path), {
       method: input.method,
@@ -180,9 +177,9 @@ async function requestHighLevelJson(input: HighLevelRequestInput): Promise<Recor
 
 function highLevelHeaders(apiKey: string, hasBody: boolean): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
-    version: highLevelApiVersion,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
+    "version": highLevelApiVersion,
     "user-agent": providerUserAgent,
   };
   if (hasBody) {
@@ -259,6 +256,6 @@ function readPathId(value: unknown, fieldName: string): string {
   return encodeURIComponent(requiredString(value, fieldName, (message) => new ProviderRequestError(400, message)));
 }
 
-function readActionLocationId(context: Pick<HighLevelContext, "locationId">, override: unknown): string {
+function readActionLocationId(context: HighLevelContext, override: unknown): string {
   return optionalString(override) ?? context.locationId;
 }

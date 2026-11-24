@@ -4,8 +4,8 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -19,12 +19,9 @@ import {
   requiredString,
   stringArray,
 } from "../../core/cast.ts";
-import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
-  ProviderRequestError,
-  providerUserAgent,
-} from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent, requiredInputString } from "../provider-runtime.ts";
 
 const service = "roboflow";
 const roboflowApiBaseUrl = "https://api.roboflow.com";
@@ -85,7 +82,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: workspace ?? "roboflow-api-key",
         displayName: workspace ? `Roboflow workspace ${workspace}` : "Roboflow API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: roboflowApiBaseUrl,
         validationEndpoint: validationPath,
@@ -402,8 +398,8 @@ async function roboflowRequestJson(
 
 function roboflowHeaders(contentType?: string): Record<string, string> {
   return contentType
-    ? { accept: "application/json", "content-type": contentType, "user-agent": providerUserAgent }
-    : { accept: "application/json", "user-agent": providerUserAgent };
+    ? { "accept": "application/json", "content-type": contentType, "user-agent": providerUserAgent }
+    : { "accept": "application/json", "user-agent": providerUserAgent };
 }
 
 async function readRoboflowPayload(response: Response): Promise<unknown> {
@@ -566,10 +562,6 @@ function normalizePrediction(prediction: unknown): Record<string, unknown> {
     detectionId: optionalScalarString(record.detection_id ?? record.detectionId) ?? null,
     raw: record,
   };
-}
-
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function requireNumber(value: unknown, fieldName: string): number {

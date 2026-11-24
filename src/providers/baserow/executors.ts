@@ -1,14 +1,18 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
-import { compactObject, optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import {
-  defineProviderExecutors,
-  ProviderRequestError,
-  providerUserAgent,
-  requireApiKeyCredential,
-} from "../provider-runtime.ts";
+  compactObject,
+  optionalBoolean,
+  optionalInteger,
+  optionalRecord,
+  optionalString,
+  recordOrEmpty,
+} from "../../core/cast.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "baserow";
 const baserowApiBaseUrl = "https://api.baserow.io";
@@ -46,7 +50,7 @@ export const baserowActionHandlers: ProviderActionHandlers<"baserow", BaserowAct
     };
   },
   async list_table_rows(input, context) {
-    const payload = asObject(
+    const payload = recordOrEmpty(
       await requestBaserowJson({
         context,
         path: `/api/database/rows/table/${requireTableId(input)}/`,
@@ -68,11 +72,11 @@ export const baserowActionHandlers: ProviderActionHandlers<"baserow", BaserowAct
       count: optionalInteger(payload.count) ?? 0,
       next: optionalString(payload.next) ?? null,
       previous: optionalString(payload.previous) ?? null,
-      rows: Array.isArray(payload.results) ? payload.results.map((row) => asObject(row)) : [],
+      rows: Array.isArray(payload.results) ? payload.results.map((row) => recordOrEmpty(row)) : [],
     };
   },
   async get_table_row(input, context) {
-    const row = asObject(
+    const row = recordOrEmpty(
       await requestBaserowJson({
         context,
         path: `/api/database/rows/table/${requireTableId(input)}/${requireRowId(input)}/`,
@@ -89,7 +93,7 @@ export const baserowActionHandlers: ProviderActionHandlers<"baserow", BaserowAct
     };
   },
   async create_table_row(input, context) {
-    const row = asObject(
+    const row = recordOrEmpty(
       await requestBaserowJson({
         context,
         path: `/api/database/rows/table/${requireTableId(input)}/`,
@@ -108,7 +112,7 @@ export const baserowActionHandlers: ProviderActionHandlers<"baserow", BaserowAct
     };
   },
   async update_table_row(input, context) {
-    const row = asObject(
+    const row = recordOrEmpty(
       await requestBaserowJson({
         context,
         path: `/api/database/rows/table/${requireTableId(input)}/${requireRowId(input)}/`,
@@ -157,6 +161,14 @@ export const executors: ProviderExecutors = defineProviderExecutors<ApiKeyProvid
   },
 });
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: baserowApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Token " },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const tables = asObjectArray(
@@ -178,7 +190,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: firstTableId !== undefined ? `baserow:table:${firstTableId}` : undefined,
         displayName: optionalString(firstTable?.name) ?? "Baserow Database Token",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: baserowApiBaseUrl,
         validationEndpoint: baserowValidationPath,
@@ -192,7 +203,7 @@ export const credentialValidators: CredentialValidators = {
 };
 
 async function requestBaserowJson(input: {
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   path: string;
   phase: BaserowPhase;
   method?: "GET" | "POST" | "PATCH" | "DELETE";
@@ -232,8 +243,8 @@ async function requestBaserowJson(input: {
 
 function baserowHeaders(apiKey: string, hasBody: boolean): Headers {
   const headers = new Headers({
-    Authorization: `Token ${apiKey}`,
-    Accept: "application/json",
+    "Authorization": `Token ${apiKey}`,
+    "Accept": "application/json",
     "User-Agent": providerUserAgent,
   });
   if (hasBody) {
@@ -327,12 +338,8 @@ function readFilters(input: Record<string, unknown>): string | undefined {
   return filters ? JSON.stringify(filters) : undefined;
 }
 
-function asObject(value: unknown): Record<string, unknown> {
-  return optionalRecord(value) ?? {};
-}
-
 function asObjectArray(value: unknown): Array<Record<string, unknown>> {
-  return Array.isArray(value) ? value.map((item) => asObject(item)) : [];
+  return Array.isArray(value) ? value.map((item) => recordOrEmpty(item)) : [];
 }
 
 function isAbortError(error: unknown): boolean {

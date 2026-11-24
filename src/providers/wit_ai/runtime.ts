@@ -1,9 +1,9 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import {
   compactObject,
+  looseArray,
   objectArray,
   optionalBoolean,
   optionalInteger,
@@ -11,10 +11,11 @@ import {
   optionalString,
   pickOptionalInteger,
   pickOptionalString,
+  recordOrEmpty,
   requiredRecord,
   stringArray,
 } from "../../core/cast.ts";
-import { ProviderRequestError } from "../provider-runtime.ts";
+import { providerInputError, ProviderRequestError } from "../provider-runtime.ts";
 
 export const witAiApiBaseUrl = "https://api.wit.ai";
 export const witAiApiVersion = "20230215";
@@ -133,7 +134,6 @@ export async function validateWitAiCredential(
         accountId: "wit-ai-token",
         displayName: "Wit.ai API Token",
       },
-      grantedScopes: [],
       metadata: {
         validationEndpoint: "/apps",
         appCount: 0,
@@ -145,7 +145,6 @@ export async function validateWitAiCredential(
       accountId: primary.id,
       displayName: primary.name,
     },
-    grantedScopes: [],
     metadata: compactObject({
       validationEndpoint: "/apps",
       appId: primary.id,
@@ -183,10 +182,10 @@ async function detectLanguage(input: Record<string, unknown>, context: ApiKeyPro
       n: requireOptionalTopN(input),
     }),
   });
-  const record = asLooseObject(payload);
+  const record = recordOrEmpty(payload);
   return {
-    detectedLocales: asUnknownArray(record.detected_locales).map((item) => {
-      const locale = asLooseObject(item);
+    detectedLocales: looseArray(record.detected_locales).map((item) => {
+      const locale = recordOrEmpty(item);
       return {
         locale: requiredResponseString(locale.locale, "locale"),
         confidence: requiredResponseNumber(locale.confidence, "confidence"),
@@ -203,7 +202,7 @@ async function listApps(input: Record<string, unknown>, context: ApiKeyProviderC
       offset: requireOptionalNonNegativeInteger(input.offset, "offset"),
     }),
   });
-  return { apps: asUnknownArray(payload).map((item) => normalizeAppSummary(item)) };
+  return { apps: looseArray(payload).map((item) => normalizeAppSummary(item)) };
 }
 
 async function getApp(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
@@ -221,7 +220,7 @@ async function listIntents(input: Record<string, unknown>, context: ApiKeyProvid
       offset: requireOptionalNonNegativeInteger(input.offset, "offset"),
     }),
   });
-  return { intents: asUnknownArray(payload).map((item) => normalizeIntentSummary(item)) };
+  return { intents: looseArray(payload).map((item) => normalizeIntentSummary(item)) };
 }
 
 async function createIntent(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
@@ -237,12 +236,12 @@ async function getIntent(input: Record<string, unknown>, context: ApiKeyProvider
   const payload = await witAiRequest<Record<string, unknown>>(context, {
     path: `/intents/${encodeURIComponent(requireStringInput(input, "intentName"))}`,
   });
-  const record = asLooseObject(payload);
+  const record = recordOrEmpty(payload);
   return {
     id: requiredResponseString(record.id, "id"),
     name: requiredResponseString(record.name, "name"),
-    entities: asUnknownArray(record.entities).map((item) => {
-      const entity = asLooseObject(item);
+    entities: looseArray(record.entities).map((item) => {
+      const entity = recordOrEmpty(item);
       return {
         id: requiredResponseString(entity.id, "id"),
         name: requiredResponseString(entity.name, "name"),
@@ -253,7 +252,7 @@ async function getIntent(input: Record<string, unknown>, context: ApiKeyProvider
 
 async function listEntities(context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await witAiRequest<unknown[]>(context, { path: "/entities" });
-  return { entities: asUnknownArray(payload).map((item) => normalizeEntitySummary(item)) };
+  return { entities: looseArray(payload).map((item) => normalizeEntitySummary(item)) };
 }
 
 async function createEntity(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
@@ -306,7 +305,7 @@ async function addKeywordSynonym(input: Record<string, unknown>, context: ApiKey
 
 async function listTraits(context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await witAiRequest<unknown[]>(context, { path: "/traits" });
-  return { traits: asUnknownArray(payload).map((item) => normalizeTraitSummary(item)) };
+  return { traits: looseArray(payload).map((item) => normalizeTraitSummary(item)) };
 }
 
 async function createTrait(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
@@ -345,7 +344,7 @@ async function listUtterances(input: Record<string, unknown>, context: ApiKeyPro
       entities: readOptionalStringArray(input.entities),
     }),
   });
-  return { utterances: asUnknownArray(payload).map((item) => normalizeUtterance(item)) };
+  return { utterances: looseArray(payload).map((item) => normalizeUtterance(item)) };
 }
 
 async function createUtterances(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
@@ -367,7 +366,7 @@ async function deleteUtterances(input: Record<string, unknown>, context: ApiKeyP
 }
 
 async function witAiRequest<T>(
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   input: WitAiRequestInput,
   phase: WitAiRequestPhase = "execute",
 ): Promise<T> {
@@ -425,7 +424,7 @@ function createWitAiError(response: Response, payload: unknown, phase: WitAiRequ
   if (response.status === 429) return new ProviderRequestError(429, message, payload);
   if (response.status === 400 || response.status === 404) return new ProviderRequestError(400, message, payload);
   if (phase === "validate" && response.status === 401) return new ProviderRequestError(400, message, payload);
-  if (phase === "execute" && response.status === 401) return new ProviderRequestError(409, message, payload);
+  if (phase === "execute" && response.status === 401) return new ProviderRequestError(401, message, payload);
   return new ProviderRequestError(response.status || 500, message, payload);
 }
 
@@ -455,12 +454,12 @@ function buildTraitMutationBody(input: Record<string, unknown>): Record<string, 
 }
 
 function normalizeMessageResult(payload: unknown): Record<string, unknown> {
-  const record = asLooseObject(payload);
+  const record = recordOrEmpty(payload);
   return {
     text: requiredResponseString(record.text, "text"),
     messageId: optionalString(record.msg_id) ?? null,
-    intents: asUnknownArray(record.intents).map((item) => {
-      const intent = asLooseObject(item);
+    intents: looseArray(record.intents).map((item) => {
+      const intent = recordOrEmpty(item);
       return compactObject({
         id: requiredResponseString(intent.id, "id"),
         name: requiredResponseString(intent.name, "name"),
@@ -473,7 +472,7 @@ function normalizeMessageResult(payload: unknown): Record<string, unknown> {
 }
 
 function normalizeMessageEntity(value: unknown): Record<string, unknown> {
-  const record = asLooseObject(value);
+  const record = recordOrEmpty(value);
   return compactObject({
     id: requiredResponseString(record.id, "id"),
     name: optionalString(record.name),
@@ -489,7 +488,7 @@ function normalizeMessageEntity(value: unknown): Record<string, unknown> {
 }
 
 function normalizeTraitMatch(value: unknown): Record<string, unknown> {
-  const record = asLooseObject(value);
+  const record = recordOrEmpty(value);
   return compactObject({
     id: requiredResponseString(record.id, "id"),
     value: requiredResponseString(record.value, "value"),
@@ -500,7 +499,7 @@ function normalizeTraitMatch(value: unknown): Record<string, unknown> {
 function normalizeAppSummary(
   value: unknown,
 ): Record<string, unknown> & { id: string; name: string; isAppForToken?: boolean } {
-  const record = asLooseObject(value);
+  const record = recordOrEmpty(value);
   return compactObject({
     id: requiredResponseString(record.id, "id"),
     name: requiredResponseString(record.name, "name"),
@@ -512,7 +511,7 @@ function normalizeAppSummary(
 }
 
 function normalizeAppDetail(value: unknown): Record<string, unknown> {
-  const record = asLooseObject(value);
+  const record = recordOrEmpty(value);
   return compactObject({
     ...normalizeAppSummary(record),
     willTrainAt: optionalString(record.will_train_at),
@@ -523,7 +522,7 @@ function normalizeAppDetail(value: unknown): Record<string, unknown> {
 }
 
 function normalizeIntentSummary(value: unknown): Record<string, unknown> {
-  const record = asLooseObject(value);
+  const record = recordOrEmpty(value);
   return {
     id: requiredResponseString(record.id, "id"),
     name: requiredResponseString(record.name, "name"),
@@ -531,7 +530,7 @@ function normalizeIntentSummary(value: unknown): Record<string, unknown> {
 }
 
 function normalizeEntitySummary(value: unknown): Record<string, unknown> {
-  const record = asLooseObject(value);
+  const record = recordOrEmpty(value);
   return {
     id: requiredResponseString(record.id, "id"),
     name: requiredResponseString(record.name, "name"),
@@ -539,7 +538,7 @@ function normalizeEntitySummary(value: unknown): Record<string, unknown> {
 }
 
 function normalizeEntityDetail(value: unknown): Record<string, unknown> {
-  const record = asLooseObject(value);
+  const record = recordOrEmpty(value);
   return compactObject({
     id: requiredResponseString(record.id, "id"),
     name: requiredResponseString(record.name, "name"),
@@ -552,7 +551,7 @@ function normalizeEntityDetail(value: unknown): Record<string, unknown> {
 }
 
 function normalizeTraitSummary(value: unknown): Record<string, unknown> {
-  const record = asLooseObject(value);
+  const record = recordOrEmpty(value);
   return {
     id: requiredResponseString(record.id, "id"),
     name: requiredResponseString(record.name, "name"),
@@ -560,11 +559,11 @@ function normalizeTraitSummary(value: unknown): Record<string, unknown> {
 }
 
 function normalizeTraitDetail(value: unknown): Record<string, unknown> {
-  const record = asLooseObject(value);
+  const record = recordOrEmpty(value);
   return compactObject({
     id: requiredResponseString(record.id, "id"),
     name: requiredResponseString(record.name, "name"),
-    values: asUnknownArray(record.values).map((item) => normalizeTraitValue(item)),
+    values: looseArray(record.values).map((item) => normalizeTraitValue(item)),
     lang: optionalString(record.lang),
     lookups: readResponseStringArray(record.lookups),
     createdAt: optionalString(record.created_at),
@@ -574,7 +573,7 @@ function normalizeTraitDetail(value: unknown): Record<string, unknown> {
 }
 
 function normalizeTraitValue(value: unknown): Record<string, unknown> {
-  const record = asLooseObject(value);
+  const record = recordOrEmpty(value);
   return compactObject({
     id: optionalString(record.id),
     value: requiredResponseString(record.value, "value"),
@@ -585,18 +584,18 @@ function normalizeTraitValue(value: unknown): Record<string, unknown> {
 }
 
 function normalizeUtterance(value: unknown): Record<string, unknown> {
-  const record = asLooseObject(value);
+  const record = recordOrEmpty(value);
   return {
     text: requiredResponseString(record.text, "text"),
     intent: normalizeOptionalUtteranceIntent(record.intent),
-    entities: asUnknownArray(record.entities).map((item) => normalizeUtteranceEntity(item)),
-    traits: asUnknownArray(record.traits).map((item) => normalizeUtteranceTrait(item)),
+    entities: looseArray(record.entities).map((item) => normalizeUtteranceEntity(item)),
+    traits: looseArray(record.traits).map((item) => normalizeUtteranceTrait(item)),
   };
 }
 
 function normalizeOptionalUtteranceIntent(value: unknown): NormalizedUtteranceIntent | undefined {
   if (!value) return undefined;
-  const record = asLooseObject(value);
+  const record = recordOrEmpty(value);
   return {
     id: requiredResponseString(record.id, "id"),
     name: requiredResponseString(record.name, "name"),
@@ -604,18 +603,18 @@ function normalizeOptionalUtteranceIntent(value: unknown): NormalizedUtteranceIn
 }
 
 function normalizeUtteranceEntity(value: unknown): NormalizedUtteranceEntity {
-  const record = asLooseObject(value);
+  const record = recordOrEmpty(value);
   return {
     entity: requiredResponseString(record.entity ?? record.name, "entity"),
     start: requiredResponseNumber(record.start, "start"),
     end: requiredResponseNumber(record.end, "end"),
     body: requiredResponseString(record.body, "body"),
-    entities: asUnknownArray(record.entities).map((item) => normalizeUtteranceEntity(item)),
+    entities: looseArray(record.entities).map((item) => normalizeUtteranceEntity(item)),
   };
 }
 
 function normalizeUtteranceTrait(value: unknown): NormalizedUtteranceTrait {
-  const record = asLooseObject(value);
+  const record = recordOrEmpty(value);
   return {
     trait: requiredResponseString(record.trait ?? record.name, "trait"),
     value: requiredResponseString(record.value, "value"),
@@ -623,7 +622,7 @@ function normalizeUtteranceTrait(value: unknown): NormalizedUtteranceTrait {
 }
 
 function normalizeQueueMutation(value: unknown): Record<string, unknown> {
-  const record = asLooseObject(value);
+  const record = recordOrEmpty(value);
   return {
     sent: requiredResponseBoolean(record.sent, "sent"),
     count: requiredResponseNumber(record.n, "n"),
@@ -631,23 +630,23 @@ function normalizeQueueMutation(value: unknown): Record<string, unknown> {
 }
 
 function normalizeNamedArrayMap<T>(value: unknown, mapItem: (item: unknown) => T): Record<string, T[]> {
-  const record = asLooseObject(value);
-  return Object.fromEntries(Object.entries(record).map(([key, child]) => [key, asUnknownArray(child).map(mapItem)]));
+  const record = recordOrEmpty(value);
+  return Object.fromEntries(Object.entries(record).map(([key, child]) => [key, looseArray(child).map(mapItem)]));
 }
 
 function normalizeEntityRoles(value: unknown): string[] {
-  return asUnknownArray(value)
+  return looseArray(value)
     .map((item) => {
       if (typeof item === "string") return item;
-      const record = asLooseObject(item);
+      const record = recordOrEmpty(item);
       return optionalString(record.name) ?? optionalString(record.id) ?? null;
     })
     .filter((item): item is string => item !== null);
 }
 
 function normalizeEntityKeywords(value: unknown): Array<Record<string, unknown>> {
-  return asUnknownArray(value).map((item) => {
-    const record = asLooseObject(item);
+  return looseArray(value).map((item) => {
+    const record = recordOrEmpty(item);
     return {
       keyword: requiredResponseString(record.keyword, "keyword"),
       synonyms: readResponseStringArray(record.synonyms),
@@ -754,18 +753,6 @@ function requiredResponseBoolean(value: unknown, fieldName: string): boolean {
   return parsed;
 }
 
-function asUnknownArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-function asLooseObject(value: unknown): Record<string, unknown> {
-  return optionalRecord(value) ?? {};
-}
-
 function optionalNumber(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

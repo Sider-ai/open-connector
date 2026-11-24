@@ -4,19 +4,16 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
 import type { PkulawMcpServerId } from "./actions.ts";
 import type { PkulawContext } from "./runtime.ts";
 
 import { createHash } from "node:crypto";
-import {
-  defineProviderExecutors,
-  defineProviderProxy,
-  ProviderRequestError,
-  providerUserAgent,
-  requireApiKeyCredential,
-} from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 import { pkulawMcpServerIds } from "./actions.ts";
 import {
   callTool,
@@ -135,7 +132,6 @@ export const credentialValidators: CredentialValidators = {
     const hash = createHash("sha256").update(input.apiKey.trim()).digest("hex").slice(0, 16);
     return {
       profile: { accountId: `pkulaw:mcp:${hash}`, displayName: `PKULaw MCP · ${hash.slice(-6)}` },
-      grantedScopes: [],
       metadata: {
         mcpGateway: pkulawMcpGateway,
         availableServers: available.map((item) => item.serverId),
@@ -149,10 +145,10 @@ export const proxy: ProviderProxyExecutor = defineProviderProxy({
   service: "pkulaw",
   baseUrl: pkulawMcpGateway,
   auth: { type: "api_key_authorization", prefix: "Bearer " },
-  customizeRequest({ headers }) {
-    if (!headers.has("accept")) headers.set("accept", "application/json, text/event-stream");
-    if (!headers.has("content-type")) headers.set("content-type", "application/json");
-    if (!headers.has("user-agent")) headers.set("user-agent", providerUserAgent);
+  defaultHeaders: {
+    "accept": "application/json, text/event-stream",
+    "content-type": "application/json",
+    "user-agent": providerUserAgent,
   },
   skipDnsValidation: true,
 });

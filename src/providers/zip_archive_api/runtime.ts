@@ -1,11 +1,11 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler, ProviderTransitFile } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderTransitFile } from "../provider-files.ts";
 
 import { compactObject, optionalInteger, optionalString, requiredString } from "../../core/cast.ts";
 import { readBoundedResponseBytes } from "../../core/request.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { providerInputError, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
-const apiBaseUrl = "https://api.archiveapi.com";
+export const zipArchiveApiBaseUrl = "https://api.archiveapi.com";
 const maxExtractionResponseBytes = 512 * 1024 * 1024;
 const maxExtractedFiles = 1_000;
 
@@ -49,7 +49,7 @@ async function extractArchive(input: Record<string, unknown>, context: ApiKeyPro
   const response = await requestArchiveApi(
     "/extract",
     compactObject({
-      file: requiredString(input.fileUrl, "fileUrl", badRequest),
+      file: requiredString(input.fileUrl, "fileUrl", providerInputError),
       password: optionalString(input.password),
     }),
     context,
@@ -85,10 +85,10 @@ async function extractArchive(input: Record<string, unknown>, context: ApiKeyPro
 async function requestArchiveApi(
   path: string,
   body: Record<string, unknown>,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   accept = "application/zip, application/octet-stream",
 ): Promise<Response> {
-  const url = new URL(path, apiBaseUrl);
+  const url = new URL(path, zipArchiveApiBaseUrl);
   url.searchParams.set("secret", context.apiKey);
   let response: Response;
   try {
@@ -153,8 +153,4 @@ async function createArchiveApiError(response: Response): Promise<ProviderReques
           ? 400
           : 502;
   return new ProviderRequestError(status, message);
-}
-
-function badRequest(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

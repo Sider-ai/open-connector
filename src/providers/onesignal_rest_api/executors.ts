@@ -1,20 +1,25 @@
-import type { CredentialValidators, ExecutionContext, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type {
+  CredentialValidators,
+  ExecutionContext,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineProviderExecutors,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
-  requireApiKeyCredential,
 } from "../provider-runtime.ts";
 
 const service = "onesignal_rest_api";
 const onesignalRestApiBaseUrl = "https://api.onesignal.com";
 const onesignalValidationPath = "/notifications";
-const onesignalDefaultRequestTimeoutMs = 30_000;
 
 type OneSignalRequestPhase = "validate" | "execute";
 type OneSignalActionHandler = (input: Record<string, unknown>, context: OneSignalContext) => Promise<unknown>;
@@ -108,6 +113,14 @@ export const executors: ProviderExecutors = defineProviderExecutors<OneSignalCon
   },
 });
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: onesignalRestApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Key " },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const appId = requireAppId(input.values.appId);
@@ -135,7 +148,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: appId,
         displayName: "OneSignal App API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: onesignalRestApiBaseUrl,
         appId,
@@ -146,12 +158,12 @@ export const credentialValidators: CredentialValidators = {
 };
 
 async function requestOneSignalJson(input: OneSignalRequestInput): Promise<Record<string, unknown>> {
-  const timeout = createProviderTimeout(input.context.signal, onesignalDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
 
   try {
     const headers = new Headers({
-      accept: "application/json",
-      authorization: `Key ${input.context.apiKey}`,
+      "accept": "application/json",
+      "authorization": `Key ${input.context.apiKey}`,
       "user-agent": providerUserAgent,
     });
     if (input.body) {

@@ -1,10 +1,11 @@
 import type { CredentialValidationResult, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { compactJson } from "../../core/request.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { providerInputError, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 export const pineconeControlApiBaseUrl = "https://api.pinecone.io";
 export const pineconeApiVersion = "2026-04";
@@ -22,7 +23,7 @@ export const pineconeActionHandlers: ProviderActionHandlers<"pinecone", Pinecone
   },
 
   async describe_index(input, context) {
-    const name = requiredString(input.name, "name", invalidInputError);
+    const name = requiredString(input.name, "name", providerInputError);
     const payload = await requestControlJson(context, `/indexes/${encodeURIComponent(name)}`, "GET", undefined, true);
     return {
       index: requireObjectPayload(payload, "Pinecone index response"),
@@ -31,7 +32,7 @@ export const pineconeActionHandlers: ProviderActionHandlers<"pinecone", Pinecone
 
   async create_index(input, context) {
     const body = compactObject({
-      name: requiredString(input.name, "name", invalidInputError),
+      name: requiredString(input.name, "name", providerInputError),
       dimension: optionalInteger(input.dimension),
       metric: optionalString(input.metric),
       vector_type: optionalString(input.vectorType),
@@ -39,8 +40,8 @@ export const pineconeActionHandlers: ProviderActionHandlers<"pinecone", Pinecone
       tags: optionalRecord(input.tags),
       spec: {
         serverless: {
-          cloud: requiredString(input.cloud, "cloud", invalidInputError),
-          region: requiredString(input.region, "region", invalidInputError),
+          cloud: requiredString(input.cloud, "cloud", providerInputError),
+          region: requiredString(input.region, "region", providerInputError),
         },
       },
     });
@@ -51,7 +52,7 @@ export const pineconeActionHandlers: ProviderActionHandlers<"pinecone", Pinecone
   },
 
   async configure_index(input, context) {
-    const name = requiredString(input.name, "name", invalidInputError);
+    const name = requiredString(input.name, "name", providerInputError);
     const body = compactObject({
       deletion_protection: optionalString(input.deletionProtection),
       tags: optionalRecord(input.tags),
@@ -70,7 +71,7 @@ export const pineconeActionHandlers: ProviderActionHandlers<"pinecone", Pinecone
   },
 
   async delete_index(input, context) {
-    const name = requiredString(input.name, "name", invalidInputError);
+    const name = requiredString(input.name, "name", providerInputError);
     await requestControlJson(context, `/indexes/${encodeURIComponent(name)}`, "DELETE", undefined, true);
     return { accepted: true };
   },
@@ -212,7 +213,6 @@ export async function validatePineconeCredential(
     profile: {
       accountId: firstName ?? "pinecone-api-key",
       displayName: firstName ? `Pinecone project (${firstName})` : "Pinecone API key",
-      grantedScopes: [],
     },
     metadata: compactObject({
       apiBaseUrl: pineconeControlApiBaseUrl,
@@ -319,7 +319,7 @@ function buildPineconeUrl(baseUrl: string, path: string, query?: Record<string, 
 
 function buildPineconeHeaders(apiKey: string, hasBody: boolean) {
   const headers = new Headers({
-    accept: "application/json",
+    "accept": "application/json",
     "api-key": apiKey,
     "user-agent": providerUserAgent,
     "x-pinecone-api-version": pineconeApiVersion,
@@ -378,7 +378,7 @@ function requireObjectPayload(payload: unknown, label: string) {
 }
 
 function requireIndexHost(value: unknown) {
-  const host = requiredString(value, "indexHost", invalidInputError);
+  const host = requiredString(value, "indexHost", providerInputError);
   let parsed: URL;
   try {
     parsed = new URL(host);
@@ -395,8 +395,4 @@ function requireIndexHost(value: unknown) {
   parsed.search = "";
   parsed.hash = "";
   return parsed.toString().replace(/\/+$/, "");
-}
-
-function invalidInputError(message: string) {
-  return new ProviderRequestError(400, message);
 }

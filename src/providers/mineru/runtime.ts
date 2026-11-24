@@ -1,24 +1,16 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
-import {
-  compactObject,
-  optionalBoolean,
-  optionalInteger,
-  optionalRecord,
-  optionalString,
-  requiredString,
-} from "../../core/cast.ts";
+import { compactObject, optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import { assertPublicHttpUrl } from "../../core/request.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { providerUserAgent, ProviderRequestError, requiredInputString } from "../provider-runtime.ts";
 
-const mineruApiBaseUrl = "https://mineru.net";
+export const mineruApiBaseUrl = "https://mineru.net";
 const mineruValidationTaskId = "oomol-connector-validation";
 
 type MineruRequestPhase = "validate" | "execute";
-type MineruActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type MineruActionHandler = (input: Record<string, unknown>, context: MineruActionContext) => Promise<unknown>;
+type MineruActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 interface MineruRequestInput {
   method?: "GET" | "POST";
@@ -67,7 +59,6 @@ export async function validateMineruCredential(
       accountId: "mineru",
       displayName: "MinerU API Token",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: mineruApiBaseUrl,
       validationEndpoint: `/api/v4/extract/task/${mineruValidationTaskId}`,
@@ -75,7 +66,7 @@ export async function validateMineruCredential(
   };
 }
 
-async function createExtractTask(input: Record<string, unknown>, context: MineruActionContext): Promise<unknown> {
+async function createExtractTask(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const envelope = await mineruJsonRequest(
     context.apiKey,
     {
@@ -95,7 +86,7 @@ async function createExtractTask(input: Record<string, unknown>, context: Mineru
   });
 }
 
-async function getExtractTask(input: Record<string, unknown>, context: MineruActionContext): Promise<unknown> {
+async function getExtractTask(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const taskId = requiredInputString(input.task_id, "mineru task_id");
   const envelope = await mineruJsonRequest(
     context.apiKey,
@@ -109,7 +100,7 @@ async function getExtractTask(input: Record<string, unknown>, context: MineruAct
   return normalizeTaskResult(requireProviderObject(envelope.data, "mineru get_extract_task data"));
 }
 
-async function createExtractBatch(input: Record<string, unknown>, context: MineruActionContext): Promise<unknown> {
+async function createExtractBatch(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const envelope = await mineruJsonRequest(
     context.apiKey,
     {
@@ -129,7 +120,10 @@ async function createExtractBatch(input: Record<string, unknown>, context: Miner
   });
 }
 
-async function getExtractBatchResults(input: Record<string, unknown>, context: MineruActionContext): Promise<unknown> {
+async function getExtractBatchResults(
+  input: Record<string, unknown>,
+  context: ApiKeyProviderContext,
+): Promise<unknown> {
   const batchId = requiredInputString(input.batch_id, "mineru batch_id");
   const envelope = await mineruJsonRequest(
     context.apiKey,
@@ -197,7 +191,7 @@ function buildCreateBatchBody(input: Record<string, unknown>): Record<string, un
 async function mineruJsonRequest(
   apiKey: string,
   input: MineruRequestInput,
-  context: MineruActionContext,
+  context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
   const response = await mineruFetch(apiKey, input, context.fetcher, context.signal);
   await assertMineruResponse(response, input.phase);
@@ -214,8 +208,8 @@ async function mineruFetch(
   signal?: AbortSignal,
 ): Promise<Response> {
   const headers: Record<string, string> = {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "user-agent": providerUserAgent,
   };
   let body: string | undefined;
@@ -390,8 +384,4 @@ function optionalStringArray(value: unknown): string[] | undefined {
     throw new ProviderRequestError(400, "string array input is required");
   }
   return value.map((item) => String(item));
-}
-
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }

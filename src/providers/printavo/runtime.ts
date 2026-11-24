@@ -1,5 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 import type { ProviderFetch } from "../provider-runtime.ts";
 
 import {
@@ -15,10 +15,10 @@ import {
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
+  providerInputError,
 } from "../provider-runtime.ts";
 
 export const printavoApiBaseUrl = "https://www.printavo.com/api/v2";
-const printavoDefaultRequestTimeoutMs = 30_000;
 
 export interface PrintavoActionContext {
   token: string;
@@ -262,9 +262,7 @@ export const printavoActionHandlers: ProviderActionHandlers<"printavo", Printavo
   },
 };
 
-export async function validatePrintavoCredential(
-  input: Pick<PrintavoActionContext, "token" | "email" | "fetcher" | "signal">,
-): Promise<CredentialValidationResult> {
+export async function validatePrintavoCredential(input: PrintavoActionContext): Promise<CredentialValidationResult> {
   const output = await executeIdentify(input, "validate");
   const accountName = optionalRawString(output.account.companyName);
   const userName = optionalRawString(output.user.name);
@@ -276,7 +274,6 @@ export async function validatePrintavoCredential(
       accountId: userId,
       displayName: accountName ?? userName ?? userEmail ?? "Printavo API Token",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: printavoApiBaseUrl,
       validationQuery: "user",
@@ -290,7 +287,7 @@ export async function validatePrintavoCredential(
 }
 
 async function executeIdentify(
-  context: Pick<PrintavoActionContext, "token" | "email" | "fetcher" | "signal">,
+  context: PrintavoActionContext,
   phase: PrintavoRequestPhase = "execute",
 ): Promise<{ user: Record<string, unknown>; account: Record<string, unknown> }> {
   const data = await printavoGraphql(identifyQuery, {}, context, phase);
@@ -397,18 +394,18 @@ async function executeConnectionQuery(
 async function printavoGraphql(
   query: string,
   variables: Record<string, unknown>,
-  context: Pick<PrintavoActionContext, "token" | "email" | "fetcher" | "signal">,
+  context: PrintavoActionContext,
   phase: PrintavoRequestPhase,
 ): Promise<Record<string, unknown>> {
-  const timeout = createProviderTimeout(context.signal, printavoDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const response = await context.fetcher(printavoApiBaseUrl, {
       method: "POST",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
-        email: context.email,
-        token: context.token,
+        "email": context.email,
+        "token": context.token,
         "user-agent": providerUserAgent,
       },
       signal: timeout.signal,
@@ -463,7 +460,7 @@ async function readPrintavoPayload(response: Response): Promise<unknown> {
 function createPrintavoError(status: number, payload: unknown, phase: PrintavoRequestPhase): ProviderRequestError {
   const message = extractPrintavoErrorMessage(payload) ?? `Printavo request failed with status ${status}`;
   if (phase === "validate" && status >= 400 && status < 500) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   return new ProviderRequestError(status || 500, message);
 }

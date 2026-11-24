@@ -4,20 +4,15 @@ import type {
   ProviderActionHandlers,
   ProviderActionSources,
   ProviderRuntimeHandler,
-} from "../provider-runtime.ts";
+} from "../provider-executors.ts";
+import type { ProviderRequestContext } from "../provider-runtime.ts";
 
 import { optionalRecord, optionalString } from "../../core/cast.ts";
-import {
-  createProviderTimeout,
-  isAbortLikeError,
-  mapProviderActionSources,
-  providerUserAgent,
-  ProviderRequestError,
-} from "../provider-runtime.ts";
+import { mapProviderActionSources } from "../provider-executors.ts";
+import { providerUserAgent, ProviderRequestError, runProviderRequest } from "../provider-runtime.ts";
 
 export const skioApiBaseUrl = "https://api.skio.com/public-rest-api-http";
 const validationPath = "/subscriptions";
-const timeoutMs = 30_000;
 
 type SkioPhase = "validate" | "execute";
 type SkioActionHandler = ProviderRuntimeHandler<ApiKeyProviderContext>;
@@ -127,7 +122,6 @@ export async function validateSkioCredential(
     profile: {
       displayName: "Skio API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: skioApiBaseUrl,
       validationEndpoint: `${validationPath}?first=1`,
@@ -140,39 +134,25 @@ async function requestSkioJson(input: {
   apiKey: string;
   path: string;
   phase: SkioPhase;
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">;
+  context: ProviderRequestContext;
   query?: URLSearchParams;
 }): Promise<unknown> {
-  const timeout = createProviderTimeout(input.context.signal, timeoutMs);
-  try {
+  return runProviderRequest({ signal: input.context.signal, label: "Skio" }, async (signal) => {
     const response = await input.context.fetcher(buildSkioUrl(input.path, input.query), {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `API ${input.apiKey}`,
+        "accept": "application/json",
+        "authorization": `API ${input.apiKey}`,
         "user-agent": providerUserAgent,
       },
-      signal: timeout.signal,
+      signal,
     });
     const payload = await readPayload(response);
     if (!response.ok) {
       throw createSkioError(response.status, payload, input.phase);
     }
     return payload;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-    if (timeout.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "Skio request timed out");
-    }
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Skio request failed: ${error.message}` : "Skio request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+  });
 }
 
 function buildSkioUrl(path: string, query?: URLSearchParams): URL {

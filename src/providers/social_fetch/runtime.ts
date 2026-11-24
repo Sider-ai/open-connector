@@ -1,7 +1,7 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { providerInputError, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 export const socialFetchApiBaseUrl = "https://api.socialfetch.dev";
 
@@ -25,8 +25,8 @@ export const socialFetchActionHandlers: ProviderActionHandlers<
     return { ...requireObject(payload.data, "data"), meta: requireObject(payload.meta, "meta") };
   },
   async get_profile(input, context) {
-    const platform = requiredString(input.platform, "platform", badInput);
-    const rawHandle = requiredString(input.handle, "handle", badInput);
+    const platform = requiredString(input.platform, "platform", providerInputError);
+    const rawHandle = requiredString(input.handle, "handle", providerInputError);
     const handle = rawHandle.startsWith("@") ? rawHandle.slice(1) : rawHandle;
     const path =
       platform === "telegram"
@@ -51,7 +51,6 @@ export const socialFetchActionHandlers: ProviderActionHandlers<
 
 export async function validateSocialFetchCredential(context: Omit<SocialFetchContext, "mode">): Promise<{
   profile: { accountId: string; displayName: string };
-  grantedScopes: string[];
   metadata: Record<string, unknown>;
 }> {
   const envelope = requireObject(await requestSocialFetch("/v1/whoami", { ...context, mode: "validate" }), "response");
@@ -63,7 +62,6 @@ export async function validateSocialFetchCredential(context: Omit<SocialFetchCon
       accountId: id,
       displayName: optionalString(user.name) ?? optionalString(user.email) ?? `Social Fetch ${id}`,
     },
-    grantedScopes: [],
     metadata: { apiBaseUrl: socialFetchApiBaseUrl, validationEndpoint: "/v1/whoami" },
   };
 }
@@ -72,7 +70,7 @@ async function requestSocialFetch(path: string, context: SocialFetchContext): Pr
   let response: Response;
   try {
     response = await context.fetcher(new URL(path, socialFetchApiBaseUrl), {
-      headers: { accept: "application/json", "user-agent": providerUserAgent, "x-api-key": context.apiKey },
+      headers: { "accept": "application/json", "user-agent": providerUserAgent, "x-api-key": context.apiKey },
       signal: context.signal,
     });
   } catch (error) {
@@ -111,7 +109,4 @@ function requireObject(value: unknown, field: string): Record<string, unknown> {
   if (!record)
     throw new ProviderRequestError(502, `Social Fetch response did not include an object at ${field}`, value);
   return record;
-}
-function badInput(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

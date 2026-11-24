@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { compactObject, nullableInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
@@ -115,7 +115,6 @@ export async function validateSuperviselyCredential(
       accountId: userId,
       displayName: email ?? login ?? name ?? "Supervisely API Token",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: superviselyApiBaseUrl,
       validationEndpoint: "/users.me",
@@ -174,7 +173,7 @@ async function requestSupervisely(
 
 function superviselyHeaders(apiKey: string): Record<string, string> {
   return {
-    accept: "application/json",
+    "accept": "application/json",
     "content-type": "application/json",
     "user-agent": providerUserAgent,
     "x-api-key": apiKey,

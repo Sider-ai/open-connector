@@ -1,7 +1,7 @@
-import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { optionalRawString, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
-const openfdaApiBaseUrl = "https://api.fda.gov";
+export const openfdaApiBaseUrl = "https://api.fda.gov";
 
 interface OpenfdaRequestInput {
   apiKey?: string;
@@ -15,7 +15,7 @@ interface OpenfdaRequestInput {
 export async function validateOpenfdaCredential(
   input: Record<string, string>,
   fetcher: typeof fetch,
-): Promise<{ profile: { displayName: string }; grantedScopes: string[]; metadata: Record<string, unknown> }> {
+): Promise<{ profile: { displayName: string }; metadata: Record<string, unknown> }> {
   await requestOpenfdaJson({
     apiKey: requiredString(input.apiKey, "apiKey", (message) => new ProviderRequestError(400, message)),
     usesApiKey: true,
@@ -27,7 +27,6 @@ export async function validateOpenfdaCredential(
 
   return {
     profile: { displayName: "openFDA API Key" },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: openfdaApiBaseUrl,
       validationEndpoint: "/drug/label.json",
@@ -50,8 +49,8 @@ export async function executeOpenfdaAction(
       usesApiKey: apiKey != null,
       dataset,
       params: {
-        search: readOptionalString(input.search),
-        sort: readOptionalString(input.sort),
+        search: optionalRawString(input.search),
+        sort: optionalRawString(input.sort),
         limit: readOptionalNumber(input.limit),
         skip: readOptionalNumber(input.skip),
       },
@@ -71,7 +70,7 @@ export async function executeOpenfdaAction(
       dataset,
       params: {
         count: String(input.field),
-        search: readOptionalString(input.search),
+        search: optionalRawString(input.search),
         limit: readOptionalNumber(input.limit),
       },
       fetcher,
@@ -103,7 +102,7 @@ async function requestOpenfdaJson(input: OpenfdaRequestInput): Promise<Record<st
   const response = await input.fetcher(url, {
     method: "GET",
     headers: {
-      accept: "application/json",
+      "accept": "application/json",
       "user-agent": providerUserAgent,
     },
   });
@@ -183,10 +182,6 @@ function readErrorMessage(value: unknown): string | undefined {
   const payload = optionalRecord(value);
   const error = optionalRecord(payload?.error);
   return optionalString(error?.message) ?? optionalString(payload?.message);
-}
-
-function readOptionalString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
 }
 
 function readOptionalNumber(value: unknown): number | undefined {

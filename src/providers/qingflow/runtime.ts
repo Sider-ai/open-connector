@@ -1,12 +1,16 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
-import { createProviderTimeout, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import {
+  createProviderTimeout,
+  ProviderRequestError,
+  providerUserAgent,
+  providerInputError,
+} from "../provider-runtime.ts";
 
 export const qingflowApiBaseUrl = "https://api.qingflow.com";
 
 const qingflowValidationPath = "/app";
-const qingflowRequestTimeoutMs = 30_000;
 
 type QingflowRequestPhase = "validate" | "execute";
 type QingflowActionContext = { accessToken: string; fetcher: typeof fetch };
@@ -350,14 +354,14 @@ async function requestQingflowEnvelope(input: QingflowRequestInput) {
     if (value !== undefined) url.searchParams.set(key, String(value));
   }
 
-  const timeout = createProviderTimeout(undefined, qingflowRequestTimeoutMs);
+  const timeout = createProviderTimeout(undefined);
   try {
     const response = await input.fetcher(url, {
       method: input.method ?? "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         ...input.headers,
-        accessToken: input.accessToken,
+        "accessToken": input.accessToken,
         ...(input.body === undefined ? {} : { "content-type": "application/json" }),
         "user-agent": providerUserAgent,
       },
@@ -544,7 +548,7 @@ function mapQingflowApiError(errorCode: number, envelope: Record<string, unknown
   if (qingflowPermissionErrorCodes.has(errorCode)) {
     return new ProviderRequestError(403, message);
   }
-  return new ProviderRequestError(400, message);
+  return providerInputError(message);
 }
 
 const qingflowPermissionErrorCodes = new Set([40002, 40064, 40065, 40066, 40069, 40095]);

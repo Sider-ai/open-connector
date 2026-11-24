@@ -39,11 +39,11 @@ const feedSchema = s.looseObject("The DealNews RSS channel metadata.", {
 });
 
 const itemSchema = s.looseObject("A DealNews RSS item with original content and referral-coded links preserved.", {
-  title: s.string("The original item title."),
-  link: s.string("The original DealNews link, including its referral code."),
-  description: s.string("The original HTML description from the RSS item."),
-  guid: s.string("The original RSS item GUID."),
-  pubDate: s.string("The original RSS item publication date."),
+  "title": s.string("The original item title."),
+  "link": s.string("The original DealNews link, including its referral code."),
+  "description": s.string("The original HTML description from the RSS item."),
+  "guid": s.string("The original RSS item GUID."),
+  "pubDate": s.string("The original RSS item publication date."),
   "dealnews:retailer": s.string("The original DealNews retailer value."),
   "dealnews:expires": s.string("The original DealNews expiration value."),
   "dealnews:dealType": s.string("The original DealNews deal type."),
@@ -69,30 +69,35 @@ const emptyInputSchema = s.actionInput({}, [], "No input is required for this De
 export const dealNewsActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "list_latest_deals",
+    operationType: "read",
     description: `Get the most recent deals from the official DealNews RSS feed. ${usageNotice}`,
     inputSchema: emptyInputSchema,
     outputSchema,
   }),
   defineProviderAction(service, {
     name: "list_popular_deals",
+    operationType: "read",
     description: `Get the most popular deals from the official DealNews RSS feed. ${usageNotice}`,
     inputSchema: emptyInputSchema,
     outputSchema,
   }),
   defineProviderAction(service, {
     name: "list_editors_choice_deals",
+    operationType: "read",
     description: `Get Editors' Choice deals from the official DealNews RSS feed. ${usageNotice}`,
     inputSchema: emptyInputSchema,
     outputSchema,
   }),
   defineProviderAction(service, {
     name: "list_blog_posts",
+    operationType: "read",
     description: `Get blog posts from the official DealNews RSS feed. ${usageNotice}`,
     inputSchema: emptyInputSchema,
     outputSchema,
   }),
   defineProviderAction(service, {
     name: "list_category_deals",
+    operationType: "read",
     description: `Get deals from an official DealNews category RSS feed. ${usageNotice}`,
     inputSchema: s.actionInput(
       {

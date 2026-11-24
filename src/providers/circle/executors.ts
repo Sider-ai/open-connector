@@ -1,5 +1,5 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -9,11 +9,18 @@ import {
   optionalString,
   requiredRecord,
 } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import {
+  isAbortLikeError,
+  providerResponseError,
+  providerUserAgent,
+  ProviderRequestError,
+  defaultProviderRequestTimeoutMs,
+} from "../provider-runtime.ts";
 
 const service = "circle";
 const apiBaseUrl = "https://app.circle.so/api/admin/v2";
-const requestTimeoutMs = 30_000;
 
 type CirclePhase = "validate" | "execute";
 interface CircleContext {
@@ -112,6 +119,14 @@ export const circleActionHandlers: ProviderActionHandlers<"circle", CircleHandle
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, circleActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: apiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  defaultHeaders: { "accept": "application/json", "content-type": "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const community = normalizeCommunity(
@@ -126,7 +141,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: String(community.id),
         displayName: optionalString(community.name) ?? optionalString(community.slug) ?? "Circle Community",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl,
         validationEndpoint: "/community",
@@ -145,16 +159,16 @@ async function requestCircleJson(input: {
   query?: Record<string, string | undefined>;
 }): Promise<Record<string, unknown>> {
   const signal = input.context.signal
-    ? AbortSignal.any([input.context.signal, AbortSignal.timeout(requestTimeoutMs)])
-    : AbortSignal.timeout(requestTimeoutMs);
+    ? AbortSignal.any([input.context.signal, AbortSignal.timeout(defaultProviderRequestTimeoutMs)])
+    : AbortSignal.timeout(defaultProviderRequestTimeoutMs);
   let response: Response;
   let payload: unknown;
   try {
     response = await input.context.fetcher(buildUrl(input.path, input.query ?? {}), {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${input.context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${input.context.apiKey}`,
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },
@@ -170,7 +184,7 @@ async function requestCircleJson(input: {
     );
   }
   if (!response.ok) throw createError(response.status, payload, input.phase);
-  return requiredRecord(payload, "Circle payload", providerError);
+  return requiredRecord(payload, "Circle payload", providerResponseError);
 }
 
 function buildUrl(path: string, query: Record<string, string | undefined>): URL {
@@ -220,7 +234,7 @@ function normalizePagination(payload: Record<string, unknown>): Record<string, u
 
 function readRecords(payload: Record<string, unknown>): Array<Record<string, unknown>> {
   return Array.isArray(payload.records)
-    ? payload.records.map((item) => requiredRecord(item, "Circle record", providerError))
+    ? payload.records.map((item) => requiredRecord(item, "Circle record", providerResponseError))
     : [];
 }
 
@@ -345,12 +359,4 @@ function optionalPositiveIntegerString(value: unknown, fieldName: string): strin
 function optionalIntegerListString(value: unknown): string | undefined {
   if (!Array.isArray(value) || value.length === 0) return undefined;
   return value.map((item) => String(positiveInteger(item, "member_tag_ids"))).join(",");
-}
-
-function providerError(message: string): ProviderRequestError {
-  return new ProviderRequestError(502, message);
-}
-
-function isAbortLikeError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
 }

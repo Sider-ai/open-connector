@@ -1,6 +1,5 @@
 import type { CredentialValidationResult, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -10,9 +9,10 @@ import {
   requiredRecord,
   requiredString,
 } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { providerInputError, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
-const pipedreamApiBaseUrl = "https://api.pipedream.com/v1";
+export const pipedreamApiBaseUrl: string = "https://api.pipedream.com/v1";
 
 type PipedreamActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 type PipedreamQueryValue = string | number | undefined;
@@ -47,7 +47,7 @@ export const pipedreamActionHandlers: ProviderActionHandlers<"pipedream", Pipedr
       app: normalizeApp(
         unwrapData(
           await pipedreamGet(
-            `/apps/${encodeURIComponent(requiredString(input.appId, "appId", invalidInputError))}`,
+            `/apps/${encodeURIComponent(requiredString(input.appId, "appId", providerInputError))}`,
             {},
             context,
             "execute",
@@ -57,7 +57,7 @@ export const pipedreamActionHandlers: ProviderActionHandlers<"pipedream", Pipedr
     };
   },
   async get_workflow(input, context) {
-    const workflowId = requiredString(input.workflowId, "workflowId", invalidInputError);
+    const workflowId = requiredString(input.workflowId, "workflowId", providerInputError);
     return {
       workflow: normalizeWorkflow(
         unwrapData(
@@ -74,7 +74,7 @@ export const pipedreamActionHandlers: ProviderActionHandlers<"pipedream", Pipedr
   },
   async get_workflow_emits(input, context) {
     const payload = await pipedreamGet(
-      `/workflows/${encodeURIComponent(requiredString(input.workflowId, "workflowId", invalidInputError))}/event_summaries`,
+      `/workflows/${encodeURIComponent(requiredString(input.workflowId, "workflowId", providerInputError))}/event_summaries`,
       {
         expand: input.expandEvent === true ? "event" : undefined,
         limit: optionalNumber(input.limit),
@@ -95,7 +95,7 @@ export const pipedreamActionHandlers: ProviderActionHandlers<"pipedream", Pipedr
       workspace: normalizeWorkspace(
         unwrapData(
           await pipedreamGet(
-            `/workspaces/${encodeURIComponent(requiredString(input.workspaceId, "workspaceId", invalidInputError))}`,
+            `/workspaces/${encodeURIComponent(requiredString(input.workspaceId, "workspaceId", providerInputError))}`,
             {},
             context,
             "execute",
@@ -118,7 +118,6 @@ export async function validatePipedreamCredential(
     profile: {
       accountId: user.id,
       displayName: user.email ?? user.username ?? user.id,
-      grantedScopes: [],
     },
     metadata: compactObject({
       validationEndpoint: "/users/me",
@@ -133,7 +132,7 @@ export async function validatePipedreamCredential(
 async function pipedreamGet(
   path: string,
   query: Record<string, PipedreamQueryValue>,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: "validate" | "execute",
 ) {
   const url = new URL(path, pipedreamApiBaseUrl);
@@ -148,8 +147,8 @@ async function pipedreamGet(
     response = await context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${context.apiKey}`,
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },
@@ -208,7 +207,7 @@ function unwrapData(payload: unknown) {
 function normalizeUser(payload: unknown) {
   const user = requiredRecord(unwrapData(payload), "Pipedream user");
   return {
-    id: requiredString(user.id, "user.id", providerResponseError),
+    id: requiredString(user.id, "user.id", pipedreamResponseError),
     username: optionalString(user.username) ?? null,
     email: optionalString(user.email) ?? null,
     workspaces: Array.isArray(user.orgs) ? objectArray(user.orgs).map(normalizeWorkspace) : [],
@@ -219,7 +218,7 @@ function normalizeUser(payload: unknown) {
 function normalizeWorkspace(payload: unknown) {
   const workspace = requiredRecord(payload, "Pipedream workspace");
   return {
-    id: requiredString(workspace.id, "workspace.id", providerResponseError),
+    id: requiredString(workspace.id, "workspace.id", pipedreamResponseError),
     name: optionalString(workspace.name) ?? null,
     orgname: optionalString(workspace.orgname) ?? null,
     email: optionalString(workspace.email) ?? null,
@@ -232,7 +231,7 @@ function normalizeWorkspace(payload: unknown) {
 function normalizeApp(payload: unknown) {
   const app = requiredRecord(payload, "Pipedream app");
   return {
-    id: requiredString(app.id, "app.id", providerResponseError),
+    id: requiredString(app.id, "app.id", pipedreamResponseError),
     nameSlug: optionalString(app.name_slug) ?? null,
     name: optionalString(app.name) ?? null,
     authType: optionalString(app.auth_type) ?? null,
@@ -248,7 +247,7 @@ function normalizeApp(payload: unknown) {
 function normalizeWorkflow(payload: unknown, fallbackId?: string) {
   const workflow = requiredRecord(payload, "Pipedream workflow");
   return {
-    id: optionalString(workflow.id) ?? fallbackId ?? requiredString(workflow.id, "workflow.id", providerResponseError),
+    id: optionalString(workflow.id) ?? fallbackId ?? requiredString(workflow.id, "workflow.id", pipedreamResponseError),
     name: optionalString(workflow.name) ?? null,
     active: typeof workflow.active === "boolean" ? workflow.active : null,
     raw: workflow,
@@ -258,7 +257,7 @@ function normalizeWorkflow(payload: unknown, fallbackId?: string) {
 function normalizeWorkflowEmit(payload: unknown) {
   const emit = requiredRecord(payload, "Pipedream workflow emit");
   return {
-    id: requiredString(emit.id, "emit.id", providerResponseError),
+    id: requiredString(emit.id, "emit.id", pipedreamResponseError),
     indexedAtMs: optionalNumber(emit.indexed_at_ms) ?? null,
     event: emit.event ?? null,
     metadata: optionalRecord(emit.metadata) ?? {},
@@ -285,10 +284,6 @@ function booleanFlag(value: unknown) {
   return value === true ? 1 : undefined;
 }
 
-function invalidInputError(message: string) {
-  return new ProviderRequestError(400, message);
-}
-
-function providerResponseError(message: string) {
+function pipedreamResponseError(message: string) {
   return new ProviderRequestError(502, `Pipedream response missing string field: ${message}`);
 }

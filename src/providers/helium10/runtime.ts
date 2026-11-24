@@ -1,8 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { OAuthProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
-import type { Client } from "@modelcontextprotocol/client";
-import type { JsonSchemaType } from "@modelcontextprotocol/client";
+import type { ProviderActionHandlers, OAuthProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { Client, JsonSchemaType } from "@modelcontextprotocol/client";
 
 import { UnauthorizedError } from "@modelcontextprotocol/client";
 import { SdkHttpError } from "@modelcontextprotocol/client";
@@ -11,10 +9,14 @@ import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/client/valida
 import { createHash } from "node:crypto";
 import { optionalRecord, requiredString } from "../../core/cast.ts";
 import { withMcpClient } from "../mcp-client.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import {
+  providerInputError,
+  providerUserAgent,
+  ProviderRequestError,
+  defaultProviderRequestTimeoutMs,
+} from "../provider-runtime.ts";
 
 export const helium10McpEndpoint = "https://mcp.helium10.com/mcp";
-const requestTimeoutMs = 30_000;
 const validator = new CfWorkerJsonSchemaValidator();
 const readOnlyTools = new Set([
   "get_keywords_by_keyword",
@@ -67,7 +69,7 @@ export const helium10ActionHandlers: ProviderActionHandlers<
     };
   },
   async call_tool(input, context) {
-    const toolName = requiredString(input.toolName, "toolName", badRequest);
+    const toolName = requiredString(input.toolName, "toolName", providerInputError);
     const args = input.arguments === undefined ? {} : optionalRecord(input.arguments);
     if (!args) throw new ProviderRequestError(400, "arguments must be a JSON object");
     if (!readOnlyTools.has(toolName)) {
@@ -80,7 +82,7 @@ export const helium10ActionHandlers: ProviderActionHandlers<
       client.callTool(
         { name: toolName, arguments: args },
         {
-          timeout: requestTimeoutMs,
+          timeout: defaultProviderRequestTimeoutMs,
           signal: context.signal,
         },
       ),
@@ -95,7 +97,7 @@ export async function validateHelium10Credential(
   signal?: AbortSignal,
 ): Promise<CredentialValidationResult> {
   const result = await withClient({ accessToken, fetcher, signal }, (client) =>
-    client.listTools({}, { timeout: requestTimeoutMs, signal }),
+    client.listTools({}, { timeout: defaultProviderRequestTimeoutMs, signal }),
   );
   if (!result.tools.some((tool) => readOnlyTools.has(tool.name))) {
     throw new ProviderRequestError(502, "Helium 10 MCP did not expose any approved read-only tools");
@@ -103,28 +105,24 @@ export async function validateHelium10Credential(
   const tokenHash = createHash("sha256").update(accessToken).digest("hex").slice(0, 16);
   return {
     profile: { accountId: `helium10:mcp:${tokenHash}`, displayName: `Helium 10 MCP · ${tokenHash.slice(-6)}` },
-    grantedScopes: ["mcp:tools"],
     metadata: { mcpEndpoint: helium10McpEndpoint },
   };
 }
 
-async function listTools(context: Pick<OAuthProviderContext, "accessToken" | "fetcher" | "signal">): Promise<Tool[]> {
+async function listTools(context: OAuthProviderContext): Promise<Tool[]> {
   const result = await withClient(context, (client) =>
-    client.listTools({}, { timeout: requestTimeoutMs, signal: context.signal }),
+    client.listTools({}, { timeout: defaultProviderRequestTimeoutMs, signal: context.signal }),
   );
   return result.tools.filter((tool) => readOnlyTools.has(tool.name));
 }
 
-async function withClient<T>(
-  context: Pick<OAuthProviderContext, "accessToken" | "fetcher" | "signal">,
-  run: (client: Client) => Promise<T>,
-): Promise<T> {
+async function withClient<T>(context: OAuthProviderContext, run: (client: Client) => Promise<T>): Promise<T> {
   return withMcpClient(
     {
       endpoint: new URL(helium10McpEndpoint),
       transport: "streamable_http",
       fetcher: context.fetcher,
-      headers: { authorization: `Bearer ${context.accessToken}`, "user-agent": providerUserAgent },
+      headers: { "authorization": `Bearer ${context.accessToken}`, "user-agent": providerUserAgent },
       signal: context.signal,
       mapError: mapHelium10McpError,
     },
@@ -165,8 +163,4 @@ function normalizeResult(result: ToolResult): unknown {
   } catch {
     return text.text;
   }
-}
-
-function badRequest(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

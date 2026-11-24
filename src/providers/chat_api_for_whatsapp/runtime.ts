@@ -1,6 +1,7 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import {
   compactObject,
@@ -16,14 +17,13 @@ import {
 } from "../../core/cast.ts";
 import {
   createProviderTimeout,
+  providerInputError,
   ProviderRequestError,
   providerUserAgent,
   readProviderTextBody,
 } from "../provider-runtime.ts";
 
 export const chatApiForWhatsappApiOrigin = "https://api.chat-api.com";
-
-const chatApiForWhatsappRequestTimeoutMs = 30_000;
 
 type ChatApiForWhatsappPhase = "validate" | "execute";
 
@@ -108,7 +108,7 @@ export const chatApiForWhatsappActionHandlers: ProviderActionHandlers<
       body: compactObject({
         chatId: optionalString(input.chatId),
         phone: optionalString(input.phone),
-        body: requiredString(input.text, "text", inputError),
+        body: requiredString(input.text, "text", providerInputError),
       }),
     });
     return normalizeSendStatus(payload);
@@ -123,8 +123,8 @@ export const chatApiForWhatsappActionHandlers: ProviderActionHandlers<
       body: compactObject({
         chatId: optionalString(input.chatId),
         phone: optionalString(input.phone),
-        body: requiredString(input.fileUrl, "fileUrl", inputError),
-        filename: requiredString(input.filename, "filename", inputError),
+        body: requiredString(input.fileUrl, "fileUrl", providerInputError),
+        filename: requiredString(input.filename, "filename", providerInputError),
         caption: optionalString(input.caption),
       }),
     });
@@ -147,7 +147,7 @@ export const chatApiForWhatsappActionHandlers: ProviderActionHandlers<
 };
 
 export function requireChatApiForWhatsappInstanceId(value: unknown): string {
-  const instanceId = requiredString(value, "instanceId", inputError);
+  const instanceId = requiredString(value, "instanceId", providerInputError);
   const numericInstanceId = Number(instanceId);
   if (!Number.isInteger(numericInstanceId) || numericInstanceId <= 0) {
     throw new ProviderRequestError(400, "instanceId must be a positive integer string");
@@ -177,9 +177,7 @@ export async function validateChatApiForWhatsappCredential(
     profile: {
       accountId: `chat_api_for_whatsapp:instance:${instanceId}`,
       displayName: `Chat API instance ${instanceId}`,
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: resolveChatApiForWhatsappBaseUrl(instanceId),
       validationEndpoint: "/status",
@@ -232,7 +230,7 @@ async function requestChatApiForWhatsapp(input: {
   query?: Record<string, unknown>;
   body?: Record<string, unknown>;
 }): Promise<ChatApiForWhatsappResponse> {
-  const timeout = createProviderTimeout(input.context.signal, chatApiForWhatsappRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   const url = new URL(
     input.path.startsWith("/") ? input.path.slice(1) : input.path,
     resolveChatApiForWhatsappBaseUrl(input.context.instanceId),
@@ -248,7 +246,7 @@ async function requestChatApiForWhatsapp(input: {
     const response = await input.context.fetcher(url, {
       method: input.method ?? "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         ...(input.body ? { "content-type": "application/json" } : {}),
         "user-agent": providerUserAgent,
       },
@@ -379,10 +377,6 @@ function parseJsonSafely(value: string): unknown {
   } catch {
     return undefined;
   }
-}
-
-function inputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }
 
 function responseError(message: string): ProviderRequestError {

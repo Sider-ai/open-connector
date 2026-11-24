@@ -1,12 +1,21 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "modjo_ai";
 const modjoAiApiBaseUrl = "https://api.modjo.ai/v2";
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: modjoAiApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
 
 type ModjoRequestMode = "validate" | "execute";
 type ModjoActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
@@ -102,7 +111,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "api_key",
         displayName: accountLabel,
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: modjoAiApiBaseUrl,
         validationEndpoint: "/users",
@@ -115,7 +123,7 @@ export const credentialValidators: CredentialValidators = {
 
 async function requestModjo(
   path: string,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   options: { mode?: ModjoRequestMode; query?: Record<string, string> } = {},
 ): Promise<Record<string, unknown>> {
   const url = modjoUrl(path, options.query);
@@ -152,8 +160,8 @@ function modjoUrl(path: string, query?: Record<string, string>): URL {
 
 function modjoHeaders(apiKey: string): Record<string, string> {
   return {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "user-agent": providerUserAgent,
   };
 }

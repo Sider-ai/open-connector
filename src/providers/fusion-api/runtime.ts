@@ -1,19 +1,31 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ApiKeyProviderContext, ProviderActionHandlers, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ApiKeyProviderContext, ProviderActionHandlers, ProviderRuntimeHandler } from "../provider-executors.ts";
 import type { FusionApiOperation } from "./operations.ts";
 
+import { optionalRecord, optionalString } from "../../core/cast.ts";
 import { compactJson, encodePathSegment } from "../../core/request.ts";
+import { mapProviderActionHandlers } from "../provider-executors.ts";
 import {
-  createProviderTimeout,
-  isAbortLikeError,
-  mapProviderActionHandlers,
   ProviderRequestError,
+  createProviderTimeout,
+  defaultProviderRequestTimeoutMs,
+  isAbortLikeError,
   providerUserAgent,
+  withRetryAfterSeconds,
 } from "../provider-runtime.ts";
 import { fusionApiOperations } from "./operations.ts";
 
-const fusionApiDefaultBaseUrl = "https://fusion-api.oomol.com";
-const fusionApiDefaultRequestTimeoutMs = 30_000;
+export const fusionApiDefaultBaseUrl = "https://fusion-api.oomol.com";
+const fusionApiLongRunningRequestTimeoutMs = 300_000;
+const fusionApiLongRunningPaths = new Set([
+  "/v1/deepseek-ocr/action/recognize",
+  "/v1/jina-reader/action/read",
+  "/v1/qwen-voice-cloning/action/create",
+  "/v1/qwen-voice-design/action/create",
+  "/v1/qwen-voice-design/action/generate",
+  "/v1/qwen-tts/action/generate",
+  "/v1/cosyvoice-tts/action/generate",
+]);
 const fusionApiValidationPath = "/openapi/qwen-image?hideTaskStateAPI=true";
 
 type FusionApiActionContext = ApiKeyProviderContext;
@@ -57,7 +69,6 @@ export async function validateFusionApiCredential(
       accountId: "oomol-api-key",
       displayName: "OOMOL API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: fusionApiDefaultBaseUrl,
       validationEndpoint: fusionApiValidationPath,
@@ -77,6 +88,7 @@ async function executeFusionApiOperation(
       query: operation.method === "GET" ? buildFusionApiQuery(operation, input) : undefined,
       body: operation.method === "POST" ? buildFusionApiRequestBody(operation, input) : undefined,
       successStatuses: operation.successStatuses,
+      taskRead: operation.actionName.endsWith("_state") || operation.actionName.endsWith("_result"),
     }),
   );
 }
@@ -91,6 +103,7 @@ interface FusionApiRequest {
   method: "GET" | "POST";
   path: string;
   successStatuses: number[];
+  taskRead?: boolean;
   query?: URLSearchParams;
   body?: unknown;
 }
@@ -103,7 +116,13 @@ async function fusionApiRequest(context: FusionApiRequestContext, request: Fusio
     }
   }
 
-  const timeout = createProviderTimeout(context.signal, fusionApiDefaultRequestTimeoutMs);
+  const requestTimeoutMs =
+    request.path === "/v1/jina-reader/action/search"
+      ? 60_000
+      : fusionApiLongRunningPaths.has(request.path)
+        ? fusionApiLongRunningRequestTimeoutMs
+        : defaultProviderRequestTimeoutMs;
+  const timeout = createProviderTimeout(context.signal, requestTimeoutMs);
   let response: Response;
   try {
     response = await context.fetcher(url, {
@@ -115,8 +134,8 @@ async function fusionApiRequest(context: FusionApiRequestContext, request: Fusio
   } catch (error) {
     if (timeout.didTimeout() && isAbortLikeError(error)) {
       throw new ProviderRequestError(
-        502,
-        `fusion-api ${request.path} request timed out after ${Math.ceil(fusionApiDefaultRequestTimeoutMs / 1000)} seconds`,
+        504,
+        `fusion-api ${request.path} request timed out after ${Math.ceil(requestTimeoutMs / 1000)} seconds`,
       );
     }
     const message = error instanceof Error && error.message.trim() ? error.message : "request failed";
@@ -129,7 +148,24 @@ async function fusionApiRequest(context: FusionApiRequestContext, request: Fusio
     return readFusionApiPayload(response);
   }
 
-  throw new ProviderRequestError(response.status, await readFusionApiError(response));
+  const error = await readFusionApiError(response);
+  if (
+    response.status === 400 ||
+    response.status === 422 ||
+    (response.status === 500 && error.state === "params_error")
+  ) {
+    throw new ProviderRequestError(400, error.message, undefined, "invalid_input");
+  }
+  if (request.taskRead && response.status >= 500 && error.state === "error") {
+    return { state: "failed", error: error.message };
+  }
+
+  throw new ProviderRequestError(
+    response.status,
+    error.message,
+    withRetryAfterSeconds(response),
+    response.status === 429 ? "rate_limited" : "provider_error",
+  );
 }
 
 function buildFusionApiPath(operation: FusionApiOperation, input: Record<string, unknown>): string {
@@ -175,8 +211,8 @@ function buildFusionApiRequestBody(operation: FusionApiOperation, input: Record<
 
 function fusionApiHeaders(apiKey: string, hasBody: boolean): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "user-agent": providerUserAgent,
   };
   if (hasBody) {
@@ -217,6 +253,12 @@ function normalizeFusionApiPayload(payload: unknown): unknown {
       progress: record.progress,
     };
   }
+  if (
+    (record.success === true && record.state === "failed") ||
+    (record.success === false && record.state === "error")
+  ) {
+    return { state: "failed", error: normalizeFusionApiError(payload, "fusion-api task failed").message };
+  }
   if (record.success === false && record.state === "not_found") {
     return {
       state: "not_found",
@@ -229,22 +271,21 @@ function normalizeFusionApiPayload(payload: unknown): unknown {
   return payload;
 }
 
-async function readFusionApiError(response: Response): Promise<string> {
+async function readFusionApiError(response: Response) {
   const text = await response.text().catch(() => "");
+  const fallback = text.trim() || `fusion-api request failed with ${response.status}`;
   try {
-    const payload = JSON.parse(text) as {
-      error?: unknown;
-      message?: unknown;
-    };
-    if (typeof payload.error === "string" && payload.error.trim()) {
-      return payload.error;
-    }
-    if (typeof payload.message === "string" && payload.message.trim()) {
-      return payload.message;
-    }
+    return normalizeFusionApiError(JSON.parse(text), fallback);
   } catch {
-    return text.trim() || `fusion-api request failed with ${response.status}`;
+    return { message: fallback, state: undefined };
   }
-
-  return text.trim() || `fusion-api request failed with ${response.status}`;
+}
+function normalizeFusionApiError(payload: unknown, fallback: string) {
+  const record = optionalRecord(payload);
+  const error = optionalRecord(record?.error);
+  return {
+    message:
+      optionalString(record?.error) ?? optionalString(error?.message) ?? optionalString(record?.message) ?? fallback,
+    state: optionalString(record?.state),
+  };
 }

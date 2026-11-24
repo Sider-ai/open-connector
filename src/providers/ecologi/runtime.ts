@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { createHash } from "node:crypto";
 import { compactObject, optionalBoolean, optionalRecord, optionalString } from "../../core/cast.ts";
@@ -83,7 +83,6 @@ export async function validateEcologiCredential(
       accountId: `ecologi:api_key:${fingerprint}`,
       displayName: "Ecologi API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: ecologiApiBaseUrl,
       validationEndpoint: "/impact/trees",
@@ -158,7 +157,7 @@ async function requestEcologiJson(input: {
   signal?: AbortSignal;
 }): Promise<unknown> {
   const headers = new Headers({
-    accept: "application/json",
+    "accept": "application/json",
     "content-type": "application/json",
     "user-agent": providerUserAgent,
   });

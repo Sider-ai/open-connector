@@ -1,6 +1,8 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
 
-import { defineApiKeyProviderExecutors, defineProviderProxy } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy, readProviderProxyErrorMessage } from "../provider-proxy.ts";
+import { ProviderRequestError } from "../provider-runtime.ts";
 import { seventeenTrackActionHandlers, seventeenTrackApiBaseUrl, validateSeventeenTrackCredential } from "./runtime.ts";
 
 const service = "17track";
@@ -14,10 +16,15 @@ export const proxy: ProviderProxyExecutor = defineProviderProxy({
   baseUrl: seventeenTrackApiBaseUrl,
   auth: { type: "api_key_header", name: "17token" },
   skipDnsValidation: true,
-  customizeRequest({ headers }) {
-    if (!headers.has("accept")) headers.set("accept", "application/json");
-    if (!headers.has("content-type")) headers.set("content-type", "application/json");
+  async readError(response) {
+    return new ProviderRequestError(
+      response.status,
+      await readProviderProxyErrorMessage(response, "17track proxy request failed"),
+      undefined,
+      "provider_error",
+    );
   },
+  defaultHeaders: { "accept": "application/json", "content-type": "application/json" },
 });
 
 export const credentialValidators: CredentialValidators = {

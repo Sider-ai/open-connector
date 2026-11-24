@@ -3,22 +3,25 @@ import type {
   CredentialValidators,
   ExecutionContext,
   ProviderExecutors,
+  ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { optionalBoolean, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineProviderExecutors,
   isAbortLikeError,
+  providerInputError,
   providerUserAgent,
   ProviderRequestError,
-  requireApiKeyCredential,
+  defaultProviderRequestTimeoutMs,
 } from "../provider-runtime.ts";
 
 const service = "kontent_ai";
 const kontentAiApiBaseUrl = "https://manage.kontent.ai/v2";
-const kontentAiDefaultRequestTimeoutMs = 30_000;
 
 type KontentAiPhase = "validate" | "execute";
 type KontentAiIdentifierType = "id" | "codename" | "externalId";
@@ -71,6 +74,14 @@ export const executors: ProviderExecutors = defineProviderExecutors<KontentAiAct
   },
 });
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: kontentAiApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  defaultHeaders: { "accept": "application/json", "content-type": "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     return validateKontentAiCredential(input.apiKey, input.values, fetcher, signal);
@@ -99,7 +110,6 @@ async function validateKontentAiCredential(
       accountId: `kontent_ai:${environmentId}`,
       displayName: `Kontent.ai ${environmentId}`,
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: kontentAiApiBaseUrl,
       environmentId,
@@ -255,13 +265,13 @@ async function requestKontentAiJson(input: {
   signal?: AbortSignal;
   continuationToken?: string;
 }): Promise<KontentAiRequestResult> {
-  const timeout = createProviderTimeout(input.signal, kontentAiDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   let response: Response;
   let payload: unknown;
   try {
     const headers: Record<string, string> = {
-      accept: "application/json",
-      authorization: `Bearer ${input.apiKey}`,
+      "accept": "application/json",
+      "authorization": `Bearer ${input.apiKey}`,
       "content-type": "application/json",
       "user-agent": providerUserAgent,
     };
@@ -282,7 +292,7 @@ async function requestKontentAiJson(input: {
     if (timeout.didTimeout() || isAbortLikeError(error)) {
       throw new ProviderRequestError(
         504,
-        `Kontent.ai ${input.path} request timed out after ${Math.ceil(kontentAiDefaultRequestTimeoutMs / 1000)} seconds`,
+        `Kontent.ai ${input.path} request timed out after ${Math.ceil(defaultProviderRequestTimeoutMs / 1000)} seconds`,
       );
     }
     throw new ProviderRequestError(
@@ -440,8 +450,4 @@ function readArray(value: unknown): unknown[] {
   }
 
   return value;
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

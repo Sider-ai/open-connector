@@ -1,6 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -19,13 +18,11 @@ import {
 
 export const e2bApiBaseUrl = "https://api.e2b.app";
 
-const e2bDefaultRequestTimeoutMs = 30_000;
 const e2bValidationPath = "/v2/sandboxes";
 
 type E2bRequestPhase = "validate" | "execute";
 type E2bQueryValue = string | number | boolean | readonly string[] | undefined;
-type E2bContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type E2bActionHandler = (input: Record<string, unknown>, context: E2bContext) => Promise<unknown>;
+type E2bActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 interface E2bRequestOptions {
   apiKey: string;
@@ -77,7 +74,6 @@ export async function validateE2bCredential(
       accountId: "api_key",
       displayName: "E2B API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: e2bApiBaseUrl,
       validationEndpoint: e2bValidationPath,
@@ -87,7 +83,7 @@ export async function validateE2bCredential(
   };
 }
 
-async function createSandbox(input: Record<string, unknown>, context: E2bContext): Promise<unknown> {
+async function createSandbox(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await requestE2bJson({
     ...context,
     path: "/sandboxes",
@@ -114,7 +110,7 @@ async function createSandbox(input: Record<string, unknown>, context: E2bContext
   };
 }
 
-async function listSandboxes(input: Record<string, unknown>, context: E2bContext): Promise<unknown> {
+async function listSandboxes(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const sandboxes = await requestE2bSandboxArray({
     ...context,
     path: "/v2/sandboxes",
@@ -132,7 +128,7 @@ async function listSandboxes(input: Record<string, unknown>, context: E2bContext
   };
 }
 
-async function getSandbox(input: Record<string, unknown>, context: E2bContext): Promise<unknown> {
+async function getSandbox(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const sandboxID = requiredString(input.sandboxID, "sandboxID");
   const payload = await requestE2bJson({
     ...context,
@@ -146,7 +142,7 @@ async function getSandbox(input: Record<string, unknown>, context: E2bContext): 
   };
 }
 
-async function deleteSandbox(input: Record<string, unknown>, context: E2bContext): Promise<unknown> {
+async function deleteSandbox(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const sandboxID = requiredString(input.sandboxID, "sandboxID");
   await requestE2bJson({
     ...context,
@@ -176,7 +172,7 @@ async function requestE2bSandboxArray(input: E2bRequestOptions): Promise<Array<R
 }
 
 async function requestE2bJson(input: E2bRequestOptions): Promise<unknown> {
-  const timeout = createProviderTimeout(input.signal, e2bDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   try {
     const response = await input.fetcher(buildE2bUrl(input.path, input.query), {
       method: input.method ?? "GET",
@@ -232,7 +228,7 @@ function buildE2bUrl(path: string, query?: Record<string, E2bQueryValue>): URL {
 
 function buildE2bHeaders(apiKey: string, hasBody: boolean): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     "x-api-key": apiKey,
   };

@@ -1,5 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 import type { ProviderFetch } from "../provider-runtime.ts";
 import type { Client } from "@modelcontextprotocol/client";
 
@@ -7,10 +7,15 @@ import { UnauthorizedError } from "@modelcontextprotocol/client";
 import { SdkHttpError } from "@modelcontextprotocol/client";
 import { ProtocolError, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { createHash } from "node:crypto";
-import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { optionalRecord, optionalString } from "../../core/cast.ts";
 import { assertPublicHttpUrl, isPrivateNetworkAccessAllowed } from "../../core/request.ts";
 import { withMcpClient } from "../mcp-client.ts";
-import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import {
+  ProviderRequestError,
+  providerUserAgent,
+  requiredInputString,
+  defaultProviderRequestTimeoutMs,
+} from "../provider-runtime.ts";
 
 export interface ExcalidrawMcpContext {
   endpoint: URL;
@@ -31,7 +36,6 @@ type ExcalidrawMcpToolResult = {
   toolResult?: unknown;
 };
 const defaultEndpoint = "https://mcp.excalidraw.com";
-const requestTimeoutMs = 30_000;
 
 export const excalidrawMcpActionHandlers: ProviderActionHandlers<"excalidraw_mcp", ExcalidrawMcpActionHandler> = {
   read_me(_input, context) {
@@ -39,7 +43,7 @@ export const excalidrawMcpActionHandlers: ProviderActionHandlers<"excalidraw_mcp
   },
   create_view(input, context) {
     return callExcalidrawMcpTool(context, "create_view", {
-      elements: requireString(input.elements, "elements"),
+      elements: requiredInputString(input.elements, "elements"),
     });
   },
 };
@@ -78,7 +82,6 @@ export async function validateExcalidrawCredential(
       accountId: `excalidraw_mcp:mcp:${endpointHash}`,
       displayName: `Excalidraw MCP · ${context.endpoint.host}`,
     },
-    grantedScopes: [],
     metadata: {
       mcpEndpoint: endpointId,
       discoveredToolCount: discoveredTools.length,
@@ -120,7 +123,7 @@ export async function callExcalidrawMcpTool(
         arguments: args,
       },
       {
-        timeout: requestTimeoutMs,
+        timeout: defaultProviderRequestTimeoutMs,
         signal: context.signal,
       },
     ),
@@ -134,7 +137,7 @@ async function listExcalidrawMcpTools(context: ExcalidrawMcpContext): Promise<st
     client.listTools(
       {},
       {
-        timeout: requestTimeoutMs,
+        timeout: defaultProviderRequestTimeoutMs,
         signal: context.signal,
       },
     ),
@@ -246,10 +249,6 @@ function mapExcalidrawMcpError(error: unknown): ProviderRequestError {
     error instanceof Error ? `Excalidraw MCP request failed: ${error.message}` : "Excalidraw MCP request failed",
     error,
   );
-}
-
-function requireString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function isAbortError(error: unknown): boolean {

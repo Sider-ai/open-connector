@@ -1,0 +1,25 @@
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { apiBaseUrl, imagetranslateAiActionHandlers, validateCredential } from "./runtime.ts";
+
+const service = "imagetranslate_ai";
+
+export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, imagetranslateAiActionHandlers, {
+  skipDnsValidation: true,
+});
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: apiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
+
+export const credentialValidators: CredentialValidators = {
+  async apiKey(input) {
+    return validateCredential(input.apiKey);
+  },
+};

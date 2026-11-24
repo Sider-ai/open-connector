@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -14,12 +14,12 @@ import {
 import {
   createProviderTimeout,
   isAbortLikeError,
+  providerInputError,
   providerUserAgent,
   ProviderRequestError,
 } from "../provider-runtime.ts";
 
-const emailableApiBaseUrl = "https://api.emailable.com";
-const emailableDefaultRequestTimeoutMs = 30_000;
+export const emailableApiBaseUrl = "https://api.emailable.com";
 
 type EmailableRequestPhase = "validate" | "execute";
 type EmailableActionHandler = ProviderRuntimeHandler<ApiKeyProviderContext>;
@@ -39,7 +39,7 @@ export const emailableActionHandlers: ProviderActionHandlers<"emailable", Emaila
       fetcher: context.fetcher,
       signal: context.signal,
       phase: "execute",
-      email: requiredString(input.email, "email", badInput),
+      email: requiredString(input.email, "email", providerInputError),
     });
   },
   verify_batch_emails(input, context) {
@@ -57,7 +57,7 @@ export const emailableActionHandlers: ProviderActionHandlers<"emailable", Emaila
       fetcher: context.fetcher,
       signal: context.signal,
       phase: "execute",
-      batchId: requiredString(input.batch_id, "batch_id", badInput),
+      batchId: requiredString(input.batch_id, "batch_id", providerInputError),
     });
   },
 };
@@ -74,7 +74,6 @@ export async function validateEmailableCredential(
       accountId: payload.owner_email,
       displayName: payload.owner_email,
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: emailableApiBaseUrl,
       validationEndpoint: "/v1/account",
@@ -202,7 +201,7 @@ async function requestEmailableJson(
     }
   }
 
-  const timeout = createProviderTimeout(input.signal, emailableDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   try {
     const hasJsonBody = input.body !== undefined;
     const response = await input.fetcher(url, {
@@ -235,8 +234,8 @@ async function requestEmailableJson(
 
 function emailableHeaders(apiKey: string, hasJsonBody: boolean): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "user-agent": providerUserAgent,
   };
   if (hasJsonBody) {
@@ -365,8 +364,4 @@ function normalizeIntegerRecord(value: unknown): Record<string, number> | undefi
       number | undefined
     >,
   ) as Record<string, number>;
-}
-
-function badInput(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

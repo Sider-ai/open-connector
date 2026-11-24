@@ -4,15 +4,17 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderRequestContext } from "../provider-runtime.ts";
 
-import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
   providerUserAgent,
   ProviderRequestError,
+  requiredInputString,
+  providerInputError,
 } from "../provider-runtime.ts";
 
 const service = "teamcamp";
@@ -34,7 +36,7 @@ export const teamcampActionHandlers: ProviderActionHandlers<"teamcamp", Teamcamp
     return { projects, raw: projects };
   },
   async get_project(input, context): Promise<unknown> {
-    const projectId = requiredProviderString(input.projectId, "projectId");
+    const projectId = requiredInputString(input.projectId, "projectId");
     const project = await requestTeamcampJson<Record<string, unknown>>({
       apiKey: context.apiKey,
       path: `/project/${encodeURIComponent(projectId)}`,
@@ -49,7 +51,7 @@ export const teamcampActionHandlers: ProviderActionHandlers<"teamcamp", Teamcamp
       apiKey: context.apiKey,
       path: "/task",
       query: compactObject({
-        projectId: requiredProviderString(input.projectId, "projectId"),
+        projectId: requiredInputString(input.projectId, "projectId"),
         complete: typeof input.complete === "boolean" ? input.complete : undefined,
       }),
       context,
@@ -59,7 +61,7 @@ export const teamcampActionHandlers: ProviderActionHandlers<"teamcamp", Teamcamp
     return { tasks, raw: tasks };
   },
   async get_task(input, context): Promise<unknown> {
-    const taskId = requiredProviderString(input.taskId, "taskId");
+    const taskId = requiredInputString(input.taskId, "taskId");
     const task = await requestTeamcampJson<Record<string, unknown>>({
       apiKey: context.apiKey,
       path: `/task/${encodeURIComponent(taskId)}`,
@@ -70,13 +72,13 @@ export const teamcampActionHandlers: ProviderActionHandlers<"teamcamp", Teamcamp
     return { task, raw: task };
   },
   async post_task_comment(input, context): Promise<unknown> {
-    const taskId = requiredProviderString(input.taskId, "taskId");
+    const taskId = requiredInputString(input.taskId, "taskId");
     const comment = await requestTeamcampJson<Record<string, unknown>>({
       apiKey: context.apiKey,
       path: `/task/${encodeURIComponent(taskId)}/comments`,
       method: "POST",
       body: {
-        content: requiredProviderString(input.content, "content"),
+        content: requiredInputString(input.content, "content"),
       },
       context,
       phase: "execute",
@@ -133,7 +135,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: workspaceId ? `teamcamp:${workspaceId}` : undefined,
         displayName: workspaceName ?? email ?? createdBy ?? "Teamcamp API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: teamcampApiBaseUrl,
         validationEndpoint: "/verify",
@@ -150,7 +151,7 @@ export const credentialValidators: CredentialValidators = {
 async function requestTeamcampJson<T>(options: {
   apiKey: string;
   path: string;
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">;
+  context: ProviderRequestContext;
   phase: TeamcampRequestPhase;
   method?: string;
   query?: Record<string, TeamcampQueryValue>;
@@ -195,7 +196,7 @@ function buildTeamcampUrl(path: string, query: Record<string, TeamcampQueryValue
 
 function buildTeamcampHeaders(apiKey: string, hasJsonBody: boolean): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
+    "accept": "application/json",
     apiKey,
     "user-agent": providerUserAgent,
   };
@@ -234,7 +235,7 @@ function createTeamcampError(
     response.status === 403 ||
     (response.status === 404 && notFoundAsInvalidInput)
   ) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   return new ProviderRequestError(response.status || 500, message);
 }
@@ -247,8 +248,4 @@ function extractTeamcampErrorMessage(payload: unknown): string | undefined {
   return record
     ? (optionalString(record.message) ?? optionalString(record.error) ?? optionalString(record.detail))
     : undefined;
-}
-
-function requiredProviderString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }

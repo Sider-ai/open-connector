@@ -2,9 +2,9 @@ import type { ActionDefinition } from "../../core/types.ts";
 
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
-import { surveyMonkeyConnectorScopes } from "./scopes.ts";
+import { surveyMonkeyProviderScopes } from "./scopes.ts";
 
-const service = "survey_monkey" as const;
+const service = "survey_monkey";
 
 const noInputSchema = s.object("No input parameters are required for this action.", {});
 
@@ -252,8 +252,9 @@ const createContactInputSchema = s.requireAnyProperty(
 export const surveyMonkeyActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "get_current_user",
+    operationType: "read",
     description: "Get the SurveyMonkey user and plan associated with the connected account.",
-    requiredScopes: [surveyMonkeyConnectorScopes.usersRead],
+    requiredScopes: [surveyMonkeyProviderScopes.usersRead],
     inputSchema: noInputSchema,
     outputSchema: s.object("The current SurveyMonkey user response.", {
       user: s.describe(userSchema, "The authenticated SurveyMonkey user."),
@@ -261,8 +262,9 @@ export const surveyMonkeyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_surveys",
+    operationType: "read",
     description: "List surveys available to the connected SurveyMonkey account.",
-    requiredScopes: [surveyMonkeyConnectorScopes.surveysRead],
+    requiredScopes: [surveyMonkeyProviderScopes.surveysRead],
     inputSchema: listSurveysInputSchema,
     outputSchema: paginatedOutput(
       "The normalized paginated survey list.",
@@ -272,8 +274,9 @@ export const surveyMonkeyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_survey_details",
+    operationType: "read",
     description: "Get a survey with its pages, questions, and answer choices.",
-    requiredScopes: [surveyMonkeyConnectorScopes.surveysRead],
+    requiredScopes: [surveyMonkeyProviderScopes.surveysRead],
     inputSchema: surveyIdInputSchema,
     outputSchema: s.object("The expanded SurveyMonkey survey response.", {
       survey: s.describe(surveySchema, "The expanded survey returned by SurveyMonkey."),
@@ -281,8 +284,9 @@ export const surveyMonkeyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_survey",
+    operationType: "write",
     description: "Create a blank SurveyMonkey survey with one empty page.",
-    requiredScopes: [surveyMonkeyConnectorScopes.surveysWrite],
+    requiredScopes: [surveyMonkeyProviderScopes.surveysWrite],
     inputSchema: createSurveyInputSchema,
     outputSchema: s.object("The created SurveyMonkey survey response.", {
       survey: s.describe(surveySchema, "The survey created by SurveyMonkey."),
@@ -290,8 +294,9 @@ export const surveyMonkeyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_survey_responses",
+    operationType: "read",
     description: "List response metadata for a SurveyMonkey survey.",
-    requiredScopes: [surveyMonkeyConnectorScopes.responsesRead],
+    requiredScopes: [surveyMonkeyProviderScopes.responsesRead],
     inputSchema: listResponsesInputSchema,
     outputSchema: paginatedOutput(
       "The normalized paginated survey response list.",
@@ -301,8 +306,9 @@ export const surveyMonkeyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_survey_response_details",
+    operationType: "read",
     description: "List detailed SurveyMonkey responses including question answers.",
-    requiredScopes: [surveyMonkeyConnectorScopes.responseDetailsRead],
+    requiredScopes: [surveyMonkeyProviderScopes.responseDetailsRead],
     inputSchema: listResponseDetailsInputSchema,
     outputSchema: paginatedOutput(
       "The normalized paginated detailed response list.",
@@ -312,8 +318,9 @@ export const surveyMonkeyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_survey_response_details",
+    operationType: "read",
     description: "Get one SurveyMonkey response including its question answers.",
-    requiredScopes: [surveyMonkeyConnectorScopes.responseDetailsRead],
+    requiredScopes: [surveyMonkeyProviderScopes.responseDetailsRead],
     inputSchema: responseDetailsInputSchema,
     outputSchema: s.object("The detailed SurveyMonkey response.", {
       response: s.describe(responseSchema, "The requested detailed survey response."),
@@ -321,8 +328,9 @@ export const surveyMonkeyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_survey_rollups",
+    operationType: "read",
     description: "Get aggregate answer counts and basic statistics for every question in a SurveyMonkey survey.",
-    requiredScopes: [surveyMonkeyConnectorScopes.responseDetailsRead],
+    requiredScopes: [surveyMonkeyProviderScopes.responseDetailsRead],
     inputSchema: surveyRollupsInputSchema,
     outputSchema: s.object("The SurveyMonkey question rollups.", {
       rollups: s.array("The aggregate results returned for the survey questions.", rollupSchema),
@@ -330,8 +338,9 @@ export const surveyMonkeyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_collectors",
+    operationType: "read",
     description: "List collectors and distribution URLs for a SurveyMonkey survey.",
-    requiredScopes: [surveyMonkeyConnectorScopes.collectorsRead],
+    requiredScopes: [surveyMonkeyProviderScopes.collectorsRead],
     inputSchema: listCollectorsInputSchema,
     outputSchema: paginatedOutput(
       "The normalized paginated collector list.",
@@ -341,8 +350,9 @@ export const surveyMonkeyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_weblink_collector",
+    operationType: "write",
     description: "Create a public weblink collector for a SurveyMonkey survey.",
-    requiredScopes: [surveyMonkeyConnectorScopes.collectorsWrite],
+    requiredScopes: [surveyMonkeyProviderScopes.collectorsWrite],
     inputSchema: createWeblinkCollectorInputSchema,
     outputSchema: s.object("The created SurveyMonkey collector response.", {
       collector: s.describe(collectorSchema, "The weblink collector created by SurveyMonkey."),
@@ -350,8 +360,9 @@ export const surveyMonkeyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_contact_lists",
+    operationType: "read",
     description: "List contact lists in the connected SurveyMonkey account.",
-    requiredScopes: [surveyMonkeyConnectorScopes.contactsRead],
+    requiredScopes: [surveyMonkeyProviderScopes.contactsRead],
     inputSchema: paginationInputSchema,
     outputSchema: paginatedOutput(
       "The normalized paginated contact list collection.",
@@ -361,8 +372,9 @@ export const surveyMonkeyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_contact_list",
+    operationType: "write",
     description: "Create a SurveyMonkey contact list for survey recipients.",
-    requiredScopes: [surveyMonkeyConnectorScopes.contactsWrite],
+    requiredScopes: [surveyMonkeyProviderScopes.contactsWrite],
     inputSchema: createContactListInputSchema,
     outputSchema: s.object("The created SurveyMonkey contact list response.", {
       contactList: s.describe(contactListSchema, "The contact list created by SurveyMonkey."),
@@ -370,8 +382,9 @@ export const surveyMonkeyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_contacts",
+    operationType: "read",
     description: "List, filter, and search contacts in the connected SurveyMonkey account.",
-    requiredScopes: [surveyMonkeyConnectorScopes.contactsRead],
+    requiredScopes: [surveyMonkeyProviderScopes.contactsRead],
     inputSchema: listContactsInputSchema,
     outputSchema: paginatedOutput(
       "The normalized paginated SurveyMonkey contact list.",
@@ -381,15 +394,12 @@ export const surveyMonkeyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_contact",
+    operationType: "write",
     description: "Create a SurveyMonkey contact for use in survey invitations.",
-    requiredScopes: [surveyMonkeyConnectorScopes.contactsWrite],
+    requiredScopes: [surveyMonkeyProviderScopes.contactsWrite],
     inputSchema: createContactInputSchema,
     outputSchema: s.object("The created SurveyMonkey contact response.", {
       contact: s.describe(contactSchema, "The contact created by SurveyMonkey."),
     }),
   }),
 ] satisfies ActionDefinition[];
-
-export type SurveyMonkeyActionName = (typeof surveyMonkeyActions)[number]["name"];
-
-const surveyMonkeyActionByName = new Map(surveyMonkeyActions.map((action) => [action.name, action] as const));

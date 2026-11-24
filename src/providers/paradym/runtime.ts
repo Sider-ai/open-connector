@@ -1,9 +1,15 @@
 import type { CredentialValidationResult, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
-import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { compactObject, looseArray, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import {
+  ProviderRequestError,
+  providerUserAgent,
+  providerInputError,
+  providerResponseError,
+} from "../provider-runtime.ts";
 
 export const paradymApiBaseUrl = "https://api.paradym.id";
 
@@ -61,7 +67,6 @@ export async function validateParadymCredential(
     profile: {
       accountId: firstProject?.id ?? "paradym-api-key",
       displayName: firstProject?.name ? `Paradym ${firstProject.name}` : "Paradym API Key",
-      grantedScopes: [],
     },
     metadata: compactObject({
       apiBaseUrl: paradymApiBaseUrl,
@@ -289,7 +294,7 @@ async function requestParadymJson(input: {
   }
 
   const headers = {
-    accept: "application/json",
+    "accept": "application/json",
     "content-type": "application/json",
     "user-agent": providerUserAgent,
     "X-Access-Token": input.apiKey,
@@ -341,18 +346,18 @@ function unwrapParadymData(payload: unknown) {
 function mapParadymError(status: number, payload: unknown, mode: ParadymRequestMode) {
   const message = readErrorMessage(payload) ?? `Paradym API request failed with status ${status}`;
   if (status === 401 || status === 403) {
-    return mode === "validate" ? new ProviderRequestError(400, message) : new ProviderRequestError(401, message);
+    return mode === "validate" ? providerInputError(message) : new ProviderRequestError(401, message);
   }
 
   if (status === 400 || status === 404 || status === 422) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   if (status === 429) {
     return new ProviderRequestError(429, message);
   }
 
-  return new ProviderRequestError(502, message);
+  return providerResponseError(message);
 }
 
 function readErrorMessage(payload: unknown) {
@@ -388,7 +393,7 @@ function normalizeProject(value: unknown) {
 }
 
 function normalizeOffer(value: Record<string, unknown>) {
-  const credentials = readOptionalArray(value.credentials).map(normalizeCredential);
+  const credentials = looseArray(value.credentials).map(normalizeCredential);
   return {
     id: requireString(value.id, "id"),
     status: asNullableString(value.status),
@@ -411,7 +416,7 @@ function normalizeIssuanceSession(value: unknown) {
     status: optionalString(session.status) ?? "",
     offerUri: optionalString(session.offerUri) ?? "",
     offerQrUri: optionalString(session.offerQrUri) ?? "",
-    credentials: readOptionalArray(session.credentials).map(normalizeCredential),
+    credentials: looseArray(session.credentials).map(normalizeCredential),
     createdAt: asNullableString(session.createdAt),
     updatedAt: asNullableString(session.updatedAt),
     expiresAt: asNullableString(session.expiresAt),
@@ -428,7 +433,7 @@ function normalizeVerificationSession(value: unknown) {
     presentationTemplateId: optionalString(session.presentationTemplateId) ?? "",
     authorizationRequestUri: optionalString(session.authorizationRequestUri) ?? "",
     authorizationRequestQrUri: optionalString(session.authorizationRequestQrUri) ?? "",
-    credentials: readOptionalArray(session.credentials),
+    credentials: looseArray(session.credentials),
     createdAt: asNullableString(session.createdAt),
     updatedAt: asNullableString(session.updatedAt),
     expiresAt: asNullableString(session.expiresAt),
@@ -453,7 +458,7 @@ function normalizeCredential(value: unknown) {
 function buildCursorQuery(input: Record<string, unknown>, extraKeys: string[]) {
   const extras = Object.fromEntries(extraKeys.map((key) => [mapParadymQueryKey(key), input[key]]));
   return compactObject({
-    sort: input.sort,
+    "sort": input.sort,
     "filter[id]": input.filterId,
     "page[size]": input.pageSize,
     "page[after]": input.pageAfter,
@@ -511,10 +516,6 @@ function readArrayField(value: unknown, fieldName: string) {
     throw new ProviderRequestError(502, `Paradym response missing ${fieldName} array`);
   }
   return value;
-}
-
-function readOptionalArray(value: unknown) {
-  return Array.isArray(value) ? value : [];
 }
 
 function requireObjectPayload(value: unknown, fieldName: string) {

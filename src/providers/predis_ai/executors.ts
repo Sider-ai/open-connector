@@ -1,15 +1,17 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { optionalInteger, optionalRawString, optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
   providerUserAgent,
   ProviderRequestError,
   readProviderTextBody,
+  providerInputError,
+  providerResponseError,
 } from "../provider-runtime.ts";
 
 const service = "predis_ai";
@@ -17,7 +19,6 @@ const apiBaseUrl = "https://brain.predis.ai/predis_api/v1";
 const createContentPath = "/create_content/";
 const getPostsPath = "/get_posts/";
 const getTemplatesPath = "/get_templates/";
-const requestTimeoutMs = 30_000;
 const maxResponseBytes = 10 * 1024 * 1024;
 const validationBrandId = "__oomol_validation_brand__";
 
@@ -101,7 +102,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "predis_ai",
         displayName: "Predis.ai API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl,
         validationEndpoint: getTemplatesPath,
@@ -145,13 +145,13 @@ async function requestPredisAi(input: PredisAiRequest): Promise<{ payload: unkno
   for (const [key, value] of input.query ?? []) {
     url.searchParams.append(key, value);
   }
-  const timeout = createProviderTimeout(input.context.signal, requestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   try {
     const response = await input.context.fetcher(url, {
       method: input.method,
       headers: {
-        accept: "application/json",
-        Authorization: input.context.apiKey,
+        "accept": "application/json",
+        "Authorization": input.context.apiKey,
         "user-agent": providerUserAgent,
       },
       body: input.body,
@@ -260,9 +260,9 @@ function createPredisAiError(status: number, payload: unknown, phase: PredisAiPh
     return new ProviderRequestError(429, message);
   }
   if (status >= 400 && status < 500) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
-  return new ProviderRequestError(502, message);
+  return providerResponseError(message);
 }
 
 function readErrorMessage(payload: unknown): string | undefined {

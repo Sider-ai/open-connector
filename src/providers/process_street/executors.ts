@@ -1,14 +1,17 @@
-import type { CredentialValidationResult, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
-import { compactObject, optionalBoolean, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
-  ProviderRequestError,
-  providerUserAgent,
-} from "../provider-runtime.ts";
+  compactObject,
+  optionalBoolean,
+  optionalBooleanOrNull,
+  optionalRecord,
+  optionalString,
+  requiredString,
+} from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent, requiredInputString } from "../provider-runtime.ts";
 
 const service = "process_street";
 const baseUrl = "https://public-api.process.st/api/v1.1";
@@ -159,26 +162,6 @@ export const proxy: ProviderProxyExecutor = defineProviderProxy({
   auth: { type: "api_key_header", name: "X-API-Key" },
 });
 
-export async function validateProcessStreetCredential(
-  input: Record<string, string>,
-  fetcher: typeof fetch,
-): Promise<CredentialValidationResult> {
-  const apiKey = requiredString(input.apiKey, "apiKey", (message) => new ProviderRequestError(401, message));
-  const response = await requestProcessStreet({
-    path: "/testAuth",
-    method: "GET",
-    params: {},
-    context: { apiKey, fetcher },
-    phase: "validate",
-  });
-  const apiKeyLabel = requiredResponseString(response.apiKeyLabel, "apiKeyLabel", "validate");
-  return {
-    profile: { accountId: apiKeyLabel, displayName: apiKeyLabel, grantedScopes: [] },
-    grantedScopes: [],
-    metadata: { validationEndpoint: "/testAuth", apiKeyLabel },
-  };
-}
-
 async function get(
   path: string,
   params: Record<string, string | undefined>,
@@ -191,7 +174,7 @@ async function requestProcessStreet(input: {
   path: string;
   method: "GET" | "POST" | "PUT";
   params: Record<string, string | undefined>;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   phase: "validate" | "execute";
   body?: Record<string, unknown>;
   allowEmptyBody?: boolean;
@@ -201,7 +184,7 @@ async function requestProcessStreet(input: {
     response = await input.context.fetcher(buildUrl(input.path, input.params), {
       method: input.method,
       headers: compactObject({
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": input.body ? "application/json" : undefined,
         "user-agent": providerUserAgent,
         "x-api-key": input.context.apiKey,
@@ -273,7 +256,7 @@ function normalizeWorkflowRun(raw: Record<string, unknown>): Record<string, unkn
     workflowId: nullableString(raw.workflowId),
     name: nullableString(raw.name),
     status: nullableString(raw.status),
-    shared: nullableBoolean(raw.shared),
+    shared: optionalBooleanOrNull(raw.shared),
     migrationStatus: nullableString(raw.migrationStatus),
     dueDate: nullableString(raw.dueDate),
     audit: raw.audit ?? null,
@@ -288,8 +271,8 @@ function normalizeTask(raw: Record<string, unknown>): Record<string, unknown> {
     workflowRunId: nullableString(raw.workflowRunId),
     status: nullableString(raw.status),
     name: nullableString(raw.name),
-    hidden: nullableBoolean(raw.hidden),
-    stopped: nullableBoolean(raw.stopped),
+    hidden: optionalBooleanOrNull(raw.hidden),
+    stopped: optionalBooleanOrNull(raw.stopped),
     taskType: nullableString(raw.taskType),
     dueDate: nullableString(raw.dueDate),
     completedDate: nullableString(raw.completedDate),
@@ -308,7 +291,7 @@ function normalizeFormField(raw: Record<string, unknown>): Record<string, unknow
     key: nullableString(raw.key),
     label: nullableString(raw.label),
     fieldType: nullableString(raw.fieldType),
-    dataSetLinked: nullableBoolean(raw.dataSetLinked),
+    dataSetLinked: optionalBooleanOrNull(raw.dataSetLinked),
     audit: raw.audit ?? null,
     raw,
   };
@@ -323,7 +306,7 @@ function normalizeFormFieldValue(raw: Record<string, unknown>): Record<string, u
     label: nullableString(raw.label),
     fieldType: nullableString(raw.fieldType),
     data: raw.data ?? null,
-    dataSetLinked: nullableBoolean(raw.dataSetLinked),
+    dataSetLinked: optionalBooleanOrNull(raw.dataSetLinked),
     updatedDate: nullableString(raw.updatedDate),
     updatedBy: normalizeUser(raw.updatedBy),
     links: normalizeLinks(raw.links),
@@ -377,10 +360,6 @@ function readStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map(String) : [];
 }
 
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
-}
-
 function requiredResponseString(value: unknown, fieldName: string, context: string): string {
   return requiredString(
     value,
@@ -391,8 +370,4 @@ function requiredResponseString(value: unknown, fieldName: string, context: stri
 
 function nullableString(value: unknown): string | null {
   return value === null ? null : (optionalString(value) ?? null);
-}
-
-function nullableBoolean(value: unknown): boolean | null {
-  return typeof value === "boolean" ? value : null;
 }

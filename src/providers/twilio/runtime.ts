@@ -1,9 +1,9 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 import type { ProviderFetch } from "../provider-runtime.ts";
 
-import { optionalInteger, optionalString, optionalStringArray, requiredString } from "../../core/cast.ts";
-import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { optionalInteger, optionalString, optionalStringArray } from "../../core/cast.ts";
+import { ProviderRequestError, providerUserAgent, requiredInputString } from "../provider-runtime.ts";
 
 export const twilioApiBaseUrl: string = "https://api.twilio.com/2010-04-01";
 
@@ -105,8 +105,8 @@ export async function validateTwilioCredential(
   fetcher: ProviderFetch,
   signal?: AbortSignal,
 ): Promise<CredentialValidationResult> {
-  const accountSid = requireTwilioField(values.accountSid, "accountSid");
-  const authToken = requireTwilioField(values.authToken, "authToken");
+  const accountSid = requiredInputString(values.accountSid, "accountSid");
+  const authToken = requiredInputString(values.authToken, "authToken");
   const account = await twilioRequest<TwilioAccountPayload>({
     accountSid,
     authToken,
@@ -120,7 +120,6 @@ export async function validateTwilioCredential(
       accountId: optionalString(account.sid) ?? accountSid,
       displayName: optionalString(account.friendly_name) ?? accountSid,
     },
-    grantedScopes: [],
     metadata: {
       accountSid: optionalString(account.sid) ?? accountSid,
     },
@@ -184,7 +183,7 @@ async function twilioListMessages(input: Record<string, unknown>, context: Twili
 }
 
 async function twilioGetMessage(input: Record<string, unknown>, context: TwilioActionContext): Promise<unknown> {
-  const messageSid = requireTwilioField(input.messageSid, "messageSid");
+  const messageSid = requiredInputString(input.messageSid, "messageSid");
   const payload = await twilioRequest<TwilioMessagePayload>({
     ...context,
     path: `/Accounts/${encodeURIComponent(context.accountSid)}/Messages/${encodeURIComponent(messageSid)}.json`,
@@ -195,9 +194,9 @@ async function twilioGetMessage(input: Record<string, unknown>, context: TwilioA
 
 async function twilioSendMessage(input: Record<string, unknown>, context: TwilioActionContext): Promise<unknown> {
   const body = new URLSearchParams();
-  body.append("To", requireTwilioField(input.to, "to"));
-  body.append("From", requireTwilioField(input.from, "from"));
-  body.append("Body", requireTwilioField(input.body, "body"));
+  body.append("To", requiredInputString(input.to, "to"));
+  body.append("From", requiredInputString(input.from, "from"));
+  body.append("Body", requiredInputString(input.body, "body"));
   const payload = await twilioRequest<TwilioMessagePayload>({
     ...context,
     method: "POST",
@@ -241,7 +240,7 @@ async function twilioListCalls(input: Record<string, unknown>, context: TwilioAc
 }
 
 async function twilioGetCall(input: Record<string, unknown>, context: TwilioActionContext): Promise<unknown> {
-  const callSid = requireTwilioField(input.callSid, "callSid");
+  const callSid = requiredInputString(input.callSid, "callSid");
   const payload = await twilioRequest<TwilioCallPayload>({
     ...context,
     path: `/Accounts/${encodeURIComponent(context.accountSid)}/Calls/${encodeURIComponent(callSid)}.json`,
@@ -252,8 +251,8 @@ async function twilioGetCall(input: Record<string, unknown>, context: TwilioActi
 
 async function twilioCreateCall(input: Record<string, unknown>, context: TwilioActionContext): Promise<unknown> {
   const body = new URLSearchParams();
-  body.append("To", requireTwilioField(input.to, "to"));
-  body.append("From", requireTwilioField(input.from, "from"));
+  body.append("To", requiredInputString(input.to, "to"));
+  body.append("From", requiredInputString(input.from, "from"));
 
   const url = optionalString(input.url);
   const twiml = optionalString(input.twiml);
@@ -293,7 +292,7 @@ async function twilioRequest<T>(input: TwilioRequestInput): Promise<T> {
     response = await input.fetcher(url.toString(), {
       method: input.method ?? (input.body ? "POST" : "GET"),
       headers: {
-        authorization: buildTwilioAuthorizationHeader(input.accountSid, input.authToken),
+        "authorization": buildTwilioAuthorizationHeader(input.accountSid, input.authToken),
         "user-agent": providerUserAgent,
         ...(input.body ? { "content-type": "application/x-www-form-urlencoded" } : {}),
       },
@@ -395,10 +394,6 @@ async function readTwilioError(response: Response): Promise<string> {
 
 export function buildTwilioAuthorizationHeader(accountSid: string, authToken: string): string {
   return `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`;
-}
-
-function requireTwilioField(value: unknown, name: string): string {
-  return requiredString(value, name, (message) => new ProviderRequestError(400, message));
 }
 
 function optionalPositiveInteger(value: unknown, fieldName: string): number | undefined {

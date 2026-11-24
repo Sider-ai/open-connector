@@ -1,11 +1,11 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
@@ -13,11 +13,9 @@ import {
 
 const service = "interzoid";
 const interzoidApiBaseUrl = "https://api.interzoid.com";
-const interzoidDefaultRequestTimeoutMs = 30_000;
 
 type InterzoidPhase = "validate" | "execute";
-type InterzoidContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type InterzoidActionHandler = (input: Record<string, unknown>, context: InterzoidContext) => Promise<unknown>;
+type InterzoidActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 interface InterzoidRequestInput {
   path: string;
@@ -155,6 +153,16 @@ export const interzoidActionHandlers: ProviderActionHandlers<"interzoid", Interz
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, interzoidActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: interzoidApiBaseUrl,
+  auth: { type: "api_key_query", name: "license" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = await requestInterzoidJson(
@@ -176,7 +184,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "api_key",
         displayName: "Interzoid API License",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: interzoidApiBaseUrl,
         validationEndpoint: "/getremainingcredits",
@@ -188,15 +195,15 @@ export const credentialValidators: CredentialValidators = {
 
 async function requestInterzoidJson(
   input: InterzoidRequestInput,
-  context: InterzoidContext,
+  context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
-  const timeout = createProviderTimeout(context.signal, interzoidDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
 
   try {
     const response = await context.fetcher(buildInterzoidUrl(input, context.apiKey), {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
       signal: timeout.signal,

@@ -1,18 +1,19 @@
-import type { ExecutionContext, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ExecutionContext, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { XMLParser } from "fast-xml-parser";
 import { positiveInteger } from "../../core/cast.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineProviderExecutors,
+  providerInputError,
   providerUserAgent,
   ProviderRequestError,
 } from "../provider-runtime.ts";
 
 const service = "dealnews";
 const dealNewsBaseUrl = "https://www.dealnews.com";
-const dealNewsRequestTimeoutMs = 30_000;
 const rssParser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "",
@@ -41,7 +42,7 @@ export const dealNewsActionHandlers: ProviderActionHandlers<"dealnews", DealNews
     return requestFeed(new URL("/rss/features/", dealNewsBaseUrl), context);
   },
   list_category_deals(input, context) {
-    const categoryId = positiveInteger(input.categoryId, "categoryId", inputError);
+    const categoryId = positiveInteger(input.categoryId, "categoryId", providerInputError);
     return requestFeed(new URL(`/rss/c${categoryId}/`, dealNewsBaseUrl), context);
   },
 };
@@ -54,12 +55,19 @@ export const executors: ProviderExecutors = defineProviderExecutors<DealNewsCont
   },
 });
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: dealNewsBaseUrl,
+  auth: { type: "none" },
+  skipDnsValidation: true,
+});
+
 async function requestFeed(url: URL, context: DealNewsContext): Promise<unknown> {
-  const timeout = createProviderTimeout(context.signal, dealNewsRequestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const response = await context.fetcher(url, {
       headers: {
-        accept: "application/rss+xml, application/xml;q=0.9, text/xml;q=0.8",
+        "accept": "application/rss+xml, application/xml;q=0.9, text/xml;q=0.8",
         "user-agent": providerUserAgent,
       },
       signal: timeout.signal,
@@ -118,8 +126,4 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function malformedFeedError(): ProviderRequestError {
   return new ProviderRequestError(502, "DealNews returned malformed RSS");
-}
-
-function inputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

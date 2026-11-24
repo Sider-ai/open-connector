@@ -5,25 +5,21 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
 import {
+  looseArray,
   optionalBoolean,
   optionalNumber,
   optionalRecord,
   optionalString,
   requiredRecord,
-  requiredString,
 } from "../../core/cast.ts";
 import { queryParams } from "../../core/request.ts";
-import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
-  providerUserAgent,
-  ProviderRequestError,
-} from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError, requiredInputString } from "../provider-runtime.ts";
 
 export const chartmogulApiBaseUrl = "https://api.chartmogul.com";
 const service = "chartmogul";
@@ -87,7 +83,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: normalized.uuid ? `chartmogul:${normalized.uuid}` : "chartmogul-api-key",
         displayName: normalized.name ?? "ChartMogul Account",
       },
-      grantedScopes: [],
       metadata: {
         accountUuid: normalized.uuid,
         accountName: normalized.name,
@@ -126,7 +121,7 @@ async function listSources(input: Record<string, unknown>, context: ApiKeyProvid
   const response = readObject(payload, "chartmogul data sources response");
 
   return {
-    dataSources: readArray(response.data_sources).map((item) =>
+    dataSources: looseArray(response.data_sources).map((item) =>
       normalizeDataSource(readObject(item, "chartmogul data source")),
     ),
   };
@@ -151,14 +146,14 @@ async function listCustomers(input: Record<string, unknown>, context: ApiKeyProv
   const response = readObject(payload, "chartmogul customers response");
 
   return {
-    customers: readArray(response.entries).map((item) => normalizeCustomer(readObject(item, "chartmogul customer"))),
+    customers: looseArray(response.entries).map((item) => normalizeCustomer(readObject(item, "chartmogul customer"))),
     cursor: optionalString(response.cursor) ?? null,
     hasMore: optionalBoolean(response.has_more) ?? false,
   };
 }
 
 async function getCustomer(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
-  const customerUuid = requireInputString(input.customerUuid, "customerUuid");
+  const customerUuid = requiredInputString(input.customerUuid, "customerUuid");
   const payload = await requestChartmogulJson({
     context,
     path: `/v1/customers/${encodeURIComponent(customerUuid)}`,
@@ -186,14 +181,14 @@ async function listContacts(input: Record<string, unknown>, context: ApiKeyProvi
   const response = readObject(payload, "chartmogul contacts response");
 
   return {
-    contacts: readArray(response.entries).map((item) => normalizeContact(readObject(item, "chartmogul contact"))),
+    contacts: looseArray(response.entries).map((item) => normalizeContact(readObject(item, "chartmogul contact"))),
     cursor: optionalString(response.cursor) ?? null,
     hasMore: optionalBoolean(response.has_more) ?? false,
   };
 }
 
 async function requestChartmogulJson(input: {
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   path: string;
   query?: Record<string, QueryValue>;
   phase: ChartmogulRequestPhase;
@@ -228,8 +223,8 @@ async function requestChartmogulJson(input: {
 
 function chartmogulHeaders(apiKey: string): Record<string, string> {
   return {
-    accept: "application/json",
-    authorization: buildChartmogulAuthorizationHeader(apiKey),
+    "accept": "application/json",
+    "authorization": buildChartmogulAuthorizationHeader(apiKey),
     "user-agent": providerUserAgent,
   };
 }
@@ -378,19 +373,11 @@ function normalizeInclude(value: unknown): string | undefined {
   if (!Array.isArray(value)) {
     throw new ProviderRequestError(400, "include must be an array of strings");
   }
-  return value.map((item) => requireInputString(item, "include")).join(",");
-}
-
-function requireInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
+  return value.map((item) => requiredInputString(item, "include")).join(",");
 }
 
 function readObject(value: unknown, label: string): Record<string, unknown> {
   return requiredRecord(value, label, (message) => new ProviderRequestError(502, message, value));
-}
-
-function readArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
 }
 
 function readNullableString(value: unknown): string | null {

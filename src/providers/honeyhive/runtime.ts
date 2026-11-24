@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -9,7 +9,12 @@ import {
   requiredRecord,
   requiredStringArray,
 } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError, readProviderJsonBody } from "../provider-runtime.ts";
+import {
+  providerInputError,
+  providerUserAgent,
+  ProviderRequestError,
+  readProviderJsonBody,
+} from "../provider-runtime.ts";
 
 export const honeyhiveApiBaseUrl = "https://api.honeyhive.ai";
 export const honeyhiveValidationPath = "/v1/datasets";
@@ -123,7 +128,6 @@ export async function validateHoneyhiveCredential(
   return {
     profile: {
       displayName: "HoneyHive Project",
-      grantedScopes: [],
     },
     metadata: {
       apiBaseUrl: honeyhiveApiBaseUrl,
@@ -142,8 +146,8 @@ async function requestHoneyhiveJson(options: HoneyhiveRequestOptions): Promise<u
   }
 
   const headers: Record<string, string> = {
-    accept: "application/json",
-    authorization: `Bearer ${options.apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${options.apiKey}`,
     "user-agent": providerUserAgent,
   };
   if (options.body !== undefined) {
@@ -347,8 +351,4 @@ function requiredHoneyhiveId(value: unknown, fieldName: string): string {
     throw new ProviderRequestError(400, `${fieldName} is required`);
   }
   return id;
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

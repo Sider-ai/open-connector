@@ -1,13 +1,19 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { createHash } from "node:crypto";
 import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
   isAbortLikeError,
+  providerInputError,
   providerUserAgent,
   ProviderRequestError,
   readProviderJsonBody,
@@ -34,13 +40,9 @@ interface MeituanTravelRequest {
   originQuery: string;
 }
 
-type MeituanContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-
-const invalidInput = (message: string): ProviderRequestError => new ProviderRequestError(400, message);
-
 const meituanActionHandlers: ProviderActionHandlers<"meituan", ProviderRuntimeHandler<ApiKeyProviderContext>> = {
   query_travel(input, context) {
-    const query = requiredString(input.query, "query", invalidInput);
+    const query = requiredString(input.query, "query", providerInputError);
     const city = optionalString(input.city) ?? meituanDefaultCity;
     const originQuery = optionalString(input.originQuery) ?? query;
     return requestMeituanTravel(
@@ -58,23 +60,32 @@ export const executors: ProviderExecutors = defineApiKeyProviderExecutors(servic
   skipDnsValidation: true,
 });
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: meituanTravelEndpoint,
+  auth: { type: "api_key_header", name: "Authorization" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input): Promise<CredentialValidationResult> {
-    const apiKey = requiredString(input.apiKey, "apiKey", invalidInput);
+    const apiKey = requiredString(input.apiKey, "apiKey", providerInputError);
     const tokenHash = hashMeituanToken(apiKey);
     return {
       profile: {
         accountId: `meituan:personal:${tokenHash}`,
         displayName: `Meituan Personal Developer · ${tokenHash.slice(-6)}`,
       },
-      grantedScopes: [],
     };
   },
 };
 
 async function requestMeituanTravel(
   request: MeituanTravelRequest,
-  context: MeituanContext,
+  context: ApiKeyProviderContext,
 ): Promise<{ content: string }> {
   const timeout = createProviderTimeout(context.signal, meituanRequestTimeoutMs);
 
@@ -82,8 +93,8 @@ async function requestMeituanTravel(
     const response = await context.fetcher(meituanTravelEndpoint, {
       method: "POST",
       headers: {
-        accept: "application/json",
-        authorization: context.apiKey,
+        "accept": "application/json",
+        "authorization": context.apiKey,
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },

@@ -1,6 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -13,12 +12,12 @@ import {
 import {
   createProviderTimeout,
   isAbortLikeError,
+  providerInputError,
   ProviderRequestError,
   providerUserAgent,
 } from "../provider-runtime.ts";
 
-const tpscheckApiBaseUrl = "https://api.tpscheck.uk";
-const tpscheckDefaultRequestTimeoutMs = 30_000;
+export const tpscheckApiBaseUrl: string = "https://api.tpscheck.uk";
 
 type TpscheckRequestPhase = "validate" | "execute";
 type TpscheckActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
@@ -70,7 +69,6 @@ export async function validateTpscheckCredential(
       accountId: "tpscheck-api-key",
       displayName: "TPSCheck API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: tpscheckApiBaseUrl,
       validationEndpoint: "/credits",
@@ -84,7 +82,7 @@ export async function validateTpscheckCredential(
 }
 
 async function requestTpscheckJson(
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   input: {
     method: "GET" | "POST";
     path: string;
@@ -98,15 +96,15 @@ async function requestTpscheckJson(
     if (value) url.searchParams.set(key, value);
   }
 
-  const timeout = createProviderTimeout(context.signal, tpscheckDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   let response: Response;
   let payload: unknown;
   try {
     response = await context.fetcher(url.toString(), {
       method: input.method,
       headers: {
-        accept: "application/json",
-        authorization: `Token ${context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Token ${context.apiKey}`,
         "user-agent": providerUserAgent,
         ...(input.body ? { "content-type": "application/json" } : {}),
       },
@@ -180,8 +178,4 @@ function requireTpscheckObject(payload: unknown, endpoint: string): Record<strin
     throw new ProviderRequestError(502, `TPSCheck ${endpoint} returned a non-object response`);
   }
   return record;
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

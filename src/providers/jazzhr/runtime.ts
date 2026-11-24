@@ -1,8 +1,8 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
+import { encodePathSegment } from "../../core/request.ts";
 import {
   createProviderTimeout,
   isAbortLikeError,
@@ -10,8 +10,7 @@ import {
   ProviderRequestError,
 } from "../provider-runtime.ts";
 
-const jazzhrApiBaseUrl = "https://api.resumatorapi.com/v1";
-const jazzhrDefaultRequestTimeoutMs = 30_000;
+export const jazzhrApiBaseUrl = "https://api.resumatorapi.com/v1";
 
 type JazzhrRequestPhase = "validate" | "execute";
 
@@ -129,7 +128,6 @@ export async function validateJazzhrCredential(
       accountId: stringifyOptional(firstUser?.id) ?? "jazzhr_api_key",
       displayName: buildJazzhrAccountLabel(firstUser),
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: jazzhrApiBaseUrl,
       validationEndpoint: "/users",
@@ -141,7 +139,7 @@ export async function validateJazzhrCredential(
 
 async function listJazzhrRecords(
   input: Record<string, unknown>,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   config: JazzhrListConfig,
 ): Promise<Record<string, unknown>> {
   const payload = await requestJazzhrJson({
@@ -160,7 +158,7 @@ async function listJazzhrRecords(
 
 async function getJazzhrRecord(
   input: Record<string, unknown>,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   config: JazzhrGetConfig,
 ): Promise<Record<string, unknown>> {
   const id = readRequiredString(input, config.idField);
@@ -205,12 +203,12 @@ async function requestJazzhrJson(input: {
   signal?: AbortSignal;
   phase: JazzhrRequestPhase;
 }): Promise<unknown> {
-  const timeout = createProviderTimeout(input.signal, jazzhrDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   try {
     const response = await input.fetcher(buildJazzhrUrl(input.apiKey, input.path, input.query), {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
       signal: timeout.signal,
@@ -319,8 +317,4 @@ function stringifyOptional(value: unknown): string | undefined {
 function stringifyPathValue(value: unknown): string {
   if (typeof value === "boolean") return value ? "true" : "false";
   return String(value);
-}
-
-function encodePathSegment(value: string): string {
-  return encodeURIComponent(value);
 }

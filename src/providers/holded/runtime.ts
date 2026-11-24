@@ -1,16 +1,14 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
-import { compactObject, optionalNumber, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { compactObject, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
 import {
-  createProviderTimeout,
-  isAbortLikeError,
   ProviderRequestError,
   providerUserAgent,
+  requiredInputString,
+  runProviderRequest,
 } from "../provider-runtime.ts";
 
 export const holdedApiBaseUrl = "https://api.holded.com/api/v2";
-const holdedDefaultRequestTimeoutMs = 30_000;
 
 type HoldedPhase = "validate" | "execute";
 type HoldedActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
@@ -18,7 +16,7 @@ type HoldedActionHandler = (input: Record<string, unknown>, context: ApiKeyProvi
 interface HoldedRequestInput {
   method: "GET" | "POST";
   path: string;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   query: Record<string, string | undefined>;
   body?: Record<string, unknown>;
   phase: HoldedPhase;
@@ -49,7 +47,7 @@ export const holdedActionHandlers: ProviderActionHandlers<"holded", HoldedAction
     };
   },
   async get_contact(input, context) {
-    const contactId = readRequiredString(input.contactId, "contactId");
+    const contactId = requiredInputString(input.contactId, "contactId");
     const payload = await requestHoldedJson({
       method: "GET",
       path: `/contacts/${encodeURIComponent(contactId)}`,
@@ -70,7 +68,7 @@ export const holdedActionHandlers: ProviderActionHandlers<"holded", HoldedAction
       context,
       query: {},
       body: compactObject({
-        name: readRequiredString(input.name, "name"),
+        name: requiredInputString(input.name, "name"),
         email: optionalString(input.email),
         phone: optionalString(input.phone),
         mobile: optionalString(input.mobile),
@@ -105,7 +103,7 @@ export const holdedActionHandlers: ProviderActionHandlers<"holded", HoldedAction
     };
   },
   async get_product(input, context) {
-    const productId = readRequiredString(input.productId, "productId");
+    const productId = requiredInputString(input.productId, "productId");
     const payload = await requestHoldedJson({
       method: "GET",
       path: `/products/${encodeURIComponent(productId)}`,
@@ -126,7 +124,6 @@ export async function validateHoldedCredential(
   options: { fetcher: typeof fetch; signal?: AbortSignal },
 ): Promise<{
   profile: { accountId: string; displayName: string };
-  grantedScopes: string[];
   metadata: Record<string, unknown>;
 }> {
   const payload = await requestHoldedJson({
@@ -146,7 +143,6 @@ export async function validateHoldedCredential(
       accountId: "api_token",
       displayName: "Holded API Token",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: holdedApiBaseUrl,
       validationEndpoint: "/contacts",
@@ -156,18 +152,17 @@ export async function validateHoldedCredential(
 }
 
 async function requestHoldedJson(input: HoldedRequestInput): Promise<unknown> {
-  const timeoutHandle = createProviderTimeout(input.context.signal, holdedDefaultRequestTimeoutMs);
-  try {
+  return runProviderRequest({ signal: input.context.signal, label: "Holded" }, async (signal) => {
     const response = await input.context.fetcher(buildHoldedUrl(input.path, input.query), {
       method: input.method,
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${input.context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${input.context.apiKey}`,
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },
       body: input.body ? JSON.stringify(input.body) : undefined,
-      signal: timeoutHandle.signal,
+      signal,
     });
     const payload = await readHoldedPayload(response);
 
@@ -176,20 +171,7 @@ async function requestHoldedJson(input: HoldedRequestInput): Promise<unknown> {
     }
 
     return payload;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-    if (timeoutHandle.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "Holded request timed out");
-    }
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Holded request failed: ${error.message}` : "Holded request failed",
-    );
-  } finally {
-    timeoutHandle.cleanup();
-  }
+  });
 }
 
 function buildHoldedUrl(path: string, query: Record<string, string | undefined>): URL {
@@ -339,10 +321,6 @@ function readObjectId(record: Record<string, unknown>): string {
     return id;
   }
   throw new ProviderRequestError(502, "Holded response missing object identifier", record);
-}
-
-function readRequiredString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function readOptionalIntegerString(value: unknown): string | undefined {

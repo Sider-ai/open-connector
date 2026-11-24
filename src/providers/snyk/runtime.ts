@@ -1,14 +1,12 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
-import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { optionalBoolean, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import {
-  createProviderTimeout,
-  isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
   readProviderJsonBody,
+  runProviderRequest,
 } from "../provider-runtime.ts";
 
 type QueryValue = string | number | boolean | readonly (string | number | boolean)[] | undefined;
@@ -20,7 +18,7 @@ interface SnykResponse {
 }
 
 interface RequestInput {
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   path: string;
   query?: Record<string, QueryValue>;
   commaArrays?: readonly string[];
@@ -29,7 +27,6 @@ interface RequestInput {
 
 export const snykApiBaseUrl = "https://api.snyk.io/rest";
 const apiVersion = "2024-10-15";
-const timeoutMs = 30_000;
 
 export const snykActionHandlers: ProviderActionHandlers<"snyk", ProviderRuntimeHandler<ApiKeyProviderContext>> = {
   async get_self(_input, context) {
@@ -44,7 +41,7 @@ export const snykActionHandlers: ProviderActionHandlers<"snyk", ProviderRuntimeH
         query: {
           ...cursorQuery(input),
           group_id: trimmed(input.groupId),
-          is_personal: boolean(input.isPersonal),
+          is_personal: optionalBoolean(input.isPersonal),
           slug: trimmed(input.slug),
           name: trimmed(input.name),
           expand: input.includeMemberRole === true ? ["member_role"] : undefined,
@@ -69,24 +66,24 @@ export const snykActionHandlers: ProviderActionHandlers<"snyk", ProviderRuntimeH
           path: `/orgs/${encodeURIComponent(orgId)}/projects`,
           query: {
             ...cursorQuery(input),
-            target_id: stringArray(input.targetIds),
-            target_reference: trimmed(input.targetReference),
-            target_file: trimmed(input.targetFile),
-            target_runtime: trimmed(input.targetRuntime),
-            ids: stringArray(input.projectIds),
-            names: stringArray(input.names),
-            names_start_with: stringArray(input.namesStartWith),
-            origins: stringArray(input.origins),
-            types: stringArray(input.types),
-            tags: stringArray(input.tags),
-            business_criticality: stringArray(input.businessCriticality),
-            environment: stringArray(input.environment),
-            lifecycle: stringArray(input.lifecycle),
-            expand: input.includeTarget === true ? ["target"] : undefined,
-            "meta.latest_issue_counts": boolean(input.includeLatestIssueCounts),
-            "meta.latest_dependency_total": boolean(input.includeLatestDependencyTotal),
-            cli_monitored_before: trimmed(input.cliMonitoredBefore),
-            cli_monitored_after: trimmed(input.cliMonitoredAfter),
+            "target_id": stringArray(input.targetIds),
+            "target_reference": trimmed(input.targetReference),
+            "target_file": trimmed(input.targetFile),
+            "target_runtime": trimmed(input.targetRuntime),
+            "ids": stringArray(input.projectIds),
+            "names": stringArray(input.names),
+            "names_start_with": stringArray(input.namesStartWith),
+            "origins": stringArray(input.origins),
+            "types": stringArray(input.types),
+            "tags": stringArray(input.tags),
+            "business_criticality": stringArray(input.businessCriticality),
+            "environment": stringArray(input.environment),
+            "lifecycle": stringArray(input.lifecycle),
+            "expand": input.includeTarget === true ? ["target"] : undefined,
+            "meta.latest_issue_counts": optionalBoolean(input.includeLatestIssueCounts),
+            "meta.latest_dependency_total": optionalBoolean(input.includeLatestDependencyTotal),
+            "cli_monitored_before": trimmed(input.cliMonitoredBefore),
+            "cli_monitored_after": trimmed(input.cliMonitoredAfter),
           },
           commaArrays: [
             "ids",
@@ -113,9 +110,9 @@ export const snykActionHandlers: ProviderActionHandlers<"snyk", ProviderRuntimeH
       context,
       path: `/orgs/${encodeURIComponent(orgId)}/projects/${encodeURIComponent(projectId)}`,
       query: {
-        expand: input.includeTarget === true ? ["target"] : undefined,
-        "meta.latest_issue_counts": boolean(input.includeLatestIssueCounts),
-        "meta.latest_dependency_total": boolean(input.includeLatestDependencyTotal),
+        "expand": input.includeTarget === true ? ["target"] : undefined,
+        "meta.latest_issue_counts": optionalBoolean(input.includeLatestIssueCounts),
+        "meta.latest_dependency_total": optionalBoolean(input.includeLatestDependencyTotal),
       },
       commaArrays: ["expand"],
       phase: "execute",
@@ -134,14 +131,14 @@ export const snykActionHandlers: ProviderActionHandlers<"snyk", ProviderRuntimeH
             ...cursorQuery(input),
             "scan_item.id": trimmed(input.scanItemId),
             "scan_item.type": trimmed(input.scanItemType),
-            type: trimmed(input.type),
-            updated_before: trimmed(input.updatedBefore),
-            updated_after: trimmed(input.updatedAfter),
-            created_before: trimmed(input.createdBefore),
-            created_after: trimmed(input.createdAfter),
-            effective_severity_level: stringArray(input.effectiveSeverityLevel),
-            status: stringArray(input.status),
-            ignored: boolean(input.ignored),
+            "type": trimmed(input.type),
+            "updated_before": trimmed(input.updatedBefore),
+            "updated_after": trimmed(input.updatedAfter),
+            "created_before": trimmed(input.createdBefore),
+            "created_after": trimmed(input.createdAfter),
+            "effective_severity_level": stringArray(input.effectiveSeverityLevel),
+            "status": stringArray(input.status),
+            "ignored": optionalBoolean(input.ignored),
           },
           commaArrays: ["effective_severity_level", "status"],
           phase: "execute",
@@ -168,23 +165,21 @@ export async function validateSnykCredential(
     "Snyk API Key";
   return {
     profile: { accountId: optionalString(principal.id) ?? "snyk:api-key", displayName: label },
-    grantedScopes: [],
     metadata: { apiBaseUrl: snykApiBaseUrl, validationEndpoint: "/self", apiVersion },
   };
 }
 
 async function requestJson(input: RequestInput): Promise<SnykResponse> {
-  const timeout = createProviderTimeout(input.context.signal, timeoutMs);
-  try {
+  return runProviderRequest({ signal: input.context.signal, label: "Snyk" }, async (signal) => {
     const url = buildUrl(input.path, input.query, input.commaArrays);
     const response = await input.context.fetcher(url, {
       headers: {
-        accept: "application/vnd.api+json",
-        authorization: `token ${input.context.apiKey}`,
+        "accept": "application/vnd.api+json",
+        "authorization": `token ${input.context.apiKey}`,
         "content-type": "application/vnd.api+json",
         "user-agent": providerUserAgent,
       },
-      signal: timeout.signal,
+      signal,
     });
     const payload = await readProviderJsonBody(response, {
       emptyBody: null,
@@ -205,16 +200,7 @@ async function requestJson(input: RequestInput): Promise<SnykResponse> {
     const object = optionalRecord(payload);
     if (!object) throw new ProviderRequestError(502, "Snyk returned a non-object response");
     return object;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) throw error;
-    if (timeout.didTimeout() || isAbortLikeError(error)) throw new ProviderRequestError(504, "Snyk request timed out");
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Snyk request failed: ${error.message}` : "Snyk request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+  });
 }
 
 function buildUrl(path: string, query: Record<string, QueryValue> = {}, commaArrays: readonly string[] = []): URL {
@@ -259,9 +245,6 @@ function requiredTrimmed(value: unknown, field: string): string {
 }
 function trimmed(value: unknown): string | undefined {
   return optionalString(value)?.trim() || undefined;
-}
-function boolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
 }
 function stringArray(value: unknown): string[] | undefined {
   if (value === undefined) return undefined;

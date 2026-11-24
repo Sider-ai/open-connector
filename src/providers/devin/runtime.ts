@@ -1,10 +1,10 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalBoolean, optionalRecord, optionalString, requiredRecord } from "../../core/cast.ts";
 import { encodePathSegment } from "../../core/request.ts";
-import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { ProviderRequestError, providerResponseError, providerUserAgent } from "../provider-runtime.ts";
 
 export const devinApiBaseUrl = "https://api.devin.ai";
 
@@ -140,7 +140,6 @@ export async function validateDevinCredential(
       accountId: `devin:${normalized.id}`,
       displayName: normalized.name ?? "Devin API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: devinApiBaseUrl,
       validationEndpoint: "/v3/self",
@@ -167,8 +166,8 @@ async function requestDevin(request: DevinRequestOptions, context: ApiKeyProvide
   const response = await context.fetcher(url, {
     method: request.method ?? "GET",
     headers: {
-      accept: "application/json",
-      authorization: `Bearer ${context.apiKey}`,
+      "accept": "application/json",
+      "authorization": `Bearer ${context.apiKey}`,
       ...(request.body === undefined ? {} : { "content-type": "application/json" }),
       "user-agent": providerUserAgent,
     },
@@ -189,7 +188,7 @@ async function readJsonObject(response: Response, tolerant: boolean): Promise<Js
     return {};
   }
   try {
-    return requiredRecord(JSON.parse(text), "Devin response", providerError);
+    return requiredRecord(JSON.parse(text), "Devin response", providerResponseError);
   } catch (error) {
     if (tolerant) {
       return {};
@@ -319,8 +318,4 @@ function readValidationMessage(detail: unknown): string | undefined {
     .map((item) => optionalString(item?.msg))
     .filter((message): message is string => Boolean(message));
   return messages.length > 0 ? messages.join("; ") : undefined;
-}
-
-function providerError(message: string): ProviderRequestError {
-  return new ProviderRequestError(502, message);
 }

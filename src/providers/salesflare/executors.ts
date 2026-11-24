@@ -1,6 +1,10 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -11,7 +15,9 @@ import {
   optionalString,
   requiredString,
 } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "salesflare";
 const salesflareApiBaseUrl = "https://api.salesflare.com";
@@ -22,7 +28,7 @@ type SalesflareActionHandler = (input: Record<string, unknown>, context: ApiKeyP
 interface SalesflareRequestInput {
   method: "GET" | "POST" | "PUT";
   path: string;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   phase?: SalesflareRequestPhase;
   query?: Record<string, unknown>;
   body?: unknown;
@@ -151,6 +157,17 @@ export const salesflareActionHandlers: ProviderActionHandlers<"salesflare", Sale
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, salesflareActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: salesflareApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+    headers.set("content-type", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }): Promise<CredentialValidationResult> {
     const apiKey = requiredString(input.apiKey, "apiKey", (message) => new ProviderRequestError(401, message));
@@ -170,7 +187,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: userId == null ? "salesflare-api-key" : String(userId),
         displayName: userName ?? userEmail ?? "Salesflare API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: salesflareApiBaseUrl,
         validationEndpoint: "/me",
@@ -210,8 +226,8 @@ async function salesflareRequestJson(input: SalesflareRequestInput): Promise<unk
 
 function salesflareHeaders(apiKey: string, hasBody: boolean): Record<string, string> {
   return {
-    authorization: `Bearer ${apiKey}`,
-    accept: "application/json",
+    "authorization": `Bearer ${apiKey}`,
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     ...(hasBody ? { "content-type": "application/json" } : {}),
   };

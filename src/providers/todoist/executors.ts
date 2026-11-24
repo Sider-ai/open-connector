@@ -1,11 +1,25 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
 
-import { defineBearerProviderExecutors } from "../provider-runtime.ts";
-import { fetchTodoistCurrentAccount, todoistActionHandlers, validateTodoistCredential } from "./runtime.ts";
+import { defineBearerProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import {
+  fetchTodoistCurrentAccount,
+  todoistActionHandlers,
+  todoistApiBaseUrl,
+  validateTodoistCredential,
+} from "./runtime.ts";
 
 const service = "todoist";
 
 export const executors: ProviderExecutors = defineBearerProviderExecutors(service, todoistActionHandlers);
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: todoistApiBaseUrl,
+  auth: { type: "bearer" },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
 
 export const credentialValidators: CredentialValidators = {
   apiKey(input, { fetcher, signal }) {

@@ -1,10 +1,21 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
 
-import { defineOAuthProviderExecutors } from "../provider-runtime.ts";
+import { defineOAuthProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import { bitbucketActionHandlers, bitbucketApiBaseUrl } from "./runtime.ts";
 
 export const executors: ProviderExecutors = defineOAuthProviderExecutors("bitbucket", bitbucketActionHandlers, {
   skipDnsValidation: true,
+});
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service: "bitbucket",
+  baseUrl: bitbucketApiBaseUrl,
+  auth: { type: "oauth_bearer" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
 });
 
 export const credentialValidators: CredentialValidators = {
@@ -19,7 +30,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: typeof user.uuid === "string" ? user.uuid : undefined,
         displayName: typeof user.display_name === "string" ? user.display_name : "Bitbucket User",
       },
-      grantedScopes: input.profile.grantedScopes,
     };
   },
 };

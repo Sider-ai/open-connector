@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { isAbortLikeError, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 export const aliyunStsEndpoint = "https://sts.aliyuncs.com/";
 export const aliyunStsApiVersion = "2015-04-01";
@@ -66,7 +66,7 @@ export async function assumeAliyunRole(
     response = await fetcher(aliyunStsEndpoint, {
       method: "POST",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/x-www-form-urlencoded",
         "user-agent": providerUserAgent,
       },
@@ -194,8 +194,4 @@ function requireStsField(value: string | undefined, field: string): string {
     throw new ProviderRequestError(502, `aliyun_sts response missing ${field}`);
   }
   return value;
-}
-
-function isAbortLikeError(error: unknown): boolean {
-  return error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
 }

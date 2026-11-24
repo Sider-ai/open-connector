@@ -1,8 +1,9 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
-import { defineApiKeyProviderExecutors, mapProviderActionSources } from "../provider-runtime.ts";
-import { deepgramActionHandlers, validateDeepgramCredential } from "./runtime.ts";
+import { defineApiKeyProviderExecutors, mapProviderActionSources } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { deepgramActionHandlers, deepgramApiBaseUrl, validateDeepgramCredential } from "./runtime.ts";
 
 const service = "deepgram";
 
@@ -14,6 +15,14 @@ const handlers = mapProviderActionSources(
 );
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, handlers);
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: deepgramApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Token " },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
 
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher }) {

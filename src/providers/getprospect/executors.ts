@@ -1,14 +1,11 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
-import { optionalBoolean, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
-import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
-  providerUserAgent,
-  ProviderRequestError,
-} from "../provider-runtime.ts";
+import { optionalBoolean, optionalNumber, optionalRecord, optionalString, recordOrEmpty } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "getprospect";
 const getprospectApiBaseUrl = "https://api.getprospect.com";
@@ -66,7 +63,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "getprospect",
         displayName: "GetProspect API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: getprospectApiBaseUrl,
         validationEndpoint,
@@ -161,7 +157,7 @@ async function searchLeads(input: Record<string, unknown>, context: GetProspectA
   });
 
   return {
-    data: readArray(payload, "data").map((item) => normalizeLeadItem(asRecord(item))),
+    data: readArray(payload, "data").map((item) => normalizeLeadItem(recordOrEmpty(item))),
     meta: readMeta(payload),
   };
 }
@@ -181,7 +177,7 @@ async function searchCompanies(input: Record<string, unknown>, context: GetProsp
   });
 
   return {
-    data: readArray(payload, "data").map((item) => normalizeCompanyItem(asRecord(item))),
+    data: readArray(payload, "data").map((item) => normalizeCompanyItem(recordOrEmpty(item))),
     meta: readMeta(payload),
   };
 }
@@ -204,9 +200,9 @@ async function requestGetProspect(input: {
   let response: Response;
   try {
     const headers = new Headers({
-      accept: "application/json",
+      "accept": "application/json",
       "user-agent": providerUserAgent,
-      apiKey: input.apiKey,
+      "apiKey": input.apiKey,
     });
     if (input.body) {
       headers.set("content-type", "application/json");
@@ -421,11 +417,7 @@ function readArray(value: Record<string, unknown>, key: string): unknown[] {
 }
 
 function readObject(value: Record<string, unknown>, key: string): Record<string, unknown> {
-  return asRecord(value[key]);
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return optionalRecord(value) ?? {};
+  return recordOrEmpty(value[key]);
 }
 
 function requiredResponseRecord(value: unknown, fieldName: string): Record<string, unknown> {

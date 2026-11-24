@@ -1,8 +1,10 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalBoolean, optionalNumber, optionalRawString, optionalRecord } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError, providerInputError } from "../provider-runtime.ts";
 
 const sendfoxApiBaseUrl = "https://api.sendfox.com";
 
@@ -107,7 +109,19 @@ export const sendfoxActionHandlers: ProviderActionHandlers<"sendfox", SendfoxAct
   },
 };
 
-export const executors: ProviderExecutors = defineApiKeyProviderExecutors("sendfox", sendfoxActionHandlers);
+const service = "sendfox";
+
+export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, sendfoxActionHandlers);
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: sendfoxApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
 
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher }) {
@@ -123,7 +137,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: readOptionalIntegerString(user?.id) ?? "api_key",
         displayName: pickAccountLabel(user),
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: sendfoxApiBaseUrl,
         validationEndpoint: "/me",
@@ -243,8 +256,8 @@ async function sendfoxRequestJson(
 
 function sendfoxHeaders(apiKey: string, extraHeaders: Record<string, string>): Record<string, string> {
   return {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "user-agent": providerUserAgent,
     ...extraHeaders,
   };
@@ -270,7 +283,7 @@ function createSendfoxError(response: Response, payload: unknown, phase: Sendfox
     return new ProviderRequestError(429, message);
   }
   if (phase === "validate" && (response.status === 401 || response.status === 403)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (response.status === 401) {
     return new ProviderRequestError(401, message);
@@ -279,7 +292,7 @@ function createSendfoxError(response: Response, payload: unknown, phase: Sendfox
     return new ProviderRequestError(403, message);
   }
   if (response.status === 404 || response.status === 400 || response.status === 409 || response.status === 422) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   return new ProviderRequestError(response.status >= 500 ? 502 : response.status, message);
 }

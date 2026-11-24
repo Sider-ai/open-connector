@@ -1,20 +1,19 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
-  createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  isAbortLikeError,
+  providerInputError,
   ProviderRequestError,
   providerUserAgent,
+  runProviderRequest,
 } from "../provider-runtime.ts";
 
 const service = "storecensus";
 const storecensusApiBaseUrl = "https://www.storecensus.com/api/v1";
 const storecensusValidationPath = "/app-categories";
-const storecensusDefaultRequestTimeoutMs = 30_000;
 
 type StorecensusPhase = "validate" | "execute";
 type StorecensusActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
@@ -24,7 +23,7 @@ export const storecensusActionHandlers: ProviderActionHandlers<"storecensus", St
     const payload = await requestStorecensusJson({
       context,
       method: "GET",
-      path: `/website/${encodeURIComponent(requiredString(input.domain, "domain", invalidInputError))}`,
+      path: `/website/${encodeURIComponent(requiredString(input.domain, "domain", providerInputError))}`,
       query: buildQueryParams(input, [["sections", formatCommaSeparatedArray]]),
       phase: "execute",
     });
@@ -80,6 +79,16 @@ export const storecensusActionHandlers: ProviderActionHandlers<"storecensus", St
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, storecensusActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: storecensusApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = await requestStorecensusJson({
@@ -96,7 +105,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "storecensus:api-key",
         displayName: firstCategoryName ? `StoreCensus (${firstCategoryName})` : "StoreCensus API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: storecensusApiBaseUrl,
         validationEndpoint: storecensusValidationPath,
@@ -107,18 +115,17 @@ export const credentialValidators: CredentialValidators = {
 };
 
 async function requestStorecensusJson(input: {
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   method: "GET" | "POST";
   path: string;
   phase: StorecensusPhase;
   query?: URLSearchParams;
   body?: unknown;
 }): Promise<unknown> {
-  const timeout = createProviderTimeout(input.context.signal, storecensusDefaultRequestTimeoutMs);
-  try {
+  return runProviderRequest({ signal: input.context.signal, label: "StoreCensus" }, async (signal) => {
     const headers: Record<string, string> = {
-      accept: "application/json",
-      authorization: `Bearer ${input.context.apiKey}`,
+      "accept": "application/json",
+      "authorization": `Bearer ${input.context.apiKey}`,
       "user-agent": providerUserAgent,
     };
     let body: BodyInit | undefined;
@@ -131,7 +138,7 @@ async function requestStorecensusJson(input: {
       method: input.method,
       headers,
       body,
-      signal: timeout.signal,
+      signal,
     });
     const payload = await readStorecensusPayload(response);
 
@@ -140,20 +147,7 @@ async function requestStorecensusJson(input: {
     }
 
     return payload;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-    if (timeout.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "StoreCensus request timed out");
-    }
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `StoreCensus request failed: ${error.message}` : "StoreCensus request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+  });
 }
 
 function buildStorecensusUrl(path: string, query?: URLSearchParams): string {
@@ -281,8 +275,4 @@ function requireObjectArrayPayload(payload: unknown, label: string): Array<Recor
   }
 
   return payload.map((item) => requireProviderObject(item, `${label} item`));
-}
-
-function invalidInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

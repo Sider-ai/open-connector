@@ -1,5 +1,5 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { optionalNumber, optionalString, requiredString } from "../../core/cast.ts";
 import { ProviderRequestError } from "../provider-runtime.ts";
@@ -37,20 +37,18 @@ export async function validatePingbellCredential(
   signal?: AbortSignal,
 ): Promise<{
   profile: { accountId: string; displayName: string };
-  grantedScopes: string[];
   metadata: Record<string, unknown>;
 }> {
   const sources = await listSources(apiKey, fetcher, signal, true);
   return {
     profile: { accountId: `pingbell:${apiKey.slice(-8)}`, displayName: "PingBell API Key" },
-    grantedScopes: [],
     metadata: { apiBaseUrl: pingbellApiBaseUrl, sourceCount: sources.length },
   };
 }
 
 async function listSources(apiKey: string, fetcher: typeof fetch, signal?: AbortSignal, validating = false) {
   const response = await fetcher(new URL("/userPingbells", pingbellApiBaseUrl), {
-    headers: { accept: "application/json", "x-api-key": apiKey },
+    headers: { "accept": "application/json", "x-api-key": apiKey },
     signal,
   });
   const text = await response.text();

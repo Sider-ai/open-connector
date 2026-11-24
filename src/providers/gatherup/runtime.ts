@@ -1,8 +1,13 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { createProviderTimeout, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import {
+  providerInputError,
+  providerUserAgent,
+  ProviderRequestError,
+  runProviderRequest,
+} from "../provider-runtime.ts";
 
 export interface GatherupContext {
   apiKey: string;
@@ -12,10 +17,6 @@ export interface GatherupContext {
 }
 
 export const gatherupApiBaseUrl = "https://app.gatherup.com/api/v2";
-export const gatherupCredentialHelpUrl =
-  "https://help.gatherup.com/s/article/GatherUp-API-Client-ID-Private-Key-and-Bearer-Token";
-
-const gatherupDefaultRequestTimeoutMs = 30_000;
 
 type GatherupRequestPhase = "validate" | "execute";
 type GatherupQueryValue = string | number | boolean | undefined;
@@ -91,9 +92,9 @@ export const gatherupActionHandlers: ProviderActionHandlers<"gatherup", Provider
 export async function validateGatherupCredential(
   input: Record<string, string>,
   fetcher: typeof fetch,
-): Promise<{ profile: { displayName: string }; grantedScopes: string[] }> {
-  const apiKey = requiredString(input.apiKey, "apiKey", invalidCredential);
-  const clientId = requiredString(input.clientId, "clientId", invalidCredential);
+): Promise<{ profile: { displayName: string } }> {
+  const apiKey = requiredString(input.apiKey, "apiKey", providerInputError);
+  const clientId = requiredString(input.clientId, "clientId", providerInputError);
   await requestGatherupJson({
     apiKey,
     clientId,
@@ -104,42 +105,26 @@ export async function validateGatherupCredential(
 
   return {
     profile: { displayName: "GatherUp API Key" },
-    grantedScopes: [],
   };
 }
 
 async function requestGatherupJson(input: GatherupRequestInput) {
-  const timeout = createProviderTimeout(input.signal, gatherupDefaultRequestTimeoutMs);
-
-  try {
+  return runProviderRequest({ signal: input.signal, label: "GatherUp" }, async (signal) => {
     const response = await input.fetcher(buildGatherupUrl(input), {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${input.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${input.apiKey}`,
         "user-agent": providerUserAgent,
       },
-      signal: timeout.signal,
+      signal,
     });
     const payload = await readGatherupPayload(response);
     if (!response.ok) {
       throw createGatherupError(response.status, payload, input.phase);
     }
     return payload;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-    if (timeout.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "GatherUp request timed out");
-    }
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `GatherUp request failed: ${error.message}` : "GatherUp request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+  });
 }
 
 function buildGatherupUrl(input: GatherupRequestInput) {
@@ -170,7 +155,7 @@ function createGatherupError(status: number, payload: unknown, phase: GatherupRe
   const message = extractGatherupErrorMessage(payload) ?? `GatherUp request failed with status ${status}`;
 
   if (phase === "validate" && (status === 401 || status === 403)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (phase === "execute" && (status === 401 || status === 403)) {
     return new ProviderRequestError(status, message);
@@ -192,17 +177,6 @@ function extractGatherupErrorMessage(payload: unknown) {
   return optionalString(record?.errorMessage) ?? optionalString(record?.message) ?? optionalString(record?.error);
 }
 
-function invalidCredential(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
-}
-
 function readOptionalFlag(value: unknown) {
   return typeof value === "boolean" ? (value ? 1 : 0) : undefined;
-}
-
-function isAbortLikeError(error: unknown) {
-  return (
-    error instanceof DOMException ||
-    (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))
-  );
 }

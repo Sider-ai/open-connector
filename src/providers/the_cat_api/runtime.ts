@@ -1,5 +1,5 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderRequestContext } from "../provider-runtime.ts";
 
 import {
   compactObject,
@@ -14,18 +14,18 @@ import {
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
+  providerInputError,
+  providerResponseError,
 } from "../provider-runtime.ts";
 
-const theCatApiBaseUrl = "https://api.thecatapi.com/v1/";
+export const theCatApiBaseUrl = "https://api.thecatapi.com/v1/";
 const theCatApiValidationPath = "/breeds";
-const theCatApiDefaultTimeoutMs = 30_000;
 
 type TheCatApiRequestPhase = "validate" | "execute";
-type TheCatApiContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
 
 export const theCatApiActionHandlers: ProviderActionHandlers<
   "the_cat_api",
-  (input: Record<string, unknown>, context: TheCatApiContext) => Promise<unknown>
+  (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>
 > = {
   search_images(input, context) {
     return executeSearchImages(input, context);
@@ -44,9 +44,8 @@ export const theCatApiActionHandlers: ProviderActionHandlers<
   },
 };
 
-export async function validateTheCatApiCredential(context: TheCatApiContext): Promise<{
+export async function validateTheCatApiCredential(context: ApiKeyProviderContext): Promise<{
   profile: { accountId: string; displayName: string };
-  grantedScopes: string[];
   metadata: Record<string, unknown>;
 }> {
   const payload = await requestTheCatApiJson({
@@ -64,9 +63,8 @@ export async function validateTheCatApiCredential(context: TheCatApiContext): Pr
       accountId: "api_key",
       displayName: "The Cat API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
-      apiBaseUrl: "https://api.thecatapi.com/v1",
+      apiBaseUrl: theCatApiBaseUrl,
       validationEndpoint: theCatApiValidationPath,
       sampleBreedId: sampleBreed?.id,
       sampleBreedName: sampleBreed?.name,
@@ -74,7 +72,7 @@ export async function validateTheCatApiCredential(context: TheCatApiContext): Pr
   };
 }
 
-async function executeSearchImages(input: Record<string, unknown>, context: TheCatApiContext) {
+async function executeSearchImages(input: Record<string, unknown>, context: ApiKeyProviderContext) {
   const payload = await requestTheCatApiJson({
     path: "/images/search",
     apiKey: context.apiKey,
@@ -86,7 +84,7 @@ async function executeSearchImages(input: Record<string, unknown>, context: TheC
   return { images: images.map(normalizeImage).filter((image) => image !== null) };
 }
 
-async function executeGetImage(input: Record<string, unknown>, context: TheCatApiContext) {
+async function executeGetImage(input: Record<string, unknown>, context: ApiKeyProviderContext) {
   const payload = await requestTheCatApiJson({
     path: `/images/${encodeURIComponent(readRequiredString(input.imageId, "imageId"))}`,
     apiKey: context.apiKey,
@@ -97,7 +95,7 @@ async function executeGetImage(input: Record<string, unknown>, context: TheCatAp
   return { image: requireNormalizedImage(payload) };
 }
 
-async function executeListBreeds(input: Record<string, unknown>, context: TheCatApiContext) {
+async function executeListBreeds(input: Record<string, unknown>, context: ApiKeyProviderContext) {
   const payload = await requestTheCatApiJson({
     path: "/breeds",
     apiKey: context.apiKey,
@@ -109,7 +107,7 @@ async function executeListBreeds(input: Record<string, unknown>, context: TheCat
   return { breeds: breeds.map(normalizeBreed).filter((breed) => breed !== null) };
 }
 
-async function executeSearchBreeds(input: Record<string, unknown>, context: TheCatApiContext) {
+async function executeSearchBreeds(input: Record<string, unknown>, context: ApiKeyProviderContext) {
   const payload = await requestTheCatApiJson({
     path: "/breeds/search",
     apiKey: context.apiKey,
@@ -123,7 +121,7 @@ async function executeSearchBreeds(input: Record<string, unknown>, context: TheC
   return { breeds: breeds.map(normalizeBreed).filter((breed) => breed !== null) };
 }
 
-async function executeGetBreed(input: Record<string, unknown>, context: TheCatApiContext) {
+async function executeGetBreed(input: Record<string, unknown>, context: ApiKeyProviderContext) {
   const payload = await requestTheCatApiJson({
     path: `/breeds/${encodeURIComponent(readRequiredString(input.breedId, "breedId"))}`,
     apiKey: context.apiKey,
@@ -161,17 +159,17 @@ async function requestTheCatApiJson(input: {
   path: string;
   apiKey: string;
   query: Record<string, string | undefined>;
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">;
+  context: ProviderRequestContext;
   phase: TheCatApiRequestPhase;
 }) {
-  const timeout = createProviderTimeout(input.context.signal, theCatApiDefaultTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   const url = buildTheCatApiUrl(input.path, input.query);
 
   try {
     const response = await input.context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
         "x-api-key": input.apiKey,
       },
@@ -224,7 +222,7 @@ async function readTheCatApiPayload(response: Response) {
 function createTheCatApiError(response: Response, payload: unknown, phase: TheCatApiRequestPhase) {
   const message = extractTheCatApiErrorMessage(payload) ?? response.statusText ?? "The Cat API request failed";
   if (phase === "validate" && (response.status === 401 || response.status === 403)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   return new ProviderRequestError(response.status || 502, message);
 }
@@ -239,7 +237,7 @@ function extractTheCatApiErrorMessage(payload: unknown) {
 
 function parseArrayPayload(payload: unknown, message: string) {
   if (!Array.isArray(payload)) {
-    throw new ProviderRequestError(502, message);
+    throw providerResponseError(message);
   }
   return payload;
 }

@@ -1,5 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
 import { compactObject, optionalInteger, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
@@ -9,9 +9,9 @@ import {
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
+  providerInputError,
 } from "../provider-runtime.ts";
 
-const clickhouseDefaultRequestTimeoutMs = 30_000;
 const clickhouseDefaultDatabase = "default";
 const clickhouseValidationQuery = "SELECT currentDatabase() AS database, version() AS version";
 
@@ -96,7 +96,6 @@ export async function validateClickhouseCredential(
       accountId: `${baseUrl}:${context.username}`,
       displayName: `${context.username}@${new URL(baseUrl).host}`,
     },
-    grantedScopes: [],
     metadata: compactObject({
       baseUrl,
       username: context.username,
@@ -358,7 +357,7 @@ async function ensureDatabaseExists(database: string, context: ClickhouseActionC
 }
 
 async function requestClickhouseJson(input: ClickhouseRequestInput): Promise<ClickhouseJsonPayload> {
-  const timeout = createProviderTimeout(input.context.signal, clickhouseDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   const url = new URL(input.context.baseUrl);
   url.searchParams.set("default_format", "JSON");
   url.searchParams.set("database", input.database ?? input.context.defaultDatabase);
@@ -376,8 +375,8 @@ async function requestClickhouseJson(input: ClickhouseRequestInput): Promise<Cli
     const response = await input.context.fetcher(url.toString(), {
       method: "POST",
       headers: {
-        accept: "application/json",
-        authorization: buildBasicAuthorizationHeader(input.context.username, input.context.password),
+        "accept": "application/json",
+        "authorization": buildBasicAuthorizationHeader(input.context.username, input.context.password),
         "content-type": "text/plain; charset=utf-8",
         "user-agent": providerUserAgent,
       },
@@ -449,10 +448,10 @@ function createClickhouseError(
 ): ProviderRequestError {
   const message = responseText.trim() || `ClickHouse request failed with ${status}`;
   if (phase === "validate" && [400, 401, 403].includes(status)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if ([400, 404, 422].includes(status)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (status === 429) {
     return new ProviderRequestError(429, message);
@@ -467,7 +466,7 @@ export function normalizeClickhouseBaseUrl(
   const raw = requireCredentialString(value, "baseUrl");
   const url = assertPublicHttpUrl(raw, {
     fieldName: "baseUrl",
-    createError: (message) => new ProviderRequestError(400, message),
+    createError: providerInputError,
     allowPrivateNetwork,
   });
   url.hash = "";

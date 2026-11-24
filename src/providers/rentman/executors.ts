@@ -1,10 +1,16 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 import type { RentmanActionName } from "./actions.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "rentman";
 const rentmanApiBaseUrl = "https://api.rentman.net";
@@ -53,6 +59,14 @@ export const rentmanActionHandlers: ProviderActionHandlers<"rentman", RentmanAct
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, rentmanActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: rentmanApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  defaultHeaders: { "accept": "application/json", "content-type": "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   apiKey(input, { fetcher, signal }) {
     return validateRentmanCredential(input.apiKey, fetcher, signal);
@@ -75,9 +89,7 @@ async function validateRentmanCredential(
     profile: {
       accountId: "rentman-jwt",
       displayName: "Rentman JWT",
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: rentmanApiBaseUrl,
       validationEndpoint: "/contacts",
@@ -153,7 +165,7 @@ function rentmanUrl(path: string, query?: Record<string, string | number | undef
 }
 
 async function requestRentman(input: {
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   url: URL;
   mode: "validate" | "execute";
 }): Promise<unknown> {
@@ -180,8 +192,8 @@ async function requestRentman(input: {
 
 function rentmanHeaders(apiKey: string): Record<string, string> {
   return {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "content-type": "application/json",
     "user-agent": providerUserAgent,
   };

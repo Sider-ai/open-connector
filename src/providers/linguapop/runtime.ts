@@ -1,9 +1,9 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { providerInputError, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 export const linguapopApiBaseUrl = "https://app.linguapop.eu";
 const getLanguagesPath = "/api/actions/getLanguages";
@@ -39,9 +39,7 @@ export async function validateLinguapopCredential(
     profile: {
       accountId: "linguapop:integration-api-key",
       displayName: "Linguapop Integration API Key",
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: linguapopApiBaseUrl,
       validationEndpoint: getLanguagesPath,
@@ -57,7 +55,7 @@ async function sendInvitation(input: Record<string, unknown>, context: Linguapop
     {
       method: "POST",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },
@@ -95,7 +93,7 @@ async function fetchAvailableLanguages(
     {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
       signal,
@@ -154,8 +152,8 @@ function normalizeLanguage(value: unknown, index: number): { name: string; code:
     throw new ProviderRequestError(502, `linguapop language at index ${index} must be an object`);
   }
   return {
-    name: requiredString(record.name, `languages[${index}].name`, providerResponseError),
-    code: requiredString(record.code, `languages[${index}].code`, providerResponseError),
+    name: requiredString(record.name, `languages[${index}].name`, linguapopResponseError),
+    code: requiredString(record.code, `languages[${index}].code`, linguapopResponseError),
   };
 }
 
@@ -167,7 +165,7 @@ function normalizeInvitation(value: unknown): Record<string, unknown> {
   return {
     invitationId: readRequiredInteger(record.invitationId, "invitationId"),
     externalIdentifier: readNullableString(record.externalIdentifier, "externalIdentifier"),
-    url: requiredString(record.url, "url", providerResponseError),
+    url: requiredString(record.url, "url", linguapopResponseError),
     emailSent: readRequiredBoolean(record.emailSent, "emailSent"),
     kioskCode: readNullableString(record.kioskCode, "kioskCode"),
   };
@@ -202,7 +200,7 @@ function mapLinguapopError(status: number, message: string, phase: LinguapopRequ
     return new ProviderRequestError(401, message);
   }
   if (status >= 400 && status < 500) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   return new ProviderRequestError(status || 502, message);
 }
@@ -231,10 +229,6 @@ function readRequiredInteger(value: unknown, fieldName: string): number {
   throw new ProviderRequestError(502, `linguapop response field ${fieldName} must be an integer`);
 }
 
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
-}
-
-function providerResponseError(message: string): ProviderRequestError {
+function linguapopResponseError(message: string): ProviderRequestError {
   return new ProviderRequestError(502, `linguapop response field ${message} must be a string`);
 }

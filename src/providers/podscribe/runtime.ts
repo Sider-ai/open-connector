@@ -1,16 +1,14 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
-const podscribeApiBaseUrl = "https://backend.podscribe.ai";
+export const podscribeApiBaseUrl = "https://backend.podscribe.ai";
 const validationPath = "/api/public/integration-health";
 
 type PodscribePhase = "validate" | "execute";
 type PodscribeActionHandler = ProviderRuntimeHandler<ApiKeyProviderContext>;
-type PodscribeContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
 
 export const podscribeActionHandlers: ProviderActionHandlers<"podscribe", PodscribeActionHandler> = {
   get_integration_health(input, context) {
@@ -44,7 +42,6 @@ export async function validatePodscribeCredential(
     profile: {
       displayName: "Podscribe API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: podscribeApiBaseUrl,
       validationEndpoint: validationPath,
@@ -79,7 +76,7 @@ async function requestPodscribeJson(
   method: "GET" | "POST",
   path: string,
   body: Record<string, unknown> | undefined,
-  context: PodscribeContext,
+  context: ApiKeyProviderContext,
   phase: PodscribePhase,
 ): Promise<unknown> {
   let response: Response;
@@ -88,8 +85,8 @@ async function requestPodscribeJson(
     response = await context.fetcher(new URL(path, podscribeApiBaseUrl), {
       method,
       headers: {
-        authorization: `Bearer ${context.apiKey}`,
-        accept: "application/json",
+        "authorization": `Bearer ${context.apiKey}`,
+        "accept": "application/json",
         "user-agent": providerUserAgent,
         ...(body === undefined ? {} : { "content-type": "application/json" }),
       },

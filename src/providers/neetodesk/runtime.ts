@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { jsonObject, queryParams } from "../../core/request.ts";
@@ -13,7 +13,6 @@ import {
 } from "../provider-runtime.ts";
 
 const apiPath = "/api/external/v2";
-const timeoutMs = 30_000;
 
 export interface NeetodeskContext {
   apiKey: string;
@@ -109,7 +108,6 @@ export async function validateNeetodeskCredential(
   });
   return {
     profile: { accountId: `neetodesk:${subdomain}`, displayName: `${subdomain}.neetodesk.com` },
-    grantedScopes: Object.keys(neetodeskActionHandlers),
     metadata: { subdomain, baseUrl: neetodeskBaseUrl(subdomain) },
   };
 }
@@ -126,12 +124,12 @@ interface NeetodeskRequest {
 async function requestNeetodesk(input: NeetodeskRequest): Promise<unknown> {
   const url = new URL(`${neetodeskBaseUrl(input.context.subdomain)}${input.path}`);
   for (const [name, value] of Object.entries(input.query ?? {})) url.searchParams.set(name, value);
-  const timeout = createProviderTimeout(input.context.signal, timeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   try {
     const response = await input.context.fetcher(url, {
       method: input.method,
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         ...(input.body ? { "content-type": "application/json" } : {}),
         "user-agent": providerUserAgent,
         "x-api-key": input.context.apiKey,

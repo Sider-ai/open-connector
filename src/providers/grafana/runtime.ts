@@ -1,17 +1,11 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalBoolean, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
-import { assertPublicHttpUrl, isPrivateNetworkAccessAllowed } from "../../core/request.ts";
-import {
-  createProviderTimeout,
-  isAbortLikeError,
-  providerUserAgent,
-  ProviderRequestError,
-} from "../provider-runtime.ts";
+import { assertPublicHttpUrl, encodePathSegment, isPrivateNetworkAccessAllowed } from "../../core/request.ts";
+import { providerUserAgent, ProviderRequestError, runProviderRequest } from "../provider-runtime.ts";
 
 const defaultNamespace = "default";
-const grafanaDefaultRequestTimeoutMs = 30_000;
 const folderParentAnnotation = "grafana.app/folder";
 const grafanaDefaultApiVersion = "v1";
 const grafanaApiVersionCacheMaxEntries = 256;
@@ -132,7 +126,6 @@ export async function validateGrafanaCredential(
       accountId: optionalNumber(org?.id)?.toString(),
       displayName: optionalString(org?.name) ?? "Grafana",
     },
-    grantedScopes: [],
     metadata: {
       baseUrl,
       validationPath: "/api/org",
@@ -414,40 +407,25 @@ async function grafanaRequestJson(
     }
   }
 
-  const timeout = createProviderTimeout(context.signal, grafanaDefaultRequestTimeoutMs);
-  try {
+  return runProviderRequest({ signal: context.signal, label: "Grafana" }, async (signal) => {
     const response = await context.fetcher(url, {
       method: request.method,
       headers: grafanaHeaders(context.apiKey, request.body !== undefined),
       body: request.body === undefined ? undefined : JSON.stringify(request.body),
-      signal: timeout.signal,
+      signal,
     });
     const payload = await readGrafanaPayload(response);
     if (!response.ok) {
       throw createGrafanaError(response, payload, context.phase);
     }
     return payload;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-    if (timeout.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "Grafana request timed out");
-    }
-
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Grafana request failed: ${error.message}` : "Grafana request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+  });
 }
 
 function grafanaHeaders(apiKey: string, hasJsonBody: boolean): Record<string, string> {
   return {
-    authorization: `Bearer ${apiKey}`,
-    accept: "application/json",
+    "authorization": `Bearer ${apiKey}`,
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     ...(hasJsonBody ? { "content-type": "application/json" } : {}),
   };
@@ -683,8 +661,4 @@ function requireObject(value: unknown, fieldName: string): Record<string, unknow
     throw new ProviderRequestError(400, `${fieldName} object is required`);
   }
   return object;
-}
-
-function encodePathSegment(value: string): string {
-  return encodeURIComponent(value);
 }

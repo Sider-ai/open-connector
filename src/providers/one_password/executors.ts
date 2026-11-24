@@ -1,21 +1,27 @@
-import type { CredentialValidators, ExecutionContext, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type {
+  CredentialValidators,
+  ExecutionContext,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { createHash } from "node:crypto";
-import { optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { assertPublicHttpUrl } from "../../core/request.ts";
+import { optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
+import { assertPublicHttpUrl, isPrivateNetworkAccessAllowed } from "../../core/request.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineProviderExecutors,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
-  requireApiKeyCredential,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 const service = "one_password";
 const onePasswordValidationPath = "/v1/vaults";
-const onePasswordRequestTimeoutMs = 30_000;
 
 type OnePasswordPhase = "validate" | "execute";
 type OnePasswordActionHandler = (input: Record<string, unknown>, context: OnePasswordContext) => Promise<unknown>;
@@ -63,7 +69,7 @@ export const onePasswordActionHandlers: ProviderActionHandlers<"one_password", O
   async get_vault(input, context) {
     const vault = await requestOnePasswordJson({
       context,
-      path: `/v1/vaults/${encodeURIComponent(readInputString(input.vaultId, "vaultId"))}`,
+      path: `/v1/vaults/${encodeURIComponent(requiredInputString(input.vaultId, "vaultId"))}`,
       phase: "execute",
     });
 
@@ -74,7 +80,7 @@ export const onePasswordActionHandlers: ProviderActionHandlers<"one_password", O
   async list_items(input, context) {
     const items = await requestOnePasswordJson({
       context,
-      path: `/v1/vaults/${encodeURIComponent(readInputString(input.vaultId, "vaultId"))}/items`,
+      path: `/v1/vaults/${encodeURIComponent(requiredInputString(input.vaultId, "vaultId"))}/items`,
       query: {
         filter: optionalString(input.filter),
       },
@@ -86,8 +92,8 @@ export const onePasswordActionHandlers: ProviderActionHandlers<"one_password", O
     };
   },
   async get_item(input, context) {
-    const vaultId = readInputString(input.vaultId, "vaultId");
-    const itemId = readInputString(input.itemId, "itemId");
+    const vaultId = requiredInputString(input.vaultId, "vaultId");
+    const itemId = requiredInputString(input.itemId, "itemId");
     const item = await requestOnePasswordJson({
       context,
       path: `/v1/vaults/${encodeURIComponent(vaultId)}/items/${encodeURIComponent(itemId)}`,
@@ -129,6 +135,20 @@ export const executors: ProviderExecutors = defineProviderExecutors<OnePasswordC
   },
 });
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  async baseUrl(context) {
+    const credential = await requireApiKeyCredential(context, service);
+    return normalizeOnePasswordBaseUrl(
+      credential.metadata.baseUrl ?? credential.values.baseUrl,
+      isPrivateNetworkAccessAllowed(),
+    );
+  },
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  allowPrivateNetwork: isPrivateNetworkAccessAllowed,
+  defaultHeaders: { accept: "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const baseUrl = normalizeOnePasswordBaseUrl(input.values.baseUrl);
@@ -154,7 +174,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: `one_password:${new URL(baseUrl).host}:${buildTokenFingerprint(input.apiKey)}`,
         displayName: accountLabel,
       },
-      grantedScopes: [],
       metadata: {
         baseUrl,
         apiBaseUrl: baseUrl,
@@ -166,13 +185,13 @@ export const credentialValidators: CredentialValidators = {
 };
 
 async function requestOnePasswordJson(input: OnePasswordRequestInput): Promise<unknown> {
-  const timeout = createProviderTimeout(input.context.signal, onePasswordRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   try {
     const response = await input.context.fetcher(buildOnePasswordUrl(input), {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${input.context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${input.context.apiKey}`,
         "user-agent": providerUserAgent,
       },
       signal: timeout.signal,
@@ -203,7 +222,7 @@ async function requestOnePasswordJson(input: OnePasswordRequestInput): Promise<u
 }
 
 function buildOnePasswordUrl(input: {
-  context: Pick<OnePasswordContext, "baseUrl">;
+  context: OnePasswordContext;
   path: string;
   query?: Record<string, string | number | boolean | undefined>;
 }): URL {
@@ -260,7 +279,7 @@ function extractOnePasswordErrorMessage(payload: unknown): string | undefined {
   return optionalString(record.message) ?? optionalString(record.error) ?? optionalString(record.detail);
 }
 
-function normalizeOnePasswordBaseUrl(value: unknown): string {
+function normalizeOnePasswordBaseUrl(value: unknown, allowPrivateNetwork = isPrivateNetworkAccessAllowed()): string {
   const raw = optionalString(value);
   if (!raw) {
     throw new ProviderRequestError(400, "baseUrl is required");
@@ -269,6 +288,7 @@ function normalizeOnePasswordBaseUrl(value: unknown): string {
   const url = assertPublicHttpUrl(raw, {
     fieldName: "baseUrl",
     createError: (message) => new ProviderRequestError(400, message),
+    allowPrivateNetwork,
   });
 
   if (url.protocol !== "https:") {
@@ -281,10 +301,6 @@ function normalizeOnePasswordBaseUrl(value: unknown): string {
   url.hash = "";
   url.search = "";
   return trimTrailingSlash(url.toString());
-}
-
-function readInputString(value: unknown, key: string): string {
-  return requiredString(value, key, (message) => new ProviderRequestError(400, message));
 }
 
 function requireObjectPayload(payload: unknown, label: string): Record<string, unknown> {

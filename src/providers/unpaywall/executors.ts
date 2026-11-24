@@ -1,7 +1,10 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
 import type { ProviderFetch } from "../provider-runtime.ts";
 
-import { defineProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { requireCustomCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 const service = "unpaywall";
 const baseUrl = "https://api.unpaywall.org/v2";
 interface Context {
@@ -42,12 +45,25 @@ export const executors: ProviderExecutors = defineProviderExecutors({
   },
   skipDnsValidation: true,
 });
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl,
+  auth: { type: "none" },
+  skipDnsValidation: true,
+  async customizeRequest({ context, url, headers }) {
+    const credential = await requireCustomCredential(context, service);
+    url.searchParams.set("email", required(credential.values.email, "email"));
+    if (!headers.has("accept")) {
+      headers.set("accept", "application/json");
+    }
+  },
+});
 export const credentialValidators: CredentialValidators = {
   async customCredential(input, { fetcher, signal }) {
     const email = required(input.values.email, "email");
     if (!email.includes("@")) throw new ProviderRequestError(400, "email must be a valid email address");
     await request("/10.1038%2Fnature12373", {}, { email, fetcher, signal });
-    return { profile: { accountId: email, displayName: email }, grantedScopes: [], metadata: { apiBaseUrl: baseUrl } };
+    return { profile: { accountId: email, displayName: email }, metadata: { apiBaseUrl: baseUrl } };
   },
 };
 async function request(path: string, query: Record<string, string | undefined>, context: Context): Promise<unknown> {
@@ -55,7 +71,7 @@ async function request(path: string, query: Record<string, string | undefined>, 
   url.searchParams.set("email", context.email);
   for (const [key, value] of Object.entries(query)) if (value !== undefined) url.searchParams.set(key, value);
   const response = await context.fetcher(url, {
-    headers: { accept: "application/json", "user-agent": providerUserAgent },
+    headers: { "accept": "application/json", "user-agent": providerUserAgent },
     signal: context.signal,
   });
   const text = await response.text();

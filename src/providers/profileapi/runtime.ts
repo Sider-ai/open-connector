@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { createHash } from "node:crypto";
 import { optionalRecord, optionalString } from "../../core/cast.ts";
@@ -37,7 +37,6 @@ export async function validateProfileapiCredential(
   const hash = createHash("sha256").update(apiKey).digest("hex").slice(0, 16);
   return {
     profile: { accountId: `profileapi:${hash}`, displayName: "profileAPI API Key" },
-    grantedScopes: [],
     metadata: { apiBaseUrl: profileapiApiBaseUrl, apiVersion, validationEndpoint: validationPath },
   };
 }
@@ -60,8 +59,8 @@ async function fetchRequest(path: string, apiKey: string, body: Record<string, u
     return await fetcher(new URL(path, profileapiApiBaseUrl), {
       method: "POST",
       headers: {
-        accept: "application/json",
-        authorization: `ApiKey ${apiKey}`,
+        "accept": "application/json",
+        "authorization": `ApiKey ${apiKey}`,
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },

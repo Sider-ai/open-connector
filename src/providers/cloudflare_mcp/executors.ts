@@ -1,14 +1,16 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { BearerProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { BearerProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 import type { Client } from "@modelcontextprotocol/client";
 
 import { UnauthorizedError } from "@modelcontextprotocol/client";
 import { SdkHttpError } from "@modelcontextprotocol/client";
 import { ProtocolError } from "@modelcontextprotocol/client";
 import { createHash } from "node:crypto";
-import { withMcpClient } from "../mcp-client.ts";
-import { defineBearerProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { withMcpClient, createMcpDiagnosticFetch } from "../mcp-client.ts";
+import { defineBearerProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "cloudflare_mcp";
 const cloudflareMcpEndpoint = "https://mcp.cloudflare.com/mcp";
@@ -34,6 +36,16 @@ export const cloudflareMcpActionHandlers: ProviderActionHandlers<
 
 export const executors: ProviderExecutors = defineBearerProviderExecutors(service, cloudflareMcpActionHandlers, {
   skipDnsValidation: true,
+});
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: cloudflareMcpEndpoint,
+  auth: { type: "bearer" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json, text/event-stream");
+  },
 });
 
 export const credentialValidators: CredentialValidators = {
@@ -103,7 +115,7 @@ async function withCloudflareMcpClient<T>(
     {
       endpoint: new URL(cloudflareMcpEndpoint),
       transport: "streamable_http",
-      fetcher: input.fetcher,
+      fetcher: createMcpDiagnosticFetch(input.fetcher, "streamable_http", "Cloudflare"),
       headers,
       signal: input.signal,
       protocolVersion: "modern",
@@ -151,13 +163,13 @@ function formatCloudflareMcpToolContent(result: Extract<CloudflareMcpToolResult,
 function mapCloudflareMcpError(error: unknown): ProviderRequestError {
   if (error instanceof ProviderRequestError) return error;
   if (error instanceof UnauthorizedError) {
-    return new ProviderRequestError(401, "Cloudflare MCP credential is invalid or expired", error);
+    return new ProviderRequestError(401, "Cloudflare MCP authorization request failed", error, "provider_error");
   }
   if (error instanceof SdkHttpError) {
     const status = error.status;
     return new ProviderRequestError(
       status === 401 || status === 403
-        ? 401
+        ? status
         : status === 429
           ? 429
           : status && status >= 400 && status < 500
@@ -165,6 +177,7 @@ function mapCloudflareMcpError(error: unknown): ProviderRequestError {
             : 502,
       `Cloudflare MCP request failed: ${error.message}`,
       error,
+      "provider_error",
     );
   }
   if (error instanceof ProtocolError) {

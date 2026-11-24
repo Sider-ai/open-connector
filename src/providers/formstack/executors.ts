@@ -1,10 +1,21 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
 
-import { defineApiKeyProviderExecutors } from "../provider-runtime.ts";
-import { formstackActionHandlers, validateFormstackCredential } from "./runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { formstackActionHandlers, formstackApiBaseUrl, validateFormstackCredential } from "./runtime.ts";
 
-export const executors: ProviderExecutors = defineApiKeyProviderExecutors("formstack", formstackActionHandlers, {
+const service = "formstack";
+
+export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, formstackActionHandlers, {
   skipDnsValidation: true,
+});
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: formstackApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
 });
 
 export const credentialValidators: CredentialValidators = {

@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
 import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
@@ -36,7 +36,6 @@ export function validateUserlistCredential(): CredentialValidationResult {
       accountId: "userlist",
       displayName: "Userlist Push API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: userlistPushApiBaseUrl,
       validation: "No non-mutating Push API validation endpoint is documented by Userlist.",
@@ -62,8 +61,8 @@ async function postAccepted(
 
 function userlistHeaders(apiKey: string): Record<string, string> {
   return {
-    accept: "application/json",
-    authorization: `Push ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Push ${apiKey}`,
     "content-type": "application/json; charset=utf-8",
     "user-agent": providerUserAgent,
   };

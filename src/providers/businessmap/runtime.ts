@@ -1,11 +1,18 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
-import { createProviderTimeout, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import {
+  createProviderTimeout,
+  isAbortLikeError,
+  ProviderRequestError,
+  providerUserAgent,
+  providerInputError,
+  defaultProviderRequestTimeoutMs,
+} from "../provider-runtime.ts";
 
-const businessmapDefaultRequestTimeoutMs = 30_000;
 const businessmapValidationPath = "/workspaces";
 
 type BusinessmapMethod = "GET" | "POST" | "PATCH" | "DELETE";
@@ -210,7 +217,6 @@ export async function validateBusinessmapCredential(
       accountId: `businessmap:${normalizedAccount.accountHost}`,
       displayName: `Businessmap ${normalizedAccount.accountHost}`,
     },
-    grantedScopes: [],
     metadata: {
       accountHost: normalizedAccount.accountHost,
       apiBaseUrl: normalizedAccount.apiBaseUrl,
@@ -249,14 +255,14 @@ export function normalizeBusinessmapAccountUrl(value: unknown): BusinessmapAccou
 }
 
 async function requestBusinessmapJson(input: BusinessmapRequestInput): Promise<unknown> {
-  const timeout = createProviderTimeout(input.signal, businessmapDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
 
   try {
     const response = await input.fetcher(buildBusinessmapUrl(input), {
       method: input.method ?? "GET",
       headers: {
-        apikey: input.apiKey,
-        accept: "application/json",
+        "apikey": input.apiKey,
+        "accept": "application/json",
         "user-agent": providerUserAgent,
         ...(input.body === undefined ? {} : { "content-type": "application/json" }),
       },
@@ -278,7 +284,7 @@ async function requestBusinessmapJson(input: BusinessmapRequestInput): Promise<u
     if (timeout.didTimeout() || isAbortLikeError(error)) {
       throw new ProviderRequestError(
         504,
-        `Businessmap request timed out after ${Math.max(1, Math.ceil(businessmapDefaultRequestTimeoutMs / 1000))} seconds`,
+        `Businessmap request timed out after ${Math.max(1, Math.ceil(defaultProviderRequestTimeoutMs / 1000))} seconds`,
       );
     }
 
@@ -332,11 +338,11 @@ function createBusinessmapError(
   const message = extractBusinessmapErrorMessage(payload) ?? `Businessmap request failed with ${response.status}`;
 
   if (mode === "validate" && (response.status === 401 || response.status === 403)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   if (notFoundAsInvalidInput && response.status === 404) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   return new ProviderRequestError(response.status, message);
@@ -429,7 +435,7 @@ function omitKeys(input: Record<string, unknown>, keys: string[]): Record<string
 
 function requireNonEmptyObject(input: Record<string, unknown>, message: string): void {
   if (Object.keys(input).length === 0) {
-    throw new ProviderRequestError(400, message);
+    throw providerInputError(message);
   }
 }
 
@@ -439,8 +445,4 @@ function requirePositiveInteger(value: unknown, fieldName: string): number {
     throw new ProviderRequestError(400, `${fieldName} must be a positive integer`);
   }
   return parsed;
-}
-
-function isAbortLikeError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
 }

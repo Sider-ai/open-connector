@@ -1,12 +1,12 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalBoolean, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
   providerUserAgent,
   ProviderRequestError,
   readProviderTextBody,
@@ -14,7 +14,6 @@ import {
 
 const service = "chargeblast";
 const chargeblastApiBaseUrl = "https://api.chargeblast.com";
-const defaultRequestTimeoutMs = 30_000;
 const maxNonJsonErrorMessageLength = 300;
 const chargeblastMaxResponseBytes = 10 * 1024 * 1024;
 
@@ -194,7 +193,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "chargeblast",
         displayName: readOptionalTrimmedString(firstMerchant?.name) ?? "Chargeblast API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: chargeblastApiBaseUrl,
         validationEndpoint: "/api/v2/merchants",
@@ -211,13 +209,13 @@ async function requestChargeblastJson(
   context: ApiKeyProviderContext,
   phase: ChargeblastPhase,
 ) {
-  const timeoutHandle = createProviderTimeout(context.signal, defaultRequestTimeoutMs);
+  const timeoutHandle = createProviderTimeout(context.signal);
 
   try {
     const response = await context.fetcher(new URL(path, chargeblastApiBaseUrl), {
       ...init,
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
         "user-agent": providerUserAgent,
         "x-api-key": context.apiKey,

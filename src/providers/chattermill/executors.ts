@@ -1,11 +1,17 @@
 import type { QueryValue } from "../../core/request.ts";
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { compactJson, queryParams } from "../../core/request.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "chattermill";
 const apiBaseUrl = "https://api.chattermill.com/v1";
@@ -120,6 +126,14 @@ export const chattermillActionHandlers: ProviderActionHandlers<"chattermill", Ha
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, chattermillActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: apiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }): Promise<CredentialValidationResult> {
     const context = { apiKey: input.apiKey, fetcher, signal };
@@ -131,7 +145,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: optionalString(first?.key) ?? "api_key",
         displayName: optionalString(first?.name) ?? "Chattermill API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl,
         validationEndpoint: "/projects",
@@ -218,7 +231,7 @@ function getJson(
 
 async function requestJson(
   path: string,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   options: { method?: "GET" | "POST" | "PUT" | "DELETE"; query?: Record<string, unknown>; body?: unknown } = {},
 ): Promise<unknown> {
   const url = new URL(`${apiBaseUrl}${path}`);
@@ -228,8 +241,8 @@ async function requestJson(
   const response = await context.fetcher(url, {
     method: options.method ?? "GET",
     headers: {
-      accept: "application/json",
-      authorization: `Bearer ${context.apiKey}`,
+      "accept": "application/json",
+      "authorization": `Bearer ${context.apiKey}`,
       "user-agent": providerUserAgent,
       ...(options.body !== undefined ? { "content-type": "application/json" } : {}),
     },

@@ -1,7 +1,8 @@
-import type { ApiKeyProviderContext, ProviderActionHandlers, ProviderActionSources } from "../provider-runtime.ts";
+import type { ApiKeyProviderContext, ProviderActionHandlers, ProviderActionSources } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { mapProviderActionSources, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { mapProviderActionSources } from "../provider-executors.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 export const samcartApiBaseUrl = "https://api.samcart.com/v1";
 interface RequestShape {
@@ -40,13 +41,11 @@ export const samcartActionHandlers: ProviderActionHandlers<
 
 export async function validateSamcartApiKey(context: ApiKeyProviderContext): Promise<{
   profile: { accountId: string; displayName: string };
-  grantedScopes: string[];
   metadata: Record<string, unknown>;
 }> {
   readList(await request("/products", { limit: 1 }, context, "validate"), "products");
   return {
     profile: { accountId: "api_key", displayName: "SamCart API Token" },
-    grantedScopes: [],
     metadata: { apiBaseUrl: samcartApiBaseUrl, validationEndpoint: "/products" },
   };
 }
@@ -60,7 +59,7 @@ async function request(
   const url = new URL(path.startsWith("/") ? path.slice(1) : path, `${samcartApiBaseUrl}/`);
   for (const [key, value] of Object.entries(compactObject(query))) url.searchParams.set(key, String(value));
   const response = await context.fetcher(url, {
-    headers: { accept: "application/json", "sc-api": context.apiKey, "user-agent": providerUserAgent },
+    headers: { "accept": "application/json", "sc-api": context.apiKey, "user-agent": providerUserAgent },
     signal: context.signal,
   });
   const text = await response.text();

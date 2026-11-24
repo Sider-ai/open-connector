@@ -1,10 +1,11 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { Buffer } from "node:buffer";
 import { optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { providerUserAgent, ProviderRequestError, providerInputError } from "../provider-runtime.ts";
 
 const gorgiasValidationPath = "/api/account";
 
@@ -179,7 +180,6 @@ export async function validateGorgiasCredential(
       accountId: `gorgias:${domain}`,
       displayName: `Gorgias ${accountDomain || domain}`,
     },
-    grantedScopes: [],
     metadata: {
       domain,
       email,
@@ -197,8 +197,8 @@ async function requestGorgiasJson(input: GorgiasRequestInput): Promise<unknown> 
     response = await input.fetcher(buildGorgiasUrl(input.baseUrl, input.path, input.query), {
       method: "GET",
       headers: {
-        authorization: buildGorgiasAuthorizationHeader(input.email, input.apiKey),
-        accept: "application/json",
+        "authorization": buildGorgiasAuthorizationHeader(input.email, input.apiKey),
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
       signal: input.signal,
@@ -259,16 +259,16 @@ function createGorgiasError(
   const message = extractGorgiasErrorMessage(payload) ?? `Gorgias request failed with ${response.status}`;
 
   if (phase === "validate" && (response.status === 401 || response.status === 403)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (response.status === 401 || response.status === 403) {
     return new ProviderRequestError(response.status, message);
   }
   if (response.status === 404 && notFoundAsInvalidInput) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (response.status === 400 || response.status === 422) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (response.status === 429) {
     return new ProviderRequestError(429, message);

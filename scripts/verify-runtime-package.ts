@@ -57,6 +57,7 @@ function assertPackContents(pack: PackResult): void {
   const paths = new Set(pack.files.map((file) => file.path));
   const requiredPaths = [
     "LICENSE.txt",
+    "LICENSE-APACHE-2.0.txt",
     "NOTICE.md",
     "dist/catalog-store.js",
     "dist/catalog-store.d.ts",
@@ -125,6 +126,7 @@ function formatBytes(bytes: number): string {
 
 function smokeTestProgram(): string {
   return String.raw`
+import { ActionPolicyService } from "@liushuangls/open-connector-runtime/core/action-policy";
 import { loadCatalog } from "@liushuangls/open-connector-runtime/catalog-store";
 import { ConnectionService } from "@liushuangls/open-connector-runtime/connection-service";
 import { OAuthAuthorizationService } from "@liushuangls/open-connector-runtime/oauth/oauth-authorization-service";
@@ -154,6 +156,7 @@ const runner = new ActionRunner({ catalog, providerLoader, connections, runs: ru
 const result = await runner.run({
   actionId: "quickchart.build_qr_url",
   caller: "http",
+  policy: new ActionPolicyService().createSnapshot(),
   input: { text: "sider-runtime-smoke-test" },
 });
 

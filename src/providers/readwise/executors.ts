@@ -1,14 +1,23 @@
-import type { CredentialValidationResult, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidationResult, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
-import { optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { looseArray, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { compactJson, queryParams } from "../../core/request.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent, requiredInputString } from "../provider-runtime.ts";
 
 const service = "readwise";
 const readwiseApiBaseUrl = "https://readwise.io/api";
 const validationPath = "/v2/auth/";
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: readwiseApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Token " },
+  skipDnsValidation: true,
+  defaultHeaders: { "accept": "application/json", "content-type": "application/json" },
+});
 
 type ReadwiseActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
@@ -21,7 +30,7 @@ export const readwiseActionHandlers: ProviderActionHandlers<"readwise", Readwise
       context,
       mode: "execute",
     });
-    const books = readArray(payload);
+    const books = looseArray(payload);
     return {
       books: books.map(normalizeBook),
       raw: books,
@@ -41,7 +50,7 @@ export const readwiseActionHandlers: ProviderActionHandlers<"readwise", Readwise
     return {
       count: optionalInteger(record.count) ?? null,
       nextPageCursor: optionalString(record.nextPageCursor) ?? null,
-      books: readArray(record.results).map(normalizeBook),
+      books: looseArray(record.results).map(normalizeBook),
       raw: record,
     };
   },
@@ -63,7 +72,7 @@ export const readwiseActionHandlers: ProviderActionHandlers<"readwise", Readwise
       count: optionalInteger(record.count) ?? null,
       next: optionalString(record.next) ?? null,
       previous: optionalString(record.previous) ?? null,
-      books: readArray(record.results).map(normalizeBook),
+      books: looseArray(record.results).map(normalizeBook),
       raw: record,
     };
   },
@@ -84,7 +93,7 @@ export const readwiseActionHandlers: ProviderActionHandlers<"readwise", Readwise
     return {
       count: optionalInteger(record.count) ?? null,
       nextPageCursor: optionalString(record.nextPageCursor) ?? null,
-      documents: readArray(record.results).map(normalizeDocument),
+      documents: looseArray(record.results).map(normalizeDocument),
       raw: record,
     };
   },
@@ -150,9 +159,7 @@ export async function validateReadwiseCredential(
     profile: {
       accountId: "readwise-api-key",
       displayName: "Readwise API Key",
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: readwiseApiBaseUrl,
       validationEndpoint: validationPath,
@@ -171,7 +178,7 @@ export const credentialValidators = {
 
 async function requestReadwiseJson(input: {
   path: string;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   mode: "validate" | "execute";
   method?: "GET" | "POST" | "PATCH";
   query?: Record<string, string>;
@@ -187,8 +194,8 @@ async function requestReadwiseJson(input: {
     response = await input.context.fetcher(url, {
       method: input.method ?? "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Token ${input.context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Token ${input.context.apiKey}`,
         ...(input.body !== undefined ? { "content-type": "application/json" } : {}),
         "user-agent": providerUserAgent,
       },
@@ -276,7 +283,7 @@ function normalizeBook(value: unknown): Record<string, unknown> {
     source: optionalString(record.source) ?? null,
     numHighlights: optionalInteger(record.num_highlights) ?? optionalInteger(record.numHighlights) ?? null,
     updatedAt: optionalString(record.updated) ?? optionalString(record.updated_at) ?? null,
-    highlights: readArray(record.highlights).map(normalizeHighlight),
+    highlights: looseArray(record.highlights).map(normalizeHighlight),
     raw: record,
   };
 }
@@ -313,16 +320,8 @@ function requireRecord(value: unknown, message: string): Record<string, unknown>
   return record;
 }
 
-function readArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
 function readStringArray(value: unknown): string[] {
   if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
   const record = optionalRecord(value);
   return record ? Object.keys(record) : [];
-}
-
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }

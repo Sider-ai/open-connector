@@ -5,29 +5,25 @@ import type {
   ProviderProxyExecutor,
   ProxyExecutionResult,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
+import { compactObject, objectArray, optionalRecord, optionalString, requiredRecord } from "../../core/cast.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
 import {
-  compactObject,
-  objectArray,
-  optionalRecord,
-  optionalString,
-  requiredRecord,
-  requiredString,
-} from "../../core/cast.ts";
-import {
-  createProviderFetch,
   createProviderProxyUrl,
-  defineProviderExecutors,
   normalizeProviderProxyHeaders,
-  ProviderRequestError,
-  providerUserAgent,
   readProviderProxyErrorMessage,
   readProviderProxyResponse,
   toProviderProxyError,
+} from "../provider-proxy.ts";
+import {
+  createProviderFetch,
+  ProviderRequestError,
+  providerUserAgent,
+  requiredInputString,
 } from "../provider-runtime.ts";
-import { figmaPersonalAccessTokenScopes } from "./scopes.ts";
 
 const service = "figma";
 const figmaApiBaseUrl = "https://api.figma.com";
@@ -216,7 +212,6 @@ export const credentialValidators: CredentialValidators = {
 
     return {
       profile: normalizeFigmaCurrentAccount(user),
-      grantedScopes: [...figmaPersonalAccessTokenScopes],
       metadata: {
         apiBaseUrl: figmaApiBaseUrl,
         validationEndpoint: "/v1/me",
@@ -284,7 +279,7 @@ async function getCurrentUser(context: FigmaActionContext): Promise<unknown> {
 async function getFileMetadata(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
   return {
     metadata: await figmaGetJson({
-      path: `/v1/files/${encodeURIComponent(readInputString(input.fileKey, "fileKey"))}/meta`,
+      path: `/v1/files/${encodeURIComponent(requiredInputString(input.fileKey, "fileKey"))}/meta`,
       auth: context.auth,
       fetcher: context.fetcher,
       signal: context.signal,
@@ -296,7 +291,7 @@ async function getFileMetadata(input: Record<string, unknown>, context: FigmaAct
 async function getFile(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
   return {
     file: await figmaGetJson({
-      path: `/v1/files/${encodeURIComponent(readInputString(input.fileKey, "fileKey"))}`,
+      path: `/v1/files/${encodeURIComponent(requiredInputString(input.fileKey, "fileKey"))}`,
       auth: context.auth,
       fetcher: context.fetcher,
       signal: context.signal,
@@ -308,7 +303,7 @@ async function getFile(input: Record<string, unknown>, context: FigmaActionConte
 
 async function getFileNodes(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
   const raw = await figmaGetJson({
-    path: `/v1/files/${encodeURIComponent(readInputString(input.fileKey, "fileKey"))}/nodes`,
+    path: `/v1/files/${encodeURIComponent(requiredInputString(input.fileKey, "fileKey"))}/nodes`,
     auth: context.auth,
     fetcher: context.fetcher,
     signal: context.signal,
@@ -328,7 +323,7 @@ async function getFileNodes(input: Record<string, unknown>, context: FigmaAction
 
 async function renderImages(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
   const raw = await figmaGetJson({
-    path: `/v1/images/${encodeURIComponent(readInputString(input.fileKey, "fileKey"))}`,
+    path: `/v1/images/${encodeURIComponent(requiredInputString(input.fileKey, "fileKey"))}`,
     auth: context.auth,
     fetcher: context.fetcher,
     signal: context.signal,
@@ -354,7 +349,7 @@ async function renderImages(input: Record<string, unknown>, context: FigmaAction
 
 async function getImageFills(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
   const raw = await figmaGetJson({
-    path: `/v1/files/${encodeURIComponent(readInputString(input.fileKey, "fileKey"))}/images`,
+    path: `/v1/files/${encodeURIComponent(requiredInputString(input.fileKey, "fileKey"))}/images`,
     auth: context.auth,
     fetcher: context.fetcher,
     signal: context.signal,
@@ -371,7 +366,7 @@ async function getImageFills(input: Record<string, unknown>, context: FigmaActio
 
 async function listFileVersions(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
   const raw = await figmaGetJson({
-    path: `/v1/files/${encodeURIComponent(readInputString(input.fileKey, "fileKey"))}/versions`,
+    path: `/v1/files/${encodeURIComponent(requiredInputString(input.fileKey, "fileKey"))}/versions`,
     auth: context.auth,
     fetcher: context.fetcher,
     signal: context.signal,
@@ -393,7 +388,7 @@ async function listFileVersions(input: Record<string, unknown>, context: FigmaAc
 
 async function listComments(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
   const raw = await figmaGetJson({
-    path: `/v1/files/${encodeURIComponent(readInputString(input.fileKey, "fileKey"))}/comments`,
+    path: `/v1/files/${encodeURIComponent(requiredInputString(input.fileKey, "fileKey"))}/comments`,
     auth: context.auth,
     fetcher: context.fetcher,
     signal: context.signal,
@@ -410,13 +405,13 @@ async function listComments(input: Record<string, unknown>, context: FigmaAction
 async function postComment(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
   const raw = await figmaPostJson(
     {
-      path: `/v1/files/${encodeURIComponent(readInputString(input.fileKey, "fileKey"))}/comments`,
+      path: `/v1/files/${encodeURIComponent(requiredInputString(input.fileKey, "fileKey"))}/comments`,
       auth: context.auth,
       fetcher: context.fetcher,
       signal: context.signal,
     },
     compactObject({
-      message: readInputString(input.message, "message"),
+      message: requiredInputString(input.message, "message"),
       client_meta: optionalRecord(input.clientMeta),
       comment_id: optionalString(input.commentId),
     }),
@@ -429,7 +424,7 @@ async function postComment(input: Record<string, unknown>, context: FigmaActionC
 
 async function deleteComment(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
   await figmaDelete({
-    path: `/v1/files/${encodeURIComponent(readInputString(input.fileKey, "fileKey"))}/comments/${encodeURIComponent(readInputString(input.commentId, "commentId"))}`,
+    path: `/v1/files/${encodeURIComponent(requiredInputString(input.fileKey, "fileKey"))}/comments/${encodeURIComponent(requiredInputString(input.commentId, "commentId"))}`,
     auth: context.auth,
     fetcher: context.fetcher,
     signal: context.signal,
@@ -442,7 +437,7 @@ async function deleteComment(input: Record<string, unknown>, context: FigmaActio
 
 async function listCommentReactions(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
   const raw = await figmaGetJson({
-    path: `/v1/files/${encodeURIComponent(readInputString(input.fileKey, "fileKey"))}/comments/${encodeURIComponent(readInputString(input.commentId, "commentId"))}/reactions`,
+    path: `/v1/files/${encodeURIComponent(requiredInputString(input.fileKey, "fileKey"))}/comments/${encodeURIComponent(requiredInputString(input.commentId, "commentId"))}/reactions`,
     auth: context.auth,
     fetcher: context.fetcher,
     signal: context.signal,
@@ -463,13 +458,13 @@ async function listCommentReactions(input: Record<string, unknown>, context: Fig
 async function postCommentReaction(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
   await figmaPostJson(
     {
-      path: `/v1/files/${encodeURIComponent(readInputString(input.fileKey, "fileKey"))}/comments/${encodeURIComponent(readInputString(input.commentId, "commentId"))}/reactions`,
+      path: `/v1/files/${encodeURIComponent(requiredInputString(input.fileKey, "fileKey"))}/comments/${encodeURIComponent(requiredInputString(input.commentId, "commentId"))}/reactions`,
       auth: context.auth,
       fetcher: context.fetcher,
       signal: context.signal,
     },
     {
-      emoji: readInputString(input.emoji, "emoji"),
+      emoji: requiredInputString(input.emoji, "emoji"),
     },
   );
 
@@ -480,12 +475,12 @@ async function postCommentReaction(input: Record<string, unknown>, context: Figm
 
 async function deleteCommentReaction(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
   await figmaDelete({
-    path: `/v1/files/${encodeURIComponent(readInputString(input.fileKey, "fileKey"))}/comments/${encodeURIComponent(readInputString(input.commentId, "commentId"))}/reactions`,
+    path: `/v1/files/${encodeURIComponent(requiredInputString(input.fileKey, "fileKey"))}/comments/${encodeURIComponent(requiredInputString(input.commentId, "commentId"))}/reactions`,
     auth: context.auth,
     fetcher: context.fetcher,
     signal: context.signal,
     query: {
-      emoji: readInputString(input.emoji, "emoji"),
+      emoji: requiredInputString(input.emoji, "emoji"),
     },
   });
 
@@ -496,7 +491,7 @@ async function deleteCommentReaction(input: Record<string, unknown>, context: Fi
 
 async function listTeamProjects(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
   const raw = await figmaGetJson({
-    path: `/v1/teams/${encodeURIComponent(readInputString(input.teamId, "teamId"))}/projects`,
+    path: `/v1/teams/${encodeURIComponent(requiredInputString(input.teamId, "teamId"))}/projects`,
     auth: context.auth,
     fetcher: context.fetcher,
     signal: context.signal,
@@ -513,7 +508,7 @@ async function listTeamProjects(input: Record<string, unknown>, context: FigmaAc
 async function getProjectMetadata(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
   return {
     metadata: await figmaGetJson({
-      path: `/v1/projects/${encodeURIComponent(readInputString(input.projectId, "projectId"))}/meta`,
+      path: `/v1/projects/${encodeURIComponent(requiredInputString(input.projectId, "projectId"))}/meta`,
       auth: context.auth,
       fetcher: context.fetcher,
       signal: context.signal,
@@ -524,7 +519,7 @@ async function getProjectMetadata(input: Record<string, unknown>, context: Figma
 
 async function listProjectFiles(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
   const raw = await figmaGetJson({
-    path: `/v1/projects/${encodeURIComponent(readInputString(input.projectId, "projectId"))}/files`,
+    path: `/v1/projects/${encodeURIComponent(requiredInputString(input.projectId, "projectId"))}/files`,
     auth: context.auth,
     fetcher: context.fetcher,
     signal: context.signal,
@@ -543,7 +538,7 @@ async function listProjectFiles(input: Record<string, unknown>, context: FigmaAc
 
 async function listFileComponents(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
   return listLibraryItems(
-    `/v1/files/${encodeURIComponent(readInputString(input.fileKey, "fileKey"))}/components`,
+    `/v1/files/${encodeURIComponent(requiredInputString(input.fileKey, "fileKey"))}/components`,
     "components",
     context,
   );
@@ -551,7 +546,7 @@ async function listFileComponents(input: Record<string, unknown>, context: Figma
 
 async function listFileComponentSets(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
   return listLibraryItems(
-    `/v1/files/${encodeURIComponent(readInputString(input.fileKey, "fileKey"))}/component_sets`,
+    `/v1/files/${encodeURIComponent(requiredInputString(input.fileKey, "fileKey"))}/component_sets`,
     "component_sets",
     context,
   );
@@ -559,27 +554,27 @@ async function listFileComponentSets(input: Record<string, unknown>, context: Fi
 
 async function listFileStyles(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
   return listLibraryItems(
-    `/v1/files/${encodeURIComponent(readInputString(input.fileKey, "fileKey"))}/styles`,
+    `/v1/files/${encodeURIComponent(requiredInputString(input.fileKey, "fileKey"))}/styles`,
     "styles",
     context,
   );
 }
 
 async function getComponent(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
-  return getLibraryItem(`/v1/components/${encodeURIComponent(readInputString(input.key, "key"))}`, context);
+  return getLibraryItem(`/v1/components/${encodeURIComponent(requiredInputString(input.key, "key"))}`, context);
 }
 
 async function getComponentSet(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
-  return getLibraryItem(`/v1/component_sets/${encodeURIComponent(readInputString(input.key, "key"))}`, context);
+  return getLibraryItem(`/v1/component_sets/${encodeURIComponent(requiredInputString(input.key, "key"))}`, context);
 }
 
 async function getStyle(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
-  return getLibraryItem(`/v1/styles/${encodeURIComponent(readInputString(input.key, "key"))}`, context);
+  return getLibraryItem(`/v1/styles/${encodeURIComponent(requiredInputString(input.key, "key"))}`, context);
 }
 
 async function getDevResources(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
   const raw = await figmaGetJson({
-    path: `/v1/files/${encodeURIComponent(readInputString(input.fileKey, "fileKey"))}/dev_resources`,
+    path: `/v1/files/${encodeURIComponent(requiredInputString(input.fileKey, "fileKey"))}/dev_resources`,
     auth: context.auth,
     fetcher: context.fetcher,
     signal: context.signal,
@@ -628,7 +623,7 @@ async function updateDevResources(input: Record<string, unknown>, context: Figma
 
 async function deleteDevResource(input: Record<string, unknown>, context: FigmaActionContext): Promise<unknown> {
   await figmaDelete({
-    path: `/v1/files/${encodeURIComponent(readInputString(input.fileKey, "fileKey"))}/dev_resources/${encodeURIComponent(readInputString(input.devResourceId, "devResourceId"))}`,
+    path: `/v1/files/${encodeURIComponent(requiredInputString(input.fileKey, "fileKey"))}/dev_resources/${encodeURIComponent(requiredInputString(input.devResourceId, "devResourceId"))}`,
     auth: context.auth,
     fetcher: context.fetcher,
     signal: context.signal,
@@ -747,7 +742,7 @@ async function figmaRequest(input: FigmaRequestOptions): Promise<FigmaResponse> 
 
 function createFigmaHeaders(auth: FigmaAuth, hasJsonBody: boolean): Headers {
   const headers = new Headers({
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
   });
   if (auth.type === "api_key") {
@@ -787,13 +782,10 @@ function createFigmaError(
   if (phase === "validate" && (status === 401 || status === 403)) {
     return new ProviderRequestError(400, message, payload);
   }
-  if (phase === "execute" && (status === 401 || status === 403)) {
-    return new ProviderRequestError(401, message, payload);
-  }
   if ([400, 404, 422].includes(status)) {
     return new ProviderRequestError(400, message, payload);
   }
-  return new ProviderRequestError(status || 502, message, payload);
+  return new ProviderRequestError(status || 502, message, payload, "provider_error");
 }
 
 function extractFigmaErrorMessage(payload: unknown): string | undefined {
@@ -847,10 +839,10 @@ function buildFileQuery(input: Record<string, unknown>): Record<string, unknown>
 function mapDevResourceCreates(value: unknown): Array<Record<string, string>> {
   return objectArray(value, "devResources", (message) => new ProviderRequestError(400, message)).map((resource) => {
     return {
-      name: readInputString(resource.name, "name"),
-      url: readInputString(resource.url, "url"),
-      file_key: readInputString(resource.fileKey, "fileKey"),
-      node_id: readInputString(resource.nodeId, "nodeId"),
+      name: requiredInputString(resource.name, "name"),
+      url: requiredInputString(resource.url, "url"),
+      file_key: requiredInputString(resource.fileKey, "fileKey"),
+      node_id: requiredInputString(resource.nodeId, "nodeId"),
     };
   });
 }
@@ -858,7 +850,7 @@ function mapDevResourceCreates(value: unknown): Array<Record<string, string>> {
 function mapDevResourceUpdates(value: unknown): Array<Partial<Record<string, string>>> {
   return objectArray(value, "devResources", (message) => new ProviderRequestError(400, message)).map((resource) => {
     return compactObject({
-      id: readInputString(resource.id, "id"),
+      id: requiredInputString(resource.id, "id"),
       name: optionalString(resource.name),
       url: optionalString(resource.url),
     });
@@ -900,10 +892,6 @@ function joinOptionalStringArray(value: unknown): string | undefined {
     .filter(Boolean)
     .join(",");
   return joined || undefined;
-}
-
-function readInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function readProviderObject(value: unknown, message: string): Record<string, unknown> {

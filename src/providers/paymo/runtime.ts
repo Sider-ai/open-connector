@@ -1,6 +1,6 @@
 import type { CredentialValidationResult, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
 import {
@@ -11,7 +11,13 @@ import {
   requiredRecord,
   requiredString,
 } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import {
+  providerInputError,
+  ProviderRequestError,
+  providerResponseError,
+  providerUserAgent,
+} from "../provider-runtime.ts";
 
 export const paymoApiBaseUrl = "https://app.paymoapp.com/api";
 
@@ -200,14 +206,13 @@ export async function validatePaymoCredential(
     fetcher,
     signal,
   });
-  const user = requiredRecord(payload.user, "user", providerOutputError);
+  const user = requiredRecord(payload.user, "user", providerResponseError);
 
   return {
     profile: {
       accountId:
         readNonEmptyString(user.id) ?? readNonEmptyString(user.email) ?? readNonEmptyString(user.name) ?? "paymo",
       displayName: readNonEmptyString(user.name) ?? readNonEmptyString(user.email) ?? "Paymo API Key",
-      grantedScopes: [],
     },
     metadata: compactObject({
       userId: readNonEmptyString(user.id),
@@ -252,8 +257,8 @@ async function requestPaymoJson(input: PaymoRequestInput) {
     response = await input.fetcher(url, {
       method: input.method ?? "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Basic ${Buffer.from(`${input.apiKey}:x`).toString("base64")}`,
+        "accept": "application/json",
+        "authorization": `Basic ${Buffer.from(`${input.apiKey}:x`).toString("base64")}`,
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },
@@ -362,12 +367,4 @@ function readNonEmptyString(value: unknown) {
     return String(value);
   }
   return optionalString(value);
-}
-
-function providerInputError(message: string) {
-  return new ProviderRequestError(400, message);
-}
-
-function providerOutputError(message: string) {
-  return new ProviderRequestError(502, message);
 }

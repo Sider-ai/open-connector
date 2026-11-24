@@ -1,5 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers, ProviderFetch } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { Buffer } from "node:buffer";
 import {
@@ -18,7 +19,6 @@ import {
 } from "../provider-runtime.ts";
 
 export const acuitySchedulingApiBaseUrl = "https://acuityscheduling.com/api/v1";
-const acuitySchedulingRequestTimeoutMs = 30_000;
 
 type AcuitySchedulingCredential = {
   userId: string;
@@ -84,11 +84,11 @@ export const acuitySchedulingActionHandlers: ProviderActionHandlers<
     const payload = await requestAcuityScheduling({
       path: "/availability/dates",
       query: {
-        month: optionalString(input.month),
-        appointmentTypeID: optionalInteger(input.appointmentTypeId),
-        calendarID: optionalInteger(input.calendarId),
+        "month": optionalString(input.month),
+        "appointmentTypeID": optionalInteger(input.appointmentTypeId),
+        "calendarID": optionalInteger(input.calendarId),
         "addonIDs[]": readNumberArray(input.addonIds),
-        timezone: optionalString(input.timezone),
+        "timezone": optionalString(input.timezone),
       },
       ...context,
       phase: "execute",
@@ -103,11 +103,11 @@ export const acuitySchedulingActionHandlers: ProviderActionHandlers<
     const payload = await requestAcuityScheduling({
       path: "/availability/times",
       query: {
-        date: optionalString(input.date),
-        appointmentTypeID: optionalInteger(input.appointmentTypeId),
-        calendarID: optionalInteger(input.calendarId),
+        "date": optionalString(input.date),
+        "appointmentTypeID": optionalInteger(input.appointmentTypeId),
+        "calendarID": optionalInteger(input.calendarId),
         "addonIDs[]": readNumberArray(input.addonIds),
-        timezone: optionalString(input.timezone),
+        "timezone": optionalString(input.timezone),
         "ignoreAppointmentIDs[]": readNumberArray(input.ignoreAppointmentIds),
       },
       ...context,
@@ -237,7 +237,6 @@ export async function validateAcuitySchedulingCredential(
       accountId: `acuity_scheduling:${account.id}`,
       displayName: account.name ?? account.email ?? `Acuity Scheduling ${credential.userId}`,
     },
-    grantedScopes: [],
     metadata: {
       userId: credential.userId,
       accountId: account.id,
@@ -277,10 +276,10 @@ async function requestAcuityScheduling(input: {
   query?: Record<string, AcuitySchedulingQueryValue>;
   body?: unknown;
 }) {
-  const timeoutHandle = createProviderTimeout(input.signal, acuitySchedulingRequestTimeoutMs);
+  const timeoutHandle = createProviderTimeout(input.signal);
   const headers = new Headers({
-    accept: "application/json",
-    authorization: `Basic ${Buffer.from(`${input.credential.userId}:${input.credential.apiKey}`).toString("base64")}`,
+    "accept": "application/json",
+    "authorization": `Basic ${Buffer.from(`${input.credential.userId}:${input.credential.apiKey}`).toString("base64")}`,
     "user-agent": providerUserAgent,
   });
   if (input.body !== undefined) {

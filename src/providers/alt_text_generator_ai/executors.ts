@@ -1,17 +1,27 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ApiKeyProviderContext, ProviderActionHandlers, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ApiKeyProviderContext, ProviderActionHandlers, ProviderRuntimeHandler } from "../provider-executors.ts";
 
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "alt_text_generator_ai";
 const baseUrl = "https://alttextgeneratorai.com";
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl,
+  auth: { type: "api_key_json_body", name: "wpkey" },
+  skipDnsValidation: true,
+  defaultHeaders: { "accept": "text/plain", "content-type": "application/json" },
+});
 
 const handlers: ProviderActionHandlers<"alt_text_generator_ai", ProviderRuntimeHandler<ApiKeyProviderContext>> = {
   async generate_alt_text(input, context: ApiKeyProviderContext) {
     const imageUrl = typeof input.imageUrl === "string" ? input.imageUrl : "";
     const response = await context.fetcher(`${baseUrl}/api/wp`, {
       method: "POST",
-      headers: { accept: "text/plain", "content-type": "application/json", "user-agent": providerUserAgent },
+      headers: { "accept": "text/plain", "content-type": "application/json", "user-agent": providerUserAgent },
       body: JSON.stringify({ image: imageUrl, wpkey: context.apiKey }),
       signal: context.signal,
     });
@@ -40,7 +50,6 @@ export const credentialValidators: CredentialValidators = {
     if (!input.apiKey.trim()) throw new ProviderRequestError(400, "Alt Text Generator AI API key is required");
     return {
       profile: { displayName: "Alt Text Generator AI API Key" },
-      grantedScopes: [],
       metadata: { apiBaseUrl: baseUrl, validationMode: "local_non_empty_key" },
     };
   },

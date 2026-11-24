@@ -1,15 +1,12 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalBoolean, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
 import { encodePathSegment } from "../../core/request.ts";
-import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
-  ProviderRequestError,
-  providerUserAgent,
-} from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "devto";
 const devtoApiBaseUrl = "https://dev.to/api";
@@ -74,7 +71,6 @@ export const credentialValidators: CredentialValidators = {
         accountId,
         displayName: username ?? name ?? accountId,
       },
-      grantedScopes: [],
       metadata: {
         username,
         name,
@@ -192,7 +188,7 @@ async function readDevtoResponse(response: Response): Promise<unknown> {
 function devtoHeaders(apiKey: string): Record<string, string> {
   return {
     "api-key": apiKey,
-    accept: "application/vnd.forem.api-v1+json",
+    "accept": "application/vnd.forem.api-v1+json",
     "content-type": "application/json",
     "user-agent": providerUserAgent,
   };

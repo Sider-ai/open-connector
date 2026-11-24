@@ -1,10 +1,17 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
-import { compactObject, optionalRecord, optionalString, requiredRecord, stringArray } from "../../core/cast.ts";
+import {
+  compactObject,
+  optionalBoolean,
+  optionalRecord,
+  optionalString,
+  requiredRecord,
+  stringArray,
+} from "../../core/cast.ts";
 import {
   createProviderTimeout,
   isAbortSignalError,
+  providerInputError,
   providerUserAgent,
   ProviderRequestError,
   readProviderJsonBody,
@@ -46,7 +53,7 @@ export const hasdataActionHandlers: ProviderActionHandlers<"hasdata", HasdataAct
 async function requestHasdataJson(input: {
   path: string;
   init: RequestInit;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
 }): Promise<Record<string, unknown>> {
   input.context.signal?.throwIfAborted();
   const timeout = createProviderTimeout(input.context.signal, hasdataDefaultRequestTimeoutMs);
@@ -55,7 +62,7 @@ async function requestHasdataJson(input: {
     const response = await input.context.fetcher(new URL(input.path, hasdataApiBaseUrl), {
       ...input.init,
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
         "user-agent": providerUserAgent,
         "x-api-key": input.context.apiKey,
@@ -96,15 +103,15 @@ function buildWebScrapeBody(input: Record<string, unknown>): Record<string, unkn
     proxyCountry: optionalString(input.proxyCountry),
     extractRules: readOptionalStringRecord(input.extractRules, "extractRules"),
     aiExtractRules: readOptionalJsonRecord(input.aiExtractRules, "aiExtractRules"),
-    screenshot: readOptionalBoolean(input.screenshot),
-    extractEmails: readOptionalBoolean(input.extractEmails),
-    extractLinks: readOptionalBoolean(input.extractLinks),
+    screenshot: optionalBoolean(input.screenshot),
+    extractEmails: optionalBoolean(input.extractEmails),
+    extractLinks: optionalBoolean(input.extractLinks),
     wait: readOptionalNumber(input.wait),
     waitFor: optionalString(input.waitFor),
-    blockResources: readOptionalBoolean(input.blockResources),
-    blockAds: readOptionalBoolean(input.blockAds),
+    blockResources: optionalBoolean(input.blockResources),
+    blockAds: optionalBoolean(input.blockAds),
     blockUrls: readOptionalStringArray(input.blockUrls, "blockUrls"),
-    jsRendering: readOptionalBoolean(input.jsRendering),
+    jsRendering: optionalBoolean(input.jsRendering),
     jsScenario: readOptionalJsonArray(input.jsScenario, "jsScenario"),
     headers: readOptionalStringRecord(input.headers, "headers"),
   });
@@ -205,10 +212,6 @@ function readRequiredString(value: unknown, fieldName: string): string {
   return value;
 }
 
-function readOptionalBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
-}
-
 function readOptionalNumber(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
 }
@@ -217,7 +220,7 @@ function readOptionalStringArray(value: unknown, fieldName: string): string[] | 
   if (value === undefined) {
     return undefined;
   }
-  return stringArray(value, fieldName, invalidInputError);
+  return stringArray(value, fieldName, providerInputError);
 }
 
 function readOptionalStringRecord(value: unknown, fieldName: string): Record<string, string> | undefined {
@@ -225,7 +228,7 @@ function readOptionalStringRecord(value: unknown, fieldName: string): Record<str
     return undefined;
   }
 
-  const record = requiredRecord(value, fieldName, invalidInputError);
+  const record = requiredRecord(value, fieldName, providerInputError);
   const output: Record<string, string> = {};
   for (const [key, child] of Object.entries(record)) {
     output[key] = String(child);
@@ -252,8 +255,4 @@ function readOptionalJsonArray(value: unknown, fieldName: string): unknown[] | u
     throw new ProviderRequestError(400, `${fieldName} must be an array`);
   }
   return value;
-}
-
-function invalidInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

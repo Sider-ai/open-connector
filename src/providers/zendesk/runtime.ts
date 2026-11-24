@@ -1,6 +1,7 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { Buffer } from "node:buffer";
 import {
@@ -22,7 +23,6 @@ import {
 } from "../provider-runtime.ts";
 
 const zendeskCurrentUserPath = "/api/v2/users/me.json";
-const zendeskRequestTimeoutMs = 30_000;
 
 type ZendeskActionContext =
   | {
@@ -69,14 +69,14 @@ export const zendeskActionHandlers: ProviderActionHandlers<"zendesk", ZendeskAct
       path: "/api/v2/tickets.json",
       phase: "execute",
       query: compactObject({
-        page: optionalInteger(input.page),
-        per_page: optionalInteger(input.perPage),
+        "page": optionalInteger(input.page),
+        "per_page": optionalInteger(input.perPage),
         "page[size]": optionalInteger(input.pageSize),
         "page[after]": optionalString(input.pageAfter),
         "page[before]": optionalString(input.pageBefore),
-        external_id: optionalString(input.externalId),
-        sort_by: optionalString(input.sortBy),
-        sort_order: optionalString(input.sortOrder),
+        "external_id": optionalString(input.externalId),
+        "sort_by": optionalString(input.sortBy),
+        "sort_order": optionalString(input.sortOrder),
       }),
     });
     return { tickets: normalizeZendeskTicketArray(payload.tickets), pagination: normalizeZendeskPagination(payload) };
@@ -149,14 +149,14 @@ export const zendeskActionHandlers: ProviderActionHandlers<"zendesk", ZendeskAct
       path: "/api/v2/users.json",
       phase: "execute",
       query: compactObject({
-        page: optionalInteger(input.page),
-        per_page: optionalInteger(input.perPage),
+        "page": optionalInteger(input.page),
+        "per_page": optionalInteger(input.perPage),
         "page[size]": optionalInteger(input.pageSize),
         "page[after]": optionalString(input.pageAfter),
-        role: optionalString(input.role),
+        "role": optionalString(input.role),
         "role[]": stringifyArrayQuery(input.roleList),
-        external_id: optionalString(input.externalId),
-        permission_set: optionalInteger(input.permissionSet),
+        "external_id": optionalString(input.externalId),
+        "permission_set": optionalInteger(input.permissionSet),
       }),
     });
     return { users: normalizeZendeskUserArray(payload.users), pagination: normalizeZendeskPagination(payload) };
@@ -278,7 +278,7 @@ async function requestZendeskJson<T>(input: {
   phase: "validate" | "execute";
   notFoundAsInvalidInput?: boolean;
 }): Promise<T> {
-  const timeout = createProviderTimeout(input.context.signal, zendeskRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   try {
     const response = await input.context.fetcher(buildZendeskUrl(input.context.baseUrl, input.path, input.query), {
       method: input.method ?? "GET",
@@ -364,11 +364,11 @@ function buildZendeskUrl(
 
 function buildZendeskHeaders(context: ZendeskActionContext, hasJsonBody: boolean): Record<string, string> {
   return compactObject({
-    authorization:
+    "authorization":
       context.authType === "oauth2"
         ? `Bearer ${context.accessToken}`
         : `Basic ${Buffer.from(`${context.email}/token:${context.apiKey}`).toString("base64")}`,
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     "content-type": hasJsonBody ? "application/json" : undefined,
   }) as Record<string, string>;
@@ -456,7 +456,8 @@ function normalizeZendeskPagination(payload: ZendeskListPayload): Record<string,
   return {
     count: nullableInteger(payload.count),
     hasMore:
-      nullableBoolean(meta?.has_more) ?? Boolean(optionalString(payload.next_page) ?? optionalString(links?.next)),
+      optionalBooleanOrNull(meta?.has_more) ??
+      Boolean(optionalString(payload.next_page) ?? optionalString(links?.next)),
     nextPage: nullableString(payload.next_page) ?? nullableString(links?.next),
     previousPage: nullableString(payload.previous_page) ?? nullableString(links?.prev),
     afterCursor: nullableString(meta?.after_cursor),
@@ -514,7 +515,7 @@ function normalizeZendeskComment(value: unknown, fieldName = "comment"): Record<
     body: nullableString(record.body),
     htmlBody: nullableString(record.html_body),
     plainBody: nullableString(record.plain_body),
-    public: nullableBoolean(record.public),
+    public: optionalBooleanOrNull(record.public),
     createdAt: nullableString(record.created_at),
     attachments: Array.isArray(record.attachments)
       ? record.attachments.map((item, index) => normalizeZendeskAttachment(item, `${fieldName}.attachments[${index}]`))
@@ -552,7 +553,7 @@ function normalizeZendeskUser(
     name: nullableString(record.name),
     email: nullableString(record.email),
     role: nullableString(record.role),
-    active: nullableBoolean(record.active),
+    active: optionalBooleanOrNull(record.active),
     organizationId: nullableInteger(record.organization_id),
     externalId: nullableString(record.external_id),
     phone: nullableString(record.phone),
@@ -576,8 +577,8 @@ function normalizeZendeskOrganization(value: unknown, fieldName = "organization"
     createdAt: nullableString(record.created_at),
     updatedAt: nullableString(record.updated_at),
     groupId: nullableInteger(record.group_id),
-    sharedTickets: nullableBoolean(record.shared_tickets),
-    sharedComments: nullableBoolean(record.shared_comments),
+    sharedTickets: optionalBooleanOrNull(record.shared_tickets),
+    sharedComments: optionalBooleanOrNull(record.shared_comments),
     domainNames: readRawStringArray(record.domain_names),
     tags: readRawStringArray(record.tags),
     raw: record,
@@ -633,10 +634,6 @@ function nullableString(value: unknown): string | null {
 
 function nullableInteger(value: unknown): number | null {
   return optionalIntegerOrNull(value);
-}
-
-function nullableBoolean(value: unknown): boolean | null {
-  return optionalBooleanOrNull(value);
 }
 
 function stringifyArrayQuery(value: unknown): string[] | undefined {

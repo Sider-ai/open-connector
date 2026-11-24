@@ -1,13 +1,14 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
-import { optionalNumber, optionalRecord, optionalString, requiredRecord, requiredString } from "../../core/cast.ts";
+import { optionalNumber, optionalString, requiredRecord } from "../../core/cast.ts";
 import {
   createProviderTimeout,
   isAbortLikeError,
   ProviderRequestError,
   providerUserAgent,
+  requiredInputString,
+  requiredResponseRecord,
 } from "../provider-runtime.ts";
 
 interface TushareTableData {
@@ -34,7 +35,6 @@ interface TushareRequestInput {
 type TushareActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 export const tushareApiBaseUrl: string = "https://api.tushare.pro";
-const tushareRequestTimeoutMs = 30_000;
 
 const stockBasicFields = [
   "ts_code",
@@ -280,24 +280,27 @@ export async function validateTushareCredential(
   fetcher: typeof fetch,
   signal?: AbortSignal,
 ): Promise<CredentialValidationResult> {
-  const payload = await tushareRequest(
-    {
-      apiName: "trade_cal",
-      params: { exchange: "", start_date: "20180901", end_date: "20180902" },
-      fields: "exchange,cal_date,is_open",
-    },
-    { apiKey, fetcher, signal },
-  );
-  normalizeTableData(payload.data);
+  try {
+    const payload = await tushareRequest(
+      {
+        apiName: "daily",
+        params: { ts_code: "000001.SZ", trade_date: "20180903" },
+        fields: "ts_code,trade_date",
+      },
+      { apiKey, fetcher, signal },
+    );
+    normalizeTableData(payload.data);
+  } catch (error) {
+    if (!(error instanceof ProviderRequestError) || error.status !== 403) throw error;
+  }
   return {
     profile: {
       accountId: "tushare-token",
       displayName: "Tushare Token",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: tushareApiBaseUrl,
-      validationApiName: "trade_cal",
+      validationApiName: "daily",
       credentialHelpUrl: "https://tushare.pro/document/1?doc_id=39",
     },
   };
@@ -306,7 +309,7 @@ export async function validateTushareCredential(
 async function executeQueryData(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await tushareRequest(
     {
-      apiName: readRequiredTrimmedString(input.apiName, "apiName"),
+      apiName: requiredInputString(input.apiName, "apiName"),
       params: readOptionalObject(input.params, "params"),
       fields: normalizeFieldsInput(input.fields),
     },
@@ -341,15 +344,15 @@ async function executeMappedTableAction(options: MappedTableActionOptions): Prom
 
 async function tushareRequest(
   input: TushareRequestInput,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
-  const timeout = createProviderTimeout(context.signal, tushareRequestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const response = await context.fetcher(tushareApiBaseUrl, {
       method: "POST",
       signal: timeout.signal,
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },
@@ -361,7 +364,7 @@ async function tushareRequest(
       }),
     });
     const payload = await readJsonPayload(response);
-    const envelope = readProviderObject(payload, "payload");
+    const envelope = requiredResponseRecord(payload, "payload");
     if (!response.ok) {
       throw createTushareHttpError(response.status, envelope);
     }
@@ -398,7 +401,8 @@ async function readJsonPayload(response: Response): Promise<unknown> {
 
 function createTushareHttpError(status: number, payload: Record<string, unknown>): ProviderRequestError {
   const message = extractErrorMessage(payload) ?? `Tushare request failed with ${status || 500}`;
-  if (status === 401 || status === 403) return new ProviderRequestError(400, message, payload);
+  if (status === 401) return new ProviderRequestError(400, message, payload);
+  if (status === 403) return new ProviderRequestError(403, message, payload);
   if (status === 429) return new ProviderRequestError(429, message, payload);
   return new ProviderRequestError(status || 502, message, payload);
 }
@@ -406,13 +410,22 @@ function createTushareHttpError(status: number, payload: Record<string, unknown>
 function createTushareApiError(code: number, payload: Record<string, unknown>): ProviderRequestError {
   const message = `Tushare request failed: ${extractErrorMessage(payload) ?? `code ${code}`}`;
   if (code === 40101) return new ProviderRequestError(400, message, payload);
-  if (code === 2002) return new ProviderRequestError(403, message, payload);
-  if (code === 2003 || code === 2004) return new ProviderRequestError(429, message, payload);
+  if (isTusharePermissionError(code, message)) return new ProviderRequestError(403, message, payload);
+  if (code === 2003 || code === 2004 || message.includes("频率超限"))
+    return new ProviderRequestError(429, message, payload);
   return new ProviderRequestError(502, message, payload);
 }
 
+function isTusharePermissionError(code: number, message: string): boolean {
+  return (
+    code === 2002 ||
+    message.includes("没有权限访问该接口") ||
+    (message.includes("没有接口(") && message.includes("访问权限"))
+  );
+}
+
 function normalizeTableData(value: unknown): TushareTableData {
-  const data = readProviderObject(value, "data");
+  const data = requiredResponseRecord(value, "data");
   return {
     fields: normalizeFields(data.fields),
     items: normalizeItems(data.items),
@@ -482,7 +495,7 @@ function normalizeFieldsInput(value: unknown): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value === "string") return value.trim() || undefined;
   if (Array.isArray(value)) {
-    const fields = value.map((item, index) => readRequiredTrimmedString(item, `fields[${index}]`));
+    const fields = value.map((item, index) => requiredInputString(item, `fields[${index}]`));
     return fields.length > 0 ? fields.join(",") : undefined;
   }
   throw new ProviderRequestError(400, "fields must be a string or an array of strings");
@@ -491,16 +504,6 @@ function normalizeFieldsInput(value: unknown): string | undefined {
 function readOptionalObject(value: unknown, fieldName: string): Record<string, unknown> | undefined {
   if (value === undefined) return undefined;
   return requiredRecord(value, fieldName, (message) => new ProviderRequestError(400, message));
-}
-
-function readProviderObject(value: unknown, fieldName: string): Record<string, unknown> {
-  const record = optionalRecord(value);
-  if (!record) throw new ProviderRequestError(502, `${fieldName} must be an object`);
-  return record;
-}
-
-function readRequiredTrimmedString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function readProviderString(value: unknown, fieldName: string): string {

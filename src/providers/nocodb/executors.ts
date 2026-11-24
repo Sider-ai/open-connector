@@ -4,7 +4,7 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import {
   objectArray,
@@ -13,23 +13,22 @@ import {
   optionalRecord,
   optionalString,
   requiredRecord,
-  requiredString,
 } from "../../core/cast.ts";
 import { assertPublicHttpUrl, compactJson, queryParams } from "../../core/request.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { credentialProviderProxyBaseUrl, defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  credentialProviderProxyBaseUrl,
-  defineProviderExecutors,
-  defineProviderProxy,
   isAbortLikeError,
+  providerInputError,
   ProviderRequestError,
   providerUserAgent,
-  requireApiKeyCredential,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 const service = "nocodb";
 const nocodbValidationPath = "/api/v1/auth/user/me";
-const nocodbRequestTimeoutMs = 30_000;
 
 interface NocodbContext {
   apiKey: string;
@@ -383,7 +382,6 @@ export const credentialValidators: CredentialValidators = {
         accountId,
         displayName,
       },
-      grantedScopes: [],
       metadata: {
         baseUrl,
         apiBaseUrl: baseUrl,
@@ -405,7 +403,7 @@ interface NocodbRequestOptions {
 }
 
 async function requestNocodbJson(context: NocodbContext, input: NocodbRequestOptions): Promise<unknown> {
-  const timeout = createProviderTimeout(context.signal, nocodbRequestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const response = await context.fetcher(buildNocodbUrl(context.baseUrl, input.path, input.query), {
       method: input.method ?? "GET",
@@ -445,7 +443,7 @@ function buildNocodbUrl(baseUrl: string, path: string, query?: Record<string, st
 
 function buildNocodbHeaders(apiKey: string, hasBody: boolean): Headers {
   const headers = new Headers({
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     "xc-token": apiKey,
   });
@@ -641,14 +639,6 @@ function normalizeNocodbBaseUrl(value: unknown): string {
 
 function buildQuery(input: Record<string, string | number | boolean | undefined>): Record<string, string> {
   return queryParams(input);
-}
-
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, providerInputError);
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }
 
 function requiredOutputObject(value: unknown, label: string): Record<string, unknown> {

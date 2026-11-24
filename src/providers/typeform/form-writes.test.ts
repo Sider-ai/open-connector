@@ -42,7 +42,12 @@ describe("Typeform form writes", () => {
     ["update_form", { formId: id, addFields: [{ ...field, id: "q1" }] }],
     ["publish_form", {}],
   ] as const)("rejects unsupported input on %s", (name, input) => {
-    expect(validateActionInput(typeformActions.find((x) => x.name === name)!, input).valid).toBe(false);
+    expect(
+      validateActionInput(
+        typeformActions.find((x) => x.name === name)!,
+        input,
+      ).valid,
+    ).toBe(false);
   });
   it("creates a non-public form even when called directly with caller settings", async () => {
     await expect(

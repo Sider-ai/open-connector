@@ -1,16 +1,24 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderTransitFile } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderTransitFile } from "../provider-files.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { assertPublicHttpUrl } from "../../core/request.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { uploadProviderUrlToTransitFile } from "../provider-files.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
   isAbortLikeError,
+  providerInputError,
   providerUserAgent,
   ProviderRequestError,
-  uploadProviderUrlToTransitFile,
 } from "../provider-runtime.ts";
 
 const service = "convertapi";
@@ -38,6 +46,16 @@ export const convertapiActionHandlers: ProviderActionHandlers<"convertapi", Conv
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, convertapiActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: convertapiApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input): Promise<CredentialValidationResult> {
     requiredString(input.apiKey, "apiKey", providerInputError);
@@ -45,7 +63,6 @@ export const credentialValidators: CredentialValidators = {
       profile: {
         accountId: "convertapi-api-token",
         displayName: "ConvertAPI API Token",
-        grantedScopes: [],
       },
       metadata: {
         apiBaseUrl: convertapiApiBaseUrl,
@@ -103,8 +120,8 @@ async function requestConvertapiJson(input: {
     response = await input.context.fetcher(new URL(input.path, convertapiApiBaseUrl), {
       method: "POST",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${input.context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${input.context.apiKey}`,
         "user-agent": providerUserAgent,
       },
       body: input.formData,
@@ -220,8 +237,4 @@ function inferConvertedFileName(record: Record<string, unknown>): string {
   const fileId = optionalString(record.FileId) ?? "convertapi-output";
   const fileExt = optionalString(record.FileExt);
   return fileExt ? `${fileId}.${fileExt}` : fileId;
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

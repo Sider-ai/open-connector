@@ -1,12 +1,23 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
 
 import { optionalInteger, optionalString } from "../../core/cast.ts";
-import { defineBearerProviderExecutors } from "../provider-runtime.ts";
-import { esaActionHandlers, requestEsaJson } from "./runtime.ts";
+import { defineBearerProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { esaActionHandlers, esaApiBaseUrl, requestEsaJson } from "./runtime.ts";
 
 const service = "esa";
 
 export const executors: ProviderExecutors = defineBearerProviderExecutors(service, esaActionHandlers);
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: esaApiBaseUrl,
+  auth: { type: "bearer" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
 
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher }) {

@@ -5,7 +5,7 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -14,14 +14,12 @@ import {
   optionalNumber,
   optionalRecord,
   optionalString,
+  recordOrEmpty,
 } from "../../core/cast.ts";
-import {
-  defineProviderExecutors,
-  defineProviderProxy,
-  ProviderRequestError,
-  providerUserAgent,
-  requireApiKeyCredential,
-} from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "langsmith";
 const langSmithWorkspacesPath = "/api/v1/workspaces";
@@ -96,7 +94,7 @@ export const executors: ProviderExecutors = defineProviderExecutors<LangSmithAct
     return {
       apiKey: credential.apiKey,
       apiBaseUrl: readLangSmithApiBaseUrl(credential.values.region ?? credential.metadata.region),
-      workspaceId: readOptionalTrimmedString(credential.values.workspaceId ?? credential.metadata.workspaceId),
+      workspaceId: optionalString(credential.values.workspaceId ?? credential.metadata.workspaceId),
       fetcher,
       signal: context.signal,
     };
@@ -122,7 +120,7 @@ export const proxy: ProviderProxyExecutor = defineProviderProxy({
 
     const workspaceId =
       input.credential?.authType === "api_key"
-        ? readOptionalTrimmedString(input.credential.values.workspaceId ?? input.credential.metadata.workspaceId)
+        ? optionalString(input.credential.values.workspaceId ?? input.credential.metadata.workspaceId)
         : undefined;
     if (workspaceId) {
       input.headers.set("X-Tenant-Id", workspaceId);
@@ -134,7 +132,7 @@ export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }): Promise<CredentialValidationResult> {
     const region = readLangSmithRegion(input.values.region);
     const apiBaseUrl = langSmithRegionBaseUrls[region];
-    const workspaceId = readOptionalTrimmedString(input.values.workspaceId);
+    const workspaceId = optionalString(input.values.workspaceId);
     const context: LangSmithActionContext = {
       apiKey: input.apiKey,
       apiBaseUrl,
@@ -155,7 +153,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: workspaceId ? `langsmith:workspace:${workspaceId}` : "langsmith:api_key",
         displayName: workspaceName ?? "LangSmith API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl,
         region,
@@ -408,7 +405,7 @@ async function requestLangSmithJson(input: LangSmithRequestInput): Promise<unkno
 
 function buildLangSmithHeaders(context: LangSmithActionContext, hasJsonBody: boolean): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     "X-Api-Key": context.apiKey,
   };
@@ -547,22 +544,18 @@ function normalizeExample(value: Record<string, unknown>): Record<string, unknow
     name: optionalString(value.name) ?? null,
     created_at: optionalString(value.created_at) ?? null,
     modified_at: optionalString(value.modified_at) ?? null,
-    inputs: normalizeObject(value.inputs),
+    inputs: recordOrEmpty(value.inputs),
     outputs: normalizeNullableObject(value.outputs),
     metadata: normalizeNullableObject(value.metadata),
     raw: value,
   };
 }
 
-function normalizeObject(value: unknown): Record<string, unknown> {
-  return optionalRecord(value) ?? {};
-}
-
 function normalizeNullableObject(value: unknown): Record<string, unknown> | null {
   if (value == null) {
     return null;
   }
-  return normalizeObject(value);
+  return recordOrEmpty(value);
 }
 
 function ensureObject(value: unknown, label: string): Record<string, unknown> {
@@ -590,16 +583,12 @@ function readFirstWorkspaceName(workspaces: Array<Record<string, unknown>>): str
   return undefined;
 }
 
-function readOptionalTrimmedString(value: unknown): string | undefined {
-  return optionalString(value);
-}
-
 function readLangSmithApiBaseUrl(value: unknown): string {
   return langSmithRegionBaseUrls[readLangSmithRegion(value)];
 }
 
 function readLangSmithRegion(value: unknown): LangSmithRegion {
-  let region = readOptionalTrimmedString(value) ?? defaultLangSmithRegion;
+  let region = optionalString(value) ?? defaultLangSmithRegion;
   if (region === "aws") {
     region = "aws_us";
   }

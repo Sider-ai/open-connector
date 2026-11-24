@@ -1,12 +1,11 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 import type { SignalbaseActionName } from "./actions.ts";
 
 import { optionalNumber, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
-const signalbaseApiBaseUrl = "https://www.trysignalbase.com/api/v2";
+export const signalbaseApiBaseUrl = "https://www.trysignalbase.com/api/v2";
 
 type SignalbaseActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
@@ -61,9 +60,7 @@ export async function validateSignalbaseCredential(
     profile: {
       accountId: "signalbase-api-key",
       displayName: "Signalbase API Key",
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: signalbaseApiBaseUrl,
       validationEndpoint: "/signals/funding",
@@ -73,7 +70,7 @@ export async function validateSignalbaseCredential(
 }
 
 async function requestSignalbase(
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   path: string,
   query: Record<string, unknown>,
   mode: "validate" | "execute",
@@ -116,8 +113,8 @@ function buildSignalbaseUrl(path: string): URL {
 
 function signalbaseHeaders(apiKey: string): Record<string, string> {
   return {
-    Accept: "application/json",
-    Authorization: `Bearer ${apiKey}`,
+    "Accept": "application/json",
+    "Authorization": `Bearer ${apiKey}`,
     "User-Agent": providerUserAgent,
   };
 }

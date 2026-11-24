@@ -1,19 +1,19 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
-import { optionalInteger, optionalString, requiredString } from "../../core/cast.ts";
+import { optionalBoolean, optionalInteger, optionalString, requiredString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
   isAbortLikeError,
+  providerInputError,
   providerUserAgent,
   ProviderRequestError,
 } from "../provider-runtime.ts";
 
 const service = "momentum_io";
 const momentumIoApiBaseUrl = "https://api.momentum.io";
-const momentumIoDefaultRequestTimeoutMs = 30_000;
 const momentumIoValidationPath = "/v1/users?pageSize=1";
 
 type MomentumIoRequestPhase = "validate" | "execute";
@@ -42,6 +42,16 @@ export const momentumIoActionHandlers: ProviderActionHandlers<"momentum_io", Mom
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, momentumIoActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: momentumIoApiBaseUrl,
+  auth: { type: "api_key_header", name: "X-API-Key" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     await requestMomentumIoJson(
@@ -58,7 +68,6 @@ export const credentialValidators: CredentialValidators = {
       profile: {
         displayName: "Momentum API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: momentumIoApiBaseUrl,
         validationEndpoint: momentumIoValidationPath,
@@ -129,18 +138,18 @@ function buildPath(path: string, query: Record<string, unknown>): string {
 
 async function requestMomentumIoJson(
   path: string,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: MomentumIoRequestPhase,
 ): Promise<unknown> {
   let response: Response;
   let payload: unknown;
-  const timeout = createProviderTimeout(context.signal, momentumIoDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
 
   try {
     response = await context.fetcher(new URL(path, momentumIoApiBaseUrl), {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
         "x-api-key": context.apiKey,
       },
@@ -222,10 +231,6 @@ function extractMomentumIoErrorMessage(payload: unknown): string | undefined {
   );
 }
 
-function optionalBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
-}
-
 function optionalStringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
@@ -239,8 +244,4 @@ function readRequiredInteger(value: unknown, fieldName: string): number {
     throw new ProviderRequestError(400, `${fieldName} is required`);
   }
   return parsed;
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

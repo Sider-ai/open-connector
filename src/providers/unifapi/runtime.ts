@@ -1,11 +1,11 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ApiKeyProviderContext, ProviderActionHandlers, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ApiKeyProviderContext, ProviderActionHandlers, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { mapProviderActionHandlers } from "../provider-executors.ts";
 import {
   createProviderTimeout,
   isAbortLikeError,
-  mapProviderActionHandlers,
   ProviderRequestError,
   providerUserAgent,
 } from "../provider-runtime.ts";
@@ -71,7 +71,6 @@ export async function validateUnifapiCredential(
       accountId: "unifapi-api-key",
       displayName: "UnifAPI API Key",
     },
-    grantedScopes: [],
     metadata: {
       validationEndpoint,
       apiBaseUrl: unifapiApiBaseUrl,
@@ -122,8 +121,8 @@ async function requestUnifapiJson(input: UnifapiRequestInput): Promise<Record<st
 
 function buildHeaders(apiKey: string, body: Record<string, unknown> | undefined): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "unifapi-version": unifapiApiVersion,
     "user-agent": providerUserAgent,
   };

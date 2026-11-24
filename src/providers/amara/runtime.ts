@@ -1,5 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -154,7 +154,6 @@ export async function validateAmaraCredential(
       accountId: "amara_api_key",
       displayName: "Amara API Key",
     },
-    grantedScopes: [],
     metadata: {
       validationEndpoint: "/languages/",
       languageCount: Object.keys(payload.languages ?? {}).length,
@@ -709,7 +708,7 @@ async function amaraSendMessage(input: JsonRecord, context: AmaraActionContext) 
 }
 
 async function amaraListResponse(
-  input: Pick<AmaraRequestInput, "path" | "query">,
+  input: AmaraRequestInput,
   context: AmaraActionContext,
   outputKey: string,
   normalizeItem: (value: JsonRecord) => unknown,
@@ -739,7 +738,7 @@ async function amaraRequestText(input: AmaraRequestInput, context: AmaraActionCo
 async function amaraRequest(input: AmaraRequestInput, context: AmaraActionContext, mode: "validate" | "execute") {
   const url = buildAmaraUrl(input.path, input.query);
   const headers: Record<string, string> = {
-    accept: input.responseType === "text" ? "text/plain, application/json" : "application/json",
+    "accept": input.responseType === "text" ? "text/plain, application/json" : "application/json",
     "x-api-key": context.apiKey,
   };
   if (input.body) {

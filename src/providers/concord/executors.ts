@@ -1,6 +1,5 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   optionalBoolean,
@@ -11,18 +10,18 @@ import {
   requiredRecord,
   requiredStringArray,
 } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
-  createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
-  isAbortLikeError,
+  providerInputError,
+  providerResponseError,
   providerUserAgent,
   ProviderRequestError,
+  runProviderRequest,
 } from "../provider-runtime.ts";
 
 const service = "concord";
 const concordApiBaseUrl = "https://api.concordnow.com/api/rest/1";
-const concordRequestTimeoutMs = 30_000;
 
 type ConcordPhase = "validate" | "execute";
 type ConcordActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
@@ -39,13 +38,13 @@ export const concordActionHandlers: ProviderActionHandlers<"concord", ConcordAct
     return { organizations: payload.organizations };
   },
   async get_organization(input, context) {
-    const organizationId = positiveInteger(input.organizationId, "organizationId", inputError);
+    const organizationId = positiveInteger(input.organizationId, "organizationId", providerInputError);
     return {
       organization: await requestConcordObject(`/organizations/${organizationId}`, context, "execute", "organization"),
     };
   },
   async list_folders(input, context) {
-    const organizationId = positiveInteger(input.organizationId, "organizationId", inputError);
+    const organizationId = positiveInteger(input.organizationId, "organizationId", providerInputError);
     return {
       folder: await requestConcordObject(
         `/user/me/organizations/${organizationId}/folders`,
@@ -56,9 +55,10 @@ export const concordActionHandlers: ProviderActionHandlers<"concord", ConcordAct
     };
   },
   async list_agreements(input, context) {
-    const organizationId = positiveInteger(input.organizationId, "organizationId", inputError);
+    const organizationId = positiveInteger(input.organizationId, "organizationId", providerInputError);
     const query = new URLSearchParams();
-    for (const status of requiredStringArray(input.statuses, "statuses", inputError)) query.append("statuses", status);
+    for (const status of requiredStringArray(input.statuses, "statuses", providerInputError))
+      query.append("statuses", status);
     appendOptional(query, "page", optionalInteger(input.page));
     appendOptional(query, "numberOfItemsByPage", optionalInteger(input.numberOfItemsByPage));
     appendOptional(query, "search", optionalString(input.search));
@@ -67,7 +67,8 @@ export const concordActionHandlers: ProviderActionHandlers<"concord", ConcordAct
     appendOptional(query, "sortByColumn", optionalString(input.sortByColumn));
     appendOptional(query, "sortByAsc", optionalBoolean(input.sortByAsc));
     if (Array.isArray(input.tagIds)) {
-      for (const tagId of input.tagIds) query.append("tagIds", String(positiveInteger(tagId, "tagIds", inputError)));
+      for (const tagId of input.tagIds)
+        query.append("tagIds", String(positiveInteger(tagId, "tagIds", providerInputError)));
     }
     return requestConcordObject(
       `/user/me/organizations/${organizationId}/agreements?${query}`,
@@ -94,7 +95,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: optionalString(user.id) ?? email ?? "concord-api-key",
         displayName: optionalString(user.fullName) ?? email ?? "Concord API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: concordApiBaseUrl,
         validationEndpoint: "/user/me",
@@ -107,52 +107,32 @@ export const proxy: ProviderProxyExecutor = defineProviderProxy({
   service,
   baseUrl: concordApiBaseUrl,
   auth: { type: "api_key_header", name: "X-API-KEY" },
-  customizeRequest({ headers }) {
-    if (!headers.has("accept")) headers.set("accept", "application/json");
-    if (!headers.has("content-type")) headers.set("content-type", "application/json");
-    if (!headers.has("user-agent")) headers.set("user-agent", providerUserAgent);
-  },
+  defaultHeaders: { "accept": "application/json", "content-type": "application/json", "user-agent": providerUserAgent },
 });
 
 async function requestConcordObject(
   path: string,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: ConcordPhase,
   label: string,
 ): Promise<Record<string, unknown>> {
-  return requiredRecord(await requestConcordJson(path, context, phase), `Concord ${label}`, outputError);
+  return requiredRecord(await requestConcordJson(path, context, phase), `Concord ${label}`, providerResponseError);
 }
 
-async function requestConcordJson(
-  path: string,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
-  phase: ConcordPhase,
-): Promise<unknown> {
-  const timeout = createProviderTimeout(context.signal, concordRequestTimeoutMs);
-  try {
+async function requestConcordJson(path: string, context: ApiKeyProviderContext, phase: ConcordPhase): Promise<unknown> {
+  return runProviderRequest({ signal: context.signal, label: "Concord" }, async (signal) => {
     const response = await context.fetcher(`${concordApiBaseUrl}${path}`, {
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
         "X-API-KEY": context.apiKey,
       },
-      signal: timeout.signal,
+      signal,
     });
     const payload = await readJson(response);
     if (!response.ok) throw createConcordError(response.status, payload, phase);
     return payload;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) throw error;
-    if (timeout.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "Concord request timed out");
-    }
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Concord request failed: ${error.message}` : "Concord request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+  });
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -182,12 +162,4 @@ function createConcordError(status: number, payload: unknown, phase: ConcordPhas
 
 function appendOptional(query: URLSearchParams, name: string, value: string | number | boolean | undefined): void {
   if (value !== undefined) query.set(name, String(value));
-}
-
-function inputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
-}
-
-function outputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(502, message);
 }

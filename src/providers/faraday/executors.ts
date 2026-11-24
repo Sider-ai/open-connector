@@ -1,8 +1,10 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { optionalRecord, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "faraday";
 const faradayApiBaseUrl = "https://api.faraday.ai/v1";
@@ -104,6 +106,14 @@ export const faradayActionHandlers: ProviderActionHandlers<"faraday", FaradayAct
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, faradayActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: faradayApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const account = await requestFaradayObject("/accounts/current", {
@@ -119,7 +129,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: accountId ?? "api_key",
         displayName: accountName ?? "Faraday API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: faradayApiBaseUrl,
         validationEndpoint: "/accounts/current",
@@ -165,8 +174,8 @@ async function requestFaraday(path: string, context: FaradayActionContext): Prom
     response = await context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${context.apiKey}`,
         "user-agent": providerUserAgent,
       },
       signal: context.signal,

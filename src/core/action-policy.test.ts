@@ -8,6 +8,7 @@ const action: ActionDefinition = {
   service: "github",
   name: "create_issue",
   description: "Create an issue.",
+  operationType: "write",
   requiredScopes: [],
   providerPermissions: [],
   inputSchema: { type: "object" },
@@ -19,30 +20,32 @@ const otherConnectionId = "33333333-3333-4333-8333-333333333333";
 
 describe("ActionPolicyService", () => {
   it("allows actions by default", () => {
-    expect(new ActionPolicyService().evaluate(action)).toEqual({ allowed: true, checks: [] });
+    expect(new ActionPolicyService().createSnapshot().evaluate(action)).toEqual({ allowed: true, checks: [] });
   });
 
   it("enforces exact and provider-wide allowlists", () => {
-    expect(new ActionPolicyService({ allowedActions: ["gmail.*"] }).evaluate(action)).toMatchObject({
+    expect(new ActionPolicyService({ allowedActions: ["gmail.*"] }).createSnapshot().evaluate(action)).toMatchObject({
       allowed: false,
       code: "action_not_allowed",
     });
-    expect(new ActionPolicyService({ allowedActions: ["github.*"] }).evaluate(action)).toEqual({
+    expect(new ActionPolicyService({ allowedActions: ["github.*"] }).createSnapshot().evaluate(action)).toEqual({
       allowed: true,
       checks: [{ source: "deployment", outcome: "allow_match", rule: "github.*" }],
     });
-    expect(new ActionPolicyService({ allowedActions: ["github.create_issue"] }).evaluate(action)).toEqual({
+    expect(
+      new ActionPolicyService({ allowedActions: ["github.create_issue"] }).createSnapshot().evaluate(action),
+    ).toEqual({
       allowed: true,
       checks: [{ source: "deployment", outcome: "allow_match", rule: "github.create_issue" }],
     });
   });
 
   it("supports bare wildcard to match all actions", () => {
-    expect(new ActionPolicyService({ allowedActions: ["*"] }).evaluate(action)).toEqual({
+    expect(new ActionPolicyService({ allowedActions: ["*"] }).createSnapshot().evaluate(action)).toEqual({
       allowed: true,
       checks: [{ source: "deployment", outcome: "allow_match", rule: "*" }],
     });
-    expect(new ActionPolicyService({ blockedActions: ["*"] }).evaluate(action)).toMatchObject({
+    expect(new ActionPolicyService({ blockedActions: ["*"] }).createSnapshot().evaluate(action)).toMatchObject({
       allowed: false,
       code: "action_blocked",
     });
@@ -53,7 +56,9 @@ describe("ActionPolicyService", () => {
       new ActionPolicyService({
         allowedActions: ["github.*"],
         blockedActions: ["github.create_issue"],
-      }).evaluate(action),
+      })
+        .createSnapshot()
+        .evaluate(action),
     ).toMatchObject({
       allowed: false,
       code: "action_blocked",
@@ -61,56 +66,64 @@ describe("ActionPolicyService", () => {
   });
 
   it("allows proxies by default", () => {
-    expect(new ActionPolicyService().evaluateProxy("github")).toEqual({ allowed: true, checks: [] });
+    expect(new ActionPolicyService().createSnapshot().evaluateProxy("github")).toEqual({ allowed: true, checks: [] });
   });
 
   it("ignores action policy when evaluating proxies", () => {
-    expect(new ActionPolicyService({ allowedActions: ["github.get_current_user"] }).evaluateProxy("github")).toEqual({
+    expect(
+      new ActionPolicyService({ allowedActions: ["github.get_current_user"] }).createSnapshot().evaluateProxy("github"),
+    ).toEqual({
       allowed: true,
       checks: [],
     });
-    expect(new ActionPolicyService({ blockedActions: ["github.delete_repository"] }).evaluateProxy("github")).toEqual({
+    expect(
+      new ActionPolicyService({ blockedActions: ["github.delete_repository"] })
+        .createSnapshot()
+        .evaluateProxy("github"),
+    ).toEqual({
       allowed: true,
       checks: [],
     });
-    expect(new ActionPolicyService({ allowedActions: ["*"] }).evaluateProxy("github")).toEqual({
+    expect(new ActionPolicyService({ allowedActions: ["*"] }).createSnapshot().evaluateProxy("github")).toEqual({
       allowed: true,
       checks: [],
     });
-    expect(new ActionPolicyService({ blockedActions: ["*"] }).evaluateProxy("github")).toEqual({
+    expect(new ActionPolicyService({ blockedActions: ["*"] }).createSnapshot().evaluateProxy("github")).toEqual({
       allowed: true,
       checks: [],
     });
   });
 
   it("ignores proxy policy when evaluating actions", () => {
-    expect(new ActionPolicyService({ blockedProxies: ["*"] }).evaluate(action)).toEqual({
+    expect(new ActionPolicyService({ blockedProxies: ["*"] }).createSnapshot().evaluate(action)).toEqual({
       allowed: true,
       checks: [],
     });
-    expect(new ActionPolicyService({ allowedProxies: ["slack"] }).evaluate(action)).toEqual({
+    expect(new ActionPolicyService({ allowedProxies: ["slack"] }).createSnapshot().evaluate(action)).toEqual({
       allowed: true,
       checks: [],
     });
   });
 
   it("disables every proxy with a blocked wildcard", () => {
-    expect(new ActionPolicyService({ blockedProxies: ["*"] }).evaluateProxy("github")).toMatchObject({
+    expect(new ActionPolicyService({ blockedProxies: ["*"] }).createSnapshot().evaluateProxy("github")).toMatchObject({
       allowed: false,
       code: "proxy_blocked",
     });
   });
 
   it("enforces exact and wildcard proxy allowlists", () => {
-    expect(new ActionPolicyService({ allowedProxies: ["slack"] }).evaluateProxy("github")).toMatchObject({
+    expect(
+      new ActionPolicyService({ allowedProxies: ["slack"] }).createSnapshot().evaluateProxy("github"),
+    ).toMatchObject({
       allowed: false,
       code: "proxy_not_allowed",
     });
-    expect(new ActionPolicyService({ allowedProxies: ["github"] }).evaluateProxy("github")).toEqual({
+    expect(new ActionPolicyService({ allowedProxies: ["github"] }).createSnapshot().evaluateProxy("github")).toEqual({
       allowed: true,
       checks: [{ source: "deployment", outcome: "allow_match", rule: "github" }],
     });
-    expect(new ActionPolicyService({ allowedProxies: ["*"] }).evaluateProxy("github")).toEqual({
+    expect(new ActionPolicyService({ allowedProxies: ["*"] }).createSnapshot().evaluateProxy("github")).toEqual({
       allowed: true,
       checks: [{ source: "deployment", outcome: "allow_match", rule: "*" }],
     });
@@ -121,7 +134,9 @@ describe("ActionPolicyService", () => {
       new ActionPolicyService({
         allowedProxies: ["*"],
         blockedProxies: ["github"],
-      }).evaluateProxy("github"),
+      })
+        .createSnapshot()
+        .evaluateProxy("github"),
     ).toMatchObject({
       allowed: false,
       code: "proxy_blocked",
@@ -363,5 +378,35 @@ describe("ActionPolicyService", () => {
       code: "connection_not_allowed",
     });
     expect(snapshot.evaluateConnection(workConnectionId)).toMatchObject({ allowed: true });
+  });
+});
+
+describe("Trigger policy", () => {
+  const rules = { allowedActions: [], blockedActions: [], allowedProxies: [], blockedProxies: [] };
+  it("grants Triggers independently and denies legacy tokens by default", () => {
+    const service = new ActionPolicyService();
+    expect(
+      service.createSnapshot(rules, { ...rules, allowedProxies: ["*"] }).evaluateTrigger("github.on_repo_event"),
+    ).toMatchObject({ allowed: false, code: "trigger_not_allowed" });
+    const token = { ...rules, blockedActions: ["*"], allowedTriggers: ["github.on_repo_event"] };
+    expect(service.createSnapshot(rules, token).evaluateTrigger("github.on_repo_event").allowed).toBe(true);
+    expect(service.createSnapshot(rules, token).evaluateTrigger("github.watch_pull_request").allowed).toBe(false);
+    expect(service.createSnapshot(rules, token).evaluateProxy("github").allowed).toBe(false);
+    expect(service.createSnapshot(rules, token).evaluate(action).allowed).toBe(false);
+  });
+  it("intersects deployment and runtime grants and gives block rules priority", () => {
+    const service = new ActionPolicyService({ allowedTriggers: ["gmail.*"] });
+    const token = { ...rules, allowedTriggers: ["*"] };
+    expect(
+      service
+        .createSnapshot({ ...rules, blockedTriggers: ["github.*"] }, token)
+        .evaluateTrigger("github.on_repo_event"),
+    ).toMatchObject({ allowed: false, code: "trigger_blocked" });
+    expect(
+      service
+        .createSnapshot({ ...rules, allowedTriggers: ["gmail.other"] }, token)
+        .evaluateTrigger("gmail.on_message_received"),
+    ).toMatchObject({ allowed: false, code: "trigger_not_allowed" });
+    expect(service.createSnapshot(rules, token).evaluateTrigger("gmail.on_message_received").allowed).toBe(true);
   });
 });

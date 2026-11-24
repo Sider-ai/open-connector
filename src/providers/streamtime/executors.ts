@@ -1,9 +1,20 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
 
-import { defineApiKeyProviderExecutors } from "../provider-runtime.ts";
-import { streamtimeActionHandlers, validateStreamtimeCredential } from "./runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { streamtimeActionHandlers, streamtimeApiBaseUrl, validateStreamtimeCredential } from "./runtime.ts";
 
-export const executors: ProviderExecutors = defineApiKeyProviderExecutors("streamtime", streamtimeActionHandlers);
+const service = "streamtime";
+
+export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, streamtimeActionHandlers);
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: streamtimeApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
 
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {

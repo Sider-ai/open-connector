@@ -1,18 +1,24 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderRequestContext } from "../provider-runtime.ts";
 
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
   isAbortLikeError,
   ProviderRequestError,
+  defaultProviderRequestTimeoutMs,
 } from "../provider-runtime.ts";
 
 const service = "weatherapi";
 const weatherapiApiBaseUrl = "https://api.weatherapi.com/v1/";
-const weatherapiDefaultRequestTimeoutMs = 30_000;
 const weatherapiValidationQuery = "London";
 
 type WeatherapiActionHandler = ProviderRuntimeHandler<ApiKeyProviderContext>;
@@ -166,6 +172,16 @@ const weatherapiActionHandlers: ProviderActionHandlers<"weatherapi", WeatherapiA
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, weatherapiActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: weatherapiApiBaseUrl,
+  auth: { type: "api_key_query", name: "key" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }): Promise<CredentialValidationResult> {
     const payload = await weatherapiRequestJson(
@@ -192,7 +208,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: matchedLocationId === undefined ? "weatherapi:api_key" : String(matchedLocationId),
         displayName: matchedLocationName ?? "WeatherAPI API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         validationEndpoint: "/search.json",
         sampleQuery: weatherapiValidationQuery,
@@ -209,11 +224,11 @@ async function weatherapiRequestJson(
   path: string,
   apiKey: string,
   params: Record<string, string | undefined>,
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">,
+  context: ProviderRequestContext,
   phase: "validate" | "execute",
 ): Promise<unknown> {
   const url = weatherapiRequestUrl(path, apiKey, params);
-  const timeout = createProviderTimeout(context.signal, weatherapiDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
 
   let response: Response;
   let payload: unknown;
@@ -229,7 +244,7 @@ async function weatherapiRequestJson(
         502,
         `WeatherAPI ${path} request timed out after ${Math.max(
           1,
-          Math.ceil(weatherapiDefaultRequestTimeoutMs / 1000),
+          Math.ceil(defaultProviderRequestTimeoutMs / 1000),
         )} seconds`,
       );
     }

@@ -1,5 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { createHash, randomBytes } from "node:crypto";
 import {
@@ -584,7 +584,7 @@ function buildTiDBUrl(input: TiDBRequestInput) {
 
 function buildTiDBHeaders() {
   return {
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
   };
 }

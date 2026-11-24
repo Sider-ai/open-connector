@@ -1,18 +1,18 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
-import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
 import {
   createProviderTimeout,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 export const retentlyApiBaseUrl = "https://app.retently.com";
-
-const retentlyDefaultRequestTimeoutMs = 30_000;
 
 type RetentlyPhase = "validate" | "execute";
 type RetentlyActionHandler = ProviderRuntimeHandler<ApiKeyProviderContext>;
@@ -60,7 +60,7 @@ export const retentlyActionHandlers: ProviderActionHandlers<"retently", Retently
   async get_customer(input, context) {
     const payload = await requestRetentlyJson({
       ...context,
-      path: `/api/v2/customers/${encodeURIComponent(requiredProviderString(input.customerId, "customerId"))}`,
+      path: `/api/v2/customers/${encodeURIComponent(requiredInputString(input.customerId, "customerId"))}`,
       method: "GET",
       phase: "execute",
     });
@@ -90,7 +90,7 @@ export const retentlyActionHandlers: ProviderActionHandlers<"retently", Retently
   async get_feedback(input, context) {
     const payload = await requestRetentlyJson({
       ...context,
-      path: `/api/v2/feedback/${encodeURIComponent(requiredProviderString(input.feedbackId, "feedbackId"))}`,
+      path: `/api/v2/feedback/${encodeURIComponent(requiredInputString(input.feedbackId, "feedbackId"))}`,
       method: "GET",
       phase: "execute",
     });
@@ -116,7 +116,7 @@ export const retentlyActionHandlers: ProviderActionHandlers<"retently", Retently
   async get_template(input, context) {
     const payload = await requestRetentlyJson({
       ...context,
-      path: `/api/v2/templates/${encodeURIComponent(requiredProviderString(input.templateId, "templateId"))}`,
+      path: `/api/v2/templates/${encodeURIComponent(requiredInputString(input.templateId, "templateId"))}`,
       method: "GET",
       phase: "execute",
     });
@@ -184,7 +184,6 @@ export async function validateRetentlyCredential(
       accountId: accountId ?? "api_key",
       displayName: accountName ? `Retently ${accountName}` : accountId ? `Retently ${accountId}` : "Retently API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       accountId,
       accountName,
@@ -221,7 +220,7 @@ function buildListFeedbackParams(input: Record<string, unknown>): Record<string,
 }
 
 async function requestRetentlyJson(input: RetentlyRequestOptions): Promise<Record<string, unknown>> {
-  const timeout = createProviderTimeout(input.signal, retentlyDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   try {
     const response = await input.fetcher(buildRetentlyUrl(input.path, input.params, input.attributes), {
       method: input.method,
@@ -275,7 +274,7 @@ function buildRetentlyUrl(
 
 function buildRetentlyHeaders(apiKey: string, hasBody: boolean): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     "x-api-key": apiKey,
   };
@@ -427,10 +426,6 @@ function appendAttributeFilters(url: URL, value: unknown): void {
     url.searchParams.set(`attributes[${index}][op]`, op);
     url.searchParams.set(`attributes[${index}][value]`, filterValue);
   });
-}
-
-function requiredProviderString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function readOptionalIntegerString(value: unknown): string | undefined {

@@ -1,5 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import {
   nullableString,
@@ -9,10 +9,15 @@ import {
   optionalString,
   requiredRecord,
 } from "../../core/cast.ts";
-import { providerFetch, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import {
+  isAbortLikeError,
+  providerFetch,
+  ProviderRequestError,
+  providerUserAgent,
+  defaultProviderRequestTimeoutMs,
+} from "../provider-runtime.ts";
 
 export const getnoteBaseUrl = "https://openapi.biji.com";
-const getnoteRequestTimeoutMs = 30_000;
 
 type GetnoteContext = {
   apiKey: string;
@@ -61,7 +66,6 @@ export async function validateGetnoteCredential(
       accountId: `getnote:${clientId}`,
       displayName: `Getnote · ${clientId}`,
     },
-    grantedScopes: [],
     metadata: {
       clientId,
       validationEndpoint: "/open/api/v1/resource/knowledge/list",
@@ -494,7 +498,7 @@ async function getnoteRequest(context: GetnoteContext, request: GetnoteRequest) 
     }
   }
 
-  const timeoutSignal = AbortSignal.timeout(getnoteRequestTimeoutMs);
+  const timeoutSignal = AbortSignal.timeout(defaultProviderRequestTimeoutMs);
   const signal = context.signal ? AbortSignal.any([context.signal, timeoutSignal]) : timeoutSignal;
   let response: Response;
   try {
@@ -525,8 +529,8 @@ async function getnoteRequest(context: GetnoteContext, request: GetnoteRequest) 
 
 function getnoteHeaders(context: GetnoteContext, hasBody: boolean) {
   return {
-    accept: "application/json",
-    authorization: context.apiKey,
+    "accept": "application/json",
+    "authorization": context.apiKey,
     "x-client-id": context.clientId,
     "user-agent": providerUserAgent,
     ...(hasBody ? { "content-type": "application/json" } : {}),
@@ -771,8 +775,4 @@ function readFirstObjectField(input: Record<string, unknown>, keys: string[]) {
 
 function toRecord(value: unknown): Record<string, unknown> {
   return requiredRecord(value, "Getnote response object", (message) => new ProviderRequestError(502, message));
-}
-
-function isAbortLikeError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
 }

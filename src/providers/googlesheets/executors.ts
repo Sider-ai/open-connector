@@ -1,8 +1,15 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { OAuthProviderContext } from "../provider-runtime.ts";
+import type { IntegrationDefinition } from "../../triggers/common/integration.ts";
+import type { PollDefinition } from "../../triggers/common/poll.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { OAuthProviderContext } from "../provider-executors.ts";
 
-import { defineOAuthProviderExecutors, defineProviderProxy } from "../provider-runtime.ts";
+import {
+  defineGoogleProviderExecutors,
+  googleBearerProxyAuth,
+  googleServiceAccountValidator,
+} from "../googledrive/runtime-auth.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   addSheet,
   appendDimension,
@@ -50,6 +57,8 @@ import {
   updateValues,
   updateValuesBatch,
 } from "./runtime-values.ts";
+import { googlesheetsOAuthScopes } from "./scopes.ts";
+import { googleSheetsRowAdded } from "./trigger-on-row-added.ts";
 
 const service = "googlesheets";
 
@@ -183,7 +192,9 @@ const implementedActionHandlers: ProviderActionHandlers<"googlesheets", ActionHa
 export const googlesheetsActionHandlers: ProviderActionHandlers<"googlesheets", ActionHandler> =
   implementedActionHandlers;
 
-export const executors: ProviderExecutors = defineOAuthProviderExecutors(service, googlesheetsActionHandlers);
+export const executors: ProviderExecutors = defineGoogleProviderExecutors(service, googlesheetsActionHandlers, {
+  scopes: googlesheetsOAuthScopes,
+});
 
 export const credentialValidators: CredentialValidators = {
   async oauth2(input, { fetcher, signal }) {
@@ -207,10 +218,13 @@ export const credentialValidators: CredentialValidators = {
       },
     };
   },
+  customCredential: googleServiceAccountValidator(service, googlesheetsOAuthScopes),
 };
 
 export const proxy: ProviderProxyExecutor = defineProviderProxy({
   service,
   baseUrl: "https://sheets.googleapis.com/v4",
-  auth: { type: "oauth_bearer" },
+  auth: googleBearerProxyAuth(googlesheetsOAuthScopes),
 });
+
+export const triggers: readonly (IntegrationDefinition | PollDefinition)[] = [googleSheetsRowAdded];

@@ -1,12 +1,17 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { optionalRecord, optionalString } from "../../core/cast.ts";
 import { jsonObject } from "../../core/request.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
@@ -14,7 +19,6 @@ import {
 
 const service = "mother_duck";
 const motherDuckApiBaseUrl = "https://api.motherduck.com";
-const motherDuckRequestTimeoutMs = 30_000;
 const motherDuckTokenHelpUrl = "https://app.motherduck.com/settings/tokens";
 
 type MotherDuckMethod = "GET" | "POST" | "PUT" | "DELETE";
@@ -22,7 +26,7 @@ type MotherDuckPhase = "validate" | "execute";
 type MotherDuckActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 interface MotherDuckRequestInput {
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   method?: MotherDuckMethod;
   path: string;
   phase: MotherDuckPhase;
@@ -59,6 +63,16 @@ export const motherDuckActionHandlers: ProviderActionHandlers<"mother_duck", Mot
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, motherDuckActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: motherDuckApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }): Promise<CredentialValidationResult> {
     const payload = await requestMotherDuckJson({
@@ -77,7 +91,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: firstUsername ? `motherduck:${firstUsername}` : `motherduck:${input.apiKey.slice(-6)}`,
         displayName: firstUsername ? `MotherDuck ${firstUsername}` : "MotherDuck Admin API Token",
       },
-      grantedScopes: [],
       metadata: jsonObject({
         apiBaseUrl: motherDuckApiBaseUrl,
         validationEndpoint: "/v1/active_accounts",
@@ -183,14 +196,14 @@ async function setUserDucklingConfig(input: Record<string, unknown>, context: Ap
 }
 
 async function requestMotherDuckJson(input: MotherDuckRequestInput): Promise<unknown> {
-  const timeout = createProviderTimeout(input.context.signal, motherDuckRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
 
   try {
     const response = await input.context.fetcher(new URL(input.path, motherDuckApiBaseUrl), {
       method: input.method ?? "GET",
       headers: jsonObject({
-        authorization: `Bearer ${input.context.apiKey}`,
-        accept: "application/json",
+        "authorization": `Bearer ${input.context.apiKey}`,
+        "accept": "application/json",
         "content-type": input.body ? "application/json" : undefined,
         "user-agent": providerUserAgent,
       }) as Record<string, string>,

@@ -1,18 +1,11 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
-import {
-  createProviderTimeout,
-  isAbortLikeError,
-  ProviderRequestError,
-  providerUserAgent,
-} from "../provider-runtime.ts";
+import { ProviderRequestError, providerUserAgent, runProviderRequest } from "../provider-runtime.ts";
 
 export const unsplashApiBaseUrl: string = "https://api.unsplash.com";
 const unsplashValidationPath = "/photos";
-const unsplashTimeoutMs = 30_000;
 
 type UnsplashActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
@@ -159,7 +152,6 @@ export async function validateUnsplashCredential(
       accountId: "unsplash",
       displayName: "Unsplash Access Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       validationEndpoint: unsplashValidationPath,
       samplePhotoId: optionalString(samplePhoto?.id),
@@ -170,41 +162,27 @@ export async function validateUnsplashCredential(
 }
 
 async function requestUnsplashJson(input: {
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   path: string;
   query?: Record<string, string | number | undefined>;
   phase: "validate" | "execute";
 }): Promise<unknown> {
-  const timeout = createProviderTimeout(input.context.signal, unsplashTimeoutMs);
-  try {
+  return runProviderRequest({ signal: input.context.signal, label: "Unsplash" }, async (signal) => {
     const response = await input.context.fetcher(buildUnsplashUrl(input.path, input.query), {
       method: "GET",
       headers: {
-        authorization: `Client-ID ${input.context.apiKey}`,
+        "authorization": `Client-ID ${input.context.apiKey}`,
         "accept-version": "v1",
         "user-agent": providerUserAgent,
       },
-      signal: timeout.signal,
+      signal,
     });
     const payload = await readUnsplashPayload(response);
     if (!response.ok) {
       throw createUnsplashError(response, payload, input.phase);
     }
     return payload;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-    if (timeout.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "Unsplash request timed out");
-    }
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Unsplash request failed: ${error.message}` : "Unsplash request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+  });
 }
 
 function buildUnsplashUrl(path: string, query?: Record<string, string | number | undefined>): string {

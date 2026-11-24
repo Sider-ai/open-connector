@@ -1,14 +1,8 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalBoolean, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
-import {
-  createProviderTimeout,
-  isAbortLikeError,
-  ProviderRequestError,
-  providerUserAgent,
-} from "../provider-runtime.ts";
+import { ProviderRequestError, providerUserAgent, runProviderRequest } from "../provider-runtime.ts";
 
 export const uniswapApiBaseUrl = "https://trade-api.gateway.uniswap.org/v1";
 export const uniswapApiDefaultRequestTimeoutMs = 15_000;
@@ -63,7 +57,6 @@ export async function validateUniswapApiCredential(
       accountId: "uniswap_api:api-key",
       displayName: "Uniswap API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: uniswapApiBaseUrl,
       validationEndpoint: "/quote",
@@ -188,42 +181,31 @@ async function executeCreateSwap(input: Record<string, unknown>, context: ApiKey
 
 async function uniswapApiRequest(
   input: UniswapRequestInput,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
-  const timeout = createProviderTimeout(context.signal, uniswapApiDefaultRequestTimeoutMs);
-  try {
-    const response = await context.fetcher(buildUniswapApiUrl(input.path), {
-      method: input.method,
-      headers: {
-        accept: "application/json",
-        "content-type": "application/json",
-        "user-agent": providerUserAgent,
-        "x-api-key": context.apiKey,
-        ...input.headers,
-      },
-      body: JSON.stringify(input.body),
-      signal: timeout.signal,
-    });
-    const payload = await readJsonPayload(response);
-    if (!response.ok) {
-      throw createUniswapApiError(response.status, payload);
-    }
+  return runProviderRequest(
+    { signal: context.signal, timeoutMs: uniswapApiDefaultRequestTimeoutMs, label: "uniswap_api" },
+    async (signal) => {
+      const response = await context.fetcher(buildUniswapApiUrl(input.path), {
+        method: input.method,
+        headers: {
+          "accept": "application/json",
+          "content-type": "application/json",
+          "user-agent": providerUserAgent,
+          "x-api-key": context.apiKey,
+          ...input.headers,
+        },
+        body: JSON.stringify(input.body),
+        signal,
+      });
+      const payload = await readJsonPayload(response);
+      if (!response.ok) {
+        throw createUniswapApiError(response.status, payload);
+      }
 
-    return readRequiredObject(payload, "payload");
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-    if (timeout.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "uniswap_api request timed out");
-    }
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `uniswap_api request failed: ${error.message}` : "uniswap_api request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+      return readRequiredObject(payload, "payload");
+    },
+  );
 }
 
 function buildUniswapApiUrl(path: string): URL {

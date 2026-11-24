@@ -9,12 +9,9 @@ import type { Docsend2PdfActionName } from "./actions.ts";
 import { Buffer } from "node:buffer";
 import { compactObject, optionalBoolean, optionalInteger, optionalString } from "../../core/cast.ts";
 import { assertPublicHttpUrl, readBoundedResponseBytes } from "../../core/request.ts";
-import {
-  defineProviderExecutors,
-  defineProviderProxy,
-  providerUserAgent,
-  ProviderRequestError,
-} from "../provider-runtime.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "docsend_2_pdf";
 const convertUrl = "https://docsend2pdf.com/api/convert";
@@ -69,7 +66,7 @@ async function convert(input: Record<string, unknown>, context: Docsend2PdfConte
   const response = await context.fetcher(convertUrl, {
     method: "POST",
     headers: {
-      accept: "application/pdf, application/json",
+      "accept": "application/pdf, application/json",
       "content-type": "application/json",
       "user-agent": providerUserAgent,
     },

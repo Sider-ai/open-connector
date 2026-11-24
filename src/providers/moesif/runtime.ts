@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -17,11 +17,13 @@ import {
   providerFetch,
   ProviderRequestError,
   providerUserAgent,
+  requiredInputString,
+  providerInputError,
+  providerResponseError,
 } from "../provider-runtime.ts";
 
 export const moesifApiBaseUrl = "https://api.moesif.com/v1";
 
-const moesifDefaultRequestTimeoutMs = 30_000;
 const defaultOrganizationId = "~";
 const defaultAppId = "~";
 const defaultTake = 20;
@@ -70,7 +72,7 @@ export const moesifActionHandlers: ProviderActionHandlers<"moesif", MoesifAction
       apiKey: context.apiKey,
       params: queryParams({
         take: readTake(input.take),
-        before_id: readOptionalTrimmedString(input.beforeId),
+        before_id: optionalString(input.beforeId),
       }),
       fetcher: context.fetcher,
       signal: context.signal,
@@ -86,9 +88,9 @@ export const moesifActionHandlers: ProviderActionHandlers<"moesif", MoesifAction
       path: buildOrganizationPath(input.organizationId, "workspaces"),
       apiKey: context.apiKey,
       params: queryParams({
-        app_id: readOptionalTrimmedString(input.appId) ?? defaultAppId,
+        app_id: optionalString(input.appId) ?? defaultAppId,
         take: readTake(input.take),
-        before_id: readOptionalTrimmedString(input.beforeId),
+        before_id: optionalString(input.beforeId),
       }),
       repeatedParams: {
         access: readRequiredStringList(input.access, "access"),
@@ -107,11 +109,11 @@ export const moesifActionHandlers: ProviderActionHandlers<"moesif", MoesifAction
       path: buildOrganizationPath(
         input.organizationId,
         "workspaces",
-        readRequiredString(input.workspaceId, "workspaceId"),
+        requiredInputString(input.workspaceId, "workspaceId"),
       ),
       apiKey: context.apiKey,
       params: {
-        app_id: readOptionalTrimmedString(input.appId) ?? defaultAppId,
+        app_id: optionalString(input.appId) ?? defaultAppId,
       },
       fetcher: context.fetcher,
       signal: context.signal,
@@ -127,7 +129,7 @@ export const moesifActionHandlers: ProviderActionHandlers<"moesif", MoesifAction
       path: buildOrganizationPath(input.organizationId, "workspaces", "templates"),
       apiKey: context.apiKey,
       params: {
-        app_id: readOptionalTrimmedString(input.appId) ?? defaultAppId,
+        app_id: optionalString(input.appId) ?? defaultAppId,
       },
       fetcher: context.fetcher,
       signal: context.signal,
@@ -147,7 +149,7 @@ export async function validateMoesifCredential(
 ): Promise<CredentialValidationResult> {
   const payload = await requestMoesifJson({
     path: buildOrganizationPath(undefined, "apps"),
-    apiKey: requiredString(apiKey, "apiKey", (message) => new ProviderRequestError(400, message)),
+    apiKey: requiredString(apiKey, "apiKey", providerInputError),
     params: {
       take: "1",
     },
@@ -163,7 +165,6 @@ export async function validateMoesifCredential(
       accountId: firstApp?.id ?? "Moesif API Key",
       displayName: firstApp?.name ?? "Moesif API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: moesifApiBaseUrl,
       validationEndpoint: "/~/apps",
@@ -174,14 +175,14 @@ export async function validateMoesifCredential(
 }
 
 async function requestMoesifJson(input: MoesifRequestInput): Promise<unknown> {
-  const timeout = createProviderTimeout(input.signal, moesifDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   let response: Response;
   try {
     response = await input.fetcher(buildMoesifUrl(input.path, input.params, input.repeatedParams), {
       method: "GET",
       headers: {
-        accept: "application/json",
-        Authorization: `Bearer ${input.apiKey}`,
+        "accept": "application/json",
+        "Authorization": `Bearer ${input.apiKey}`,
         "user-agent": providerUserAgent,
       },
       signal: timeout.signal,
@@ -228,7 +229,7 @@ function buildMoesifUrl(
 
 function buildOrganizationPath(organizationId: unknown, ...segments: string[]): string {
   return [
-    encodeURIComponent(readOptionalTrimmedString(organizationId) ?? defaultOrganizationId),
+    encodeURIComponent(optionalString(organizationId) ?? defaultOrganizationId),
     ...segments.map((segment) => encodeURIComponent(segment)),
   ].join("/");
 }
@@ -254,7 +255,7 @@ function createMoesifError(status: number, payload: unknown, phase: "validate" |
   }
 
   if (phase === "validate" && status >= 400 && status < 500) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   if (phase === "execute" && (status === 401 || status === 403)) {
@@ -356,7 +357,7 @@ function normalizeWorkspace(payload: unknown): NormalizedWorkspace {
 function requireRecord(value: unknown, message: string): Record<string, unknown> {
   const record = optionalRecord(value);
   if (!record) {
-    throw new ProviderRequestError(502, message);
+    throw providerResponseError(message);
   }
   return record;
 }
@@ -365,22 +366,12 @@ function readTake(value: unknown): number {
   return optionalInteger(value) ?? defaultTake;
 }
 
-function readRequiredString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
-}
-
-function readOptionalTrimmedString(value: unknown): string | undefined {
-  return optionalString(value);
-}
-
 function readRequiredStringList(value: unknown, fieldName: string): string[] {
   if (!Array.isArray(value)) {
     throw new ProviderRequestError(400, `${fieldName} must be a string array`);
   }
 
-  const values = value
-    .map((item) => readOptionalTrimmedString(item))
-    .filter((item): item is string => item !== undefined);
+  const values = value.map((item) => optionalString(item)).filter((item): item is string => item !== undefined);
   if (values.length === 0) {
     throw new ProviderRequestError(400, `${fieldName} must include at least one value`);
   }

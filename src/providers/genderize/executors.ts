@@ -1,17 +1,17 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalNumber, optionalRecord, optionalString, stringArray } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "genderize";
 const genderizeApiBaseUrl = "https://api.genderize.io";
 const genderizeValidationName = "peter";
 
 type GenderizeRequestPhase = "validate" | "execute";
-type GenderizeActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type GenderizeActionHandler = (input: Record<string, unknown>, context: GenderizeActionContext) => Promise<unknown>;
+type GenderizeActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 export const genderizeActionHandlers: ProviderActionHandlers<"genderize", GenderizeActionHandler> = {
   async predict_gender(input, context) {
@@ -50,6 +50,16 @@ export const genderizeActionHandlers: ProviderActionHandlers<"genderize", Gender
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, genderizeActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: genderizeApiBaseUrl,
+  auth: { type: "api_key_query", name: "apikey" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const { response, payload } = await requestGenderize({
@@ -68,7 +78,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "genderize-api-key",
         displayName: "Genderize API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: genderizeApiBaseUrl,
         validationName: genderizeValidationName,
@@ -85,7 +94,7 @@ export const credentialValidators: CredentialValidators = {
 };
 
 async function requestGenderize(input: {
-  context: GenderizeActionContext;
+  context: ApiKeyProviderContext;
   phase: GenderizeRequestPhase;
   name?: string;
   names?: string[];
@@ -111,7 +120,7 @@ async function requestGenderize(input: {
     response = await input.context.fetcher(url.toString(), {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
       signal: input.context.signal,

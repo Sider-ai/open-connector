@@ -1,13 +1,16 @@
-import type { CredentialValidators, ExecutionContext, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type {
+  CredentialValidators,
+  ExecutionContext,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
-import {
-  defineProviderExecutors,
-  providerUserAgent,
-  ProviderRequestError,
-  requireApiKeyCredential,
-} from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "repairshopr";
 const repairshoprHostSuffix = ".repairshopr.com";
@@ -94,6 +97,16 @@ export const executors: ProviderExecutors = defineProviderExecutors<RepairshoprA
   },
 });
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  async baseUrl(context) {
+    const credential = await requireApiKeyCredential(context, service);
+    return readRepairshoprApiBaseUrl(credential.values, credential.metadata);
+  },
+  auth: { type: "api_key_header", name: "Authorization" },
+  defaultHeaders: { accept: "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const subdomain = readRepairshoprSubdomain(input.values.subdomain);
@@ -116,7 +129,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: userId === undefined ? `repairshopr:${subdomain}` : `repairshopr:${subdomain}:user:${userId}`,
         displayName: buildAccountLabel(user, subdomain),
       },
-      grantedScopes: [],
       metadata: compactObject({
         subdomain,
         apiBaseUrl,
@@ -163,8 +175,8 @@ async function requestRepairshoprJson(
     response = await input.fetcher(buildRepairshoprUrl(input.apiBaseUrl, input.path, input.query), {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: input.apiKey,
+        "accept": "application/json",
+        "authorization": input.apiKey,
         "user-agent": providerUserAgent,
       },
       signal: input.signal,

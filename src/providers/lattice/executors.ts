@@ -1,14 +1,17 @@
-import type { CredentialValidators, ExecutionContext, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type {
+  CredentialValidators,
+  ExecutionContext,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 import type { ProviderFetch } from "../provider-runtime.ts";
 
-import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import {
-  defineProviderExecutors,
-  providerUserAgent,
-  ProviderRequestError,
-  requireApiKeyCredential,
-} from "../provider-runtime.ts";
+import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError, requiredInputString } from "../provider-runtime.ts";
 
 const service = "lattice";
 const latticeUsApiBaseUrl = "https://api.latticehq.com";
@@ -47,7 +50,7 @@ export const latticeActionHandlers: ProviderActionHandlers<"lattice", LatticeAct
   get_user(input, context) {
     return getSingleLatticeResource(
       "user",
-      `/v1/user/${encodeURIComponent(readInputString(input.userId, "userId"))}`,
+      `/v1/user/${encodeURIComponent(requiredInputString(input.userId, "userId"))}`,
       context,
     );
   },
@@ -57,7 +60,7 @@ export const latticeActionHandlers: ProviderActionHandlers<"lattice", LatticeAct
   get_department(input, context) {
     return getSingleLatticeResource(
       "department",
-      `/v1/department/${encodeURIComponent(readInputString(input.departmentId, "departmentId"))}`,
+      `/v1/department/${encodeURIComponent(requiredInputString(input.departmentId, "departmentId"))}`,
       context,
     );
   },
@@ -72,7 +75,7 @@ export const latticeActionHandlers: ProviderActionHandlers<"lattice", LatticeAct
   get_goal(input, context) {
     return getSingleLatticeResource(
       "goal",
-      `/v1/goal/${encodeURIComponent(readInputString(input.goalId, "goalId"))}`,
+      `/v1/goal/${encodeURIComponent(requiredInputString(input.goalId, "goalId"))}`,
       context,
     );
   },
@@ -90,6 +93,17 @@ export const executors: ProviderExecutors = defineProviderExecutors<LatticeActio
       signal: context.signal,
     };
   },
+});
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  async baseUrl(context) {
+    const credential = await requireApiKeyCredential(context, service);
+    return resolveLatticeApiBaseUrl(credential.metadata, credential.values.dataResidency);
+  },
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
 });
 
 export const credentialValidators: CredentialValidators = {
@@ -120,7 +134,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: userId ? `lattice:${dataResidency}:${userId}` : `lattice:${dataResidency}:api_key`,
         displayName: name ?? email ?? `Lattice ${dataResidency.toUpperCase()} API Key`,
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl,
         dataResidency,
@@ -191,8 +204,8 @@ async function latticeRequest(input: LatticeRequestOptions): Promise<unknown> {
     response = await input.context.fetcher(buildLatticeUrl(input.context.apiBaseUrl, input.path, input.query), {
       method: input.method,
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${input.context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${input.context.apiKey}`,
         "user-agent": providerUserAgent,
       },
       signal: input.context.signal,
@@ -285,8 +298,4 @@ function resolveLatticeApiBaseUrl(metadata: Record<string, unknown>, dataResiden
   }
 
   return buildLatticeApiBaseUrl(normalizeLatticeDataResidency(metadata.dataResidency ?? dataResidency));
-}
-
-function readInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }

@@ -1,7 +1,9 @@
 import type { ExecutionContext, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
 import type { InfluxdbCloudActionContext } from "./runtime.ts";
 
-import { defineProviderExecutors, defineProviderProxy, requireApiKeyCredential } from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import { influxdbCloudActionHandlers, resolveInfluxdbCloudApiBaseUrl } from "./runtime.ts";
 
 const service = "influxdb_cloud";
@@ -28,9 +30,5 @@ export const proxy: ProviderProxyExecutor = defineProviderProxy({
     return resolveInfluxdbCloudApiBaseUrl(credential.metadata.apiBaseUrl ?? credential.values.apiBaseUrl);
   },
   auth: { type: "api_key_authorization", prefix: "Token " },
-  customizeRequest({ headers }) {
-    if (!headers.has("accept")) {
-      headers.set("accept", "application/json");
-    }
-  },
+  defaultHeaders: { accept: "application/json" },
 });

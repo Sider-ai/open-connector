@@ -1,18 +1,17 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { optionalRecord, optionalString, requiredRecord, requiredString } from "../../core/cast.ts";
 import {
   createProviderTimeout,
+  providerInputError,
   ProviderRequestError,
   providerUserAgent,
   readProviderJsonBody,
 } from "../provider-runtime.ts";
 
 export const ciscoMerakiApiBaseUrl = "https://api.meraki.com/api/v1";
-
-const ciscoMerakiRequestTimeoutMs = 30_000;
 
 type CiscoMerakiRequestPhase = "validate" | "execute";
 
@@ -46,7 +45,7 @@ export const ciscoMerakiActionHandlers: ProviderActionHandlers<
     };
   },
   async list_organization_networks(input, context) {
-    const organizationId = requiredString(input.organizationId, "organizationId", inputError);
+    const organizationId = requiredString(input.organizationId, "organizationId", providerInputError);
     const result = await requestCiscoMerakiList(
       {
         path: `/organizations/${encodeURIComponent(organizationId)}/networks`,
@@ -62,7 +61,7 @@ export const ciscoMerakiActionHandlers: ProviderActionHandlers<
     };
   },
   async list_organization_inventory_devices(input, context) {
-    const organizationId = requiredString(input.organizationId, "organizationId", inputError);
+    const organizationId = requiredString(input.organizationId, "organizationId", providerInputError);
     const result = await requestCiscoMerakiList(
       {
         path: `/organizations/${encodeURIComponent(organizationId)}/inventory/devices`,
@@ -78,7 +77,7 @@ export const ciscoMerakiActionHandlers: ProviderActionHandlers<
     };
   },
   async get_device(input, context) {
-    const serial = requiredString(input.serial, "serial", inputError);
+    const serial = requiredString(input.serial, "serial", providerInputError);
     const payload = await requestCiscoMeraki(
       {
         path: `/devices/${encodeURIComponent(serial)}`,
@@ -118,9 +117,7 @@ export async function validateCiscoMerakiCredential(
     profile: {
       accountId: firstOrganizationId,
       displayName: firstOrganizationName ? `Cisco Meraki: ${firstOrganizationName}` : "Cisco Meraki API Key",
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: ciscoMerakiApiBaseUrl,
       validationEndpoint: "/organizations?perPage=3",
@@ -131,7 +128,7 @@ export async function validateCiscoMerakiCredential(
 
 async function requestCiscoMerakiList(
   request: CiscoMerakiRequest,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: CiscoMerakiRequestPhase,
 ): Promise<CiscoMerakiListResult> {
   const response = await requestCiscoMerakiResponse(request, context);
@@ -150,7 +147,7 @@ async function requestCiscoMerakiList(
 
 async function requestCiscoMeraki(
   request: CiscoMerakiRequest,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: CiscoMerakiRequestPhase,
 ): Promise<unknown> {
   const response = await requestCiscoMerakiResponse(request, context);
@@ -163,18 +160,18 @@ async function requestCiscoMeraki(
 
 async function requestCiscoMerakiResponse(
   request: CiscoMerakiRequest,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
 ): Promise<Response> {
   const url = new URL(request.path.startsWith("/") ? request.path.slice(1) : request.path, `${ciscoMerakiApiBaseUrl}/`);
   for (const [key, value] of request.search ?? []) {
     url.searchParams.append(key, value);
   }
 
-  const timeout = createProviderTimeout(context.signal, ciscoMerakiRequestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     return await context.fetcher(url, {
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
         "user-agent": providerUserAgent,
         "X-Cisco-Meraki-API-Key": context.apiKey,
@@ -254,10 +251,6 @@ function buildSearch(input: Record<string, unknown>, omittedKeys: readonly strin
     }
   }
   return search;
-}
-
-function inputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }
 
 function responseError(message: string): ProviderRequestError {

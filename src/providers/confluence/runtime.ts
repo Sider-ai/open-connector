@@ -1,5 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
 import {
@@ -13,12 +13,15 @@ import {
 import {
   createProviderTimeout,
   isAbortLikeError,
+  providerInputError,
   ProviderRequestError,
   providerUserAgent,
+  requiredInputString,
+  providerResponseError,
+  defaultProviderRequestTimeoutMs,
 } from "../provider-runtime.ts";
 
 export const confluenceValidationPath = "/spaces";
-export const confluenceDefaultTimeoutMs = 30_000;
 const defaultLimit = 25;
 const atlassianApiOrigin = "https://api.atlassian.com";
 
@@ -72,7 +75,7 @@ export const confluenceActionHandlers: ProviderActionHandlers<"confluence", Conf
       phase: "execute",
       apiVersion: "v1",
       query: compactObject({
-        cql: requireConfluenceString(input.cql, "cql"),
+        cql: requiredInputString(input.cql, "cql"),
         limit: optionalInteger(input.limit) ?? defaultLimit,
         cursor: optionalString(input.cursor),
       }),
@@ -98,7 +101,7 @@ export const confluenceActionHandlers: ProviderActionHandlers<"confluence", Conf
     const payload = await requestConfluenceJson({
       ...context,
       method: "GET",
-      path: `/pages/${encodeURIComponent(requireConfluenceString(input.pageId, "pageId"))}`,
+      path: `/pages/${encodeURIComponent(requiredInputString(input.pageId, "pageId"))}`,
       phase: "execute",
       notFoundAsInvalidInput: true,
       query: compactObject({
@@ -114,9 +117,9 @@ export const confluenceActionHandlers: ProviderActionHandlers<"confluence", Conf
       path: "/pages",
       phase: "execute",
       body: compactObject({
-        spaceId: requireConfluenceString(input.spaceId, "spaceId"),
+        spaceId: requiredInputString(input.spaceId, "spaceId"),
         status: optionalString(input.status) ?? "current",
-        title: requireConfluenceString(input.title, "title"),
+        title: requiredInputString(input.title, "title"),
         parentId: optionalString(input.parentId),
         body: buildPageBody(input),
       }),
@@ -127,13 +130,13 @@ export const confluenceActionHandlers: ProviderActionHandlers<"confluence", Conf
     const payload = await requestConfluenceJson({
       ...context,
       method: "PUT",
-      path: `/pages/${encodeURIComponent(requireConfluenceString(input.pageId, "pageId"))}`,
+      path: `/pages/${encodeURIComponent(requiredInputString(input.pageId, "pageId"))}`,
       phase: "execute",
       notFoundAsInvalidInput: true,
       body: compactObject({
-        id: requireConfluenceString(input.pageId, "pageId"),
+        id: requiredInputString(input.pageId, "pageId"),
         status: optionalString(input.status) ?? "current",
-        title: requireConfluenceString(input.title, "title"),
+        title: requiredInputString(input.title, "title"),
         body: buildOptionalPageBody(input),
         version: compactObject({
           number: optionalInteger(input.versionNumber),
@@ -179,9 +182,7 @@ export async function validateConfluenceCredential(
     profile: {
       accountId: `confluence:${host}:${email}`,
       displayName: `${email} (${host})`,
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: compactObject({
       siteUrl,
       baseUrl,
@@ -267,7 +268,7 @@ export async function requestConfluenceJson(input: ConfluenceRequestInput): Prom
     }
   }
 
-  const timeout = createProviderTimeout(input.signal, confluenceDefaultTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   let response: Response;
   let payload: unknown;
   try {
@@ -282,7 +283,7 @@ export async function requestConfluenceJson(input: ConfluenceRequestInput): Prom
     if (timeout.didTimeout() || isAbortLikeError(error)) {
       throw new ProviderRequestError(
         504,
-        `Confluence request timed out after ${Math.ceil(confluenceDefaultTimeoutMs / 1000)} seconds`,
+        `Confluence request timed out after ${Math.ceil(defaultProviderRequestTimeoutMs / 1000)} seconds`,
       );
     }
     if (error instanceof ProviderRequestError) {
@@ -309,8 +310,8 @@ function confluenceHeaders(input: ConfluenceRequestInput): Record<string, string
       ? `${input.auth.tokenType} ${input.auth.accessToken}`
       : `Basic ${Buffer.from(`${resolveConfluenceEmail(input.auth)}:${input.auth.apiToken}`).toString("base64")}`;
   const headers: Record<string, string> = {
-    Authorization: authorization,
-    Accept: "application/json",
+    "Authorization": authorization,
+    "Accept": "application/json",
     "User-Agent": providerUserAgent,
   };
   if (input.body !== undefined) {
@@ -339,13 +340,13 @@ function createConfluenceError(
 ): ProviderRequestError {
   const message = extractConfluenceErrorMessage(payload) ?? response.statusText ?? "Confluence request failed";
   if (phase === "validate" && (response.status === 401 || response.status === 403)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (notFoundAsInvalidInput && response.status === 404) {
     return new ProviderRequestError(404, message);
   }
   if (response.status === 400) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   return new ProviderRequestError(response.status || 502, message, payload);
 }
@@ -465,7 +466,7 @@ function readNextCursor(payload: Record<string, unknown>): string | null {
 function buildPageBody(input: Record<string, unknown>): Record<string, unknown> {
   return {
     representation: optionalString(input.bodyRepresentation) ?? "storage",
-    value: requireConfluenceString(input.body, "body"),
+    value: requiredInputString(input.body, "body"),
   };
 }
 
@@ -480,22 +481,14 @@ function buildOptionalPageBody(input: Record<string, unknown>): Record<string, u
   };
 }
 
-function requireConfluenceString(value: unknown, field: string): string {
-  return requiredString(value, field, providerInputError);
-}
-
 function requireObject(value: unknown, message: string): Record<string, unknown> {
   const object = optionalRecord(value);
   if (!object) {
-    throw new ProviderRequestError(502, message);
+    throw providerResponseError(message);
   }
   return object;
 }
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

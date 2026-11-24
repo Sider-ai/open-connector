@@ -4,21 +4,24 @@ import type {
   ProviderProxyExecutor,
   ProxyExecutionResult,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderRequestContext } from "../provider-runtime.ts";
 
-import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { compactObject, optionalBoolean, optionalRecord, optionalString } from "../../core/cast.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
 import {
-  createProviderFetch,
   createProviderProxyUrl,
-  defineApiKeyProviderExecutors,
   normalizeProviderProxyHeaders,
-  ProviderRequestError,
-  providerUserAgent,
   readProviderProxyErrorMessage,
   readProviderProxyResponse,
-  requireApiKeyCredential,
   toProviderProxyError,
+} from "../provider-proxy.ts";
+import {
+  createProviderFetch,
+  ProviderRequestError,
+  providerUserAgent,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 const service = "canny";
@@ -100,7 +103,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "canny",
         displayName: "Canny API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: cannyApiBaseUrl,
         validationEndpoint: "/v1/boards/list",
@@ -298,15 +300,11 @@ async function createComment(input: Record<string, unknown>, context: ApiKeyProv
   return { comment: { id: requiredInputString(requireObjectPayload(payload, "created comment").id, "id") } };
 }
 
-async function cannyRequest(
-  path: string,
-  body: Record<string, unknown>,
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">,
-) {
+async function cannyRequest(path: string, body: Record<string, unknown>, context: ProviderRequestContext) {
   const response = await context.fetcher(`${cannyApiBaseUrl}${path}`, {
     method: "POST",
     headers: {
-      accept: "application/json",
+      "accept": "application/json",
       "content-type": "application/json",
       "user-agent": providerUserAgent,
     },
@@ -352,16 +350,8 @@ function requireArrayField(value: unknown, fieldName: string) {
   return value;
 }
 
-function requiredInputString(value: unknown, fieldName: string) {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
-}
-
 function optionalInteger(value: unknown) {
   return typeof value === "number" && Number.isInteger(value) ? value : undefined;
-}
-
-function optionalBoolean(value: unknown) {
-  return typeof value === "boolean" ? value : undefined;
 }
 
 function optionalStringArray(value: unknown) {

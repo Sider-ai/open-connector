@@ -1,22 +1,21 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
-import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
+import { compactObject, optionalBoolean, optionalRecord, optionalString } from "../../core/cast.ts";
 import {
   createProviderTimeout,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
+  defaultProviderRequestTimeoutMs,
 } from "../provider-runtime.ts";
 
 export const browseAiApiBaseUrl = "https://api.browse.ai/v2/";
-const browseAiDefaultRequestTimeoutMs = 30_000;
 
 type BrowseAiQueryValue = string | number | boolean | undefined;
 type BrowseAiRequestPhase = "validate" | "execute";
-type BrowseAiActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type BrowseAiActionHandler = (input: Record<string, unknown>, context: BrowseAiActionContext) => Promise<unknown>;
+type BrowseAiActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 type BrowseAiInputParameterValue = string | number | string[];
 
 interface BrowseAiRobotInputParameterOption {
@@ -133,7 +132,7 @@ export const browseAiActionHandlers: ProviderActionHandlers<"browse_ai", BrowseA
       path: `robots/${encodeURIComponent(robotId)}/tasks`,
       method: "POST",
       body: compactObject({
-        recordVideo: readOptionalBoolean(input.recordVideo),
+        recordVideo: optionalBoolean(input.recordVideo),
         inputParameters: readOptionalInputParameters(input.inputParameters),
       }),
       fetcher: context.fetcher,
@@ -173,7 +172,7 @@ export const browseAiActionHandlers: ProviderActionHandlers<"browse_ai", BrowseA
         status: optionalString(input.status),
         robotBulkRunId: optionalString(input.robotBulkRunId),
         sort: optionalString(input.sort),
-        includeRetried: readOptionalBoolean(input.includeRetried),
+        includeRetried: optionalBoolean(input.includeRetried),
         fromDate: readOptionalInteger(input.fromDate),
         toDate: readOptionalInteger(input.toDate),
       }),
@@ -243,7 +242,6 @@ export async function validateBrowseAiCredential(
       accountId: firstRobot?.id ? `browse_ai:first_robot:${firstRobot.id}` : "browse_ai:api_key",
       displayName: "Browse AI API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: browseAiApiBaseUrl.slice(0, -1),
       validationEndpoint: "/robots",
@@ -255,7 +253,7 @@ export async function validateBrowseAiCredential(
 }
 
 async function requestBrowseAiJson(input: BrowseAiRequestInput): Promise<unknown> {
-  const timeout = createProviderTimeout(input.signal, browseAiDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   const url = new URL(input.path, browseAiApiBaseUrl);
   for (const [key, value] of Object.entries(input.query ?? {})) {
     if (value !== undefined) {
@@ -267,8 +265,8 @@ async function requestBrowseAiJson(input: BrowseAiRequestInput): Promise<unknown
   let payload: unknown;
   try {
     const headers = new Headers({
-      accept: "application/json",
-      authorization: `Bearer ${input.apiKey}`,
+      "accept": "application/json",
+      "authorization": `Bearer ${input.apiKey}`,
       "user-agent": providerUserAgent,
     });
     if (input.body !== undefined) {
@@ -286,7 +284,7 @@ async function requestBrowseAiJson(input: BrowseAiRequestInput): Promise<unknown
     if (timeout.didTimeout() && isAbortLikeError(error)) {
       throw new ProviderRequestError(
         504,
-        `browse_ai ${url.pathname} request timed out after ${Math.max(1, Math.ceil(browseAiDefaultRequestTimeoutMs / 1000))} seconds`,
+        `browse_ai ${url.pathname} request timed out after ${Math.max(1, Math.ceil(defaultProviderRequestTimeoutMs / 1000))} seconds`,
       );
     }
 
@@ -417,9 +415,9 @@ function normalizeRobotInputParameter(payload: Record<string, unknown>): BrowseA
     type: readRequiredResponseString(payload.type, "robot.inputParameters.type"),
     name: readRequiredResponseString(payload.name, "robot.inputParameters.name"),
     label: readRequiredResponseString(payload.label, "robot.inputParameters.label"),
-    required: readOptionalBoolean(payload.required) ?? false,
+    required: optionalBoolean(payload.required) ?? false,
   };
-  assignIfDefined(parameter, "encrypted", readOptionalBoolean(payload.encrypted));
+  assignIfDefined(parameter, "encrypted", optionalBoolean(payload.encrypted));
   assignIfDefined(parameter, "defaultValue", normalizeInputParameterValue(payload.defaultValue));
   assignIfDefined(parameter, "value", normalizeInputParameterValue(payload.value));
   assignIfDefined(parameter, "min", readOptionalNumber(payload.min));
@@ -444,11 +442,11 @@ function normalizeTask(payload: Record<string, unknown>): BrowseAiTask {
   assignIfDefined(task, "runByUserId", readNullableString(payload.runByUserId));
   assignIfDefined(task, "robotBulkRunId", readNullableString(payload.robotBulkRunId));
   assignIfDefined(task, "runByTaskMonitorId", readNullableString(payload.runByTaskMonitorId));
-  assignIfDefined(task, "runByAPI", readOptionalBoolean(payload.runByAPI));
+  assignIfDefined(task, "runByAPI", optionalBoolean(payload.runByAPI));
   assignIfDefined(task, "startedAt", readNullableInteger(payload.startedAt));
   assignIfDefined(task, "finishedAt", readNullableInteger(payload.finishedAt));
   assignIfDefined(task, "userFriendlyError", readNullableString(payload.userFriendlyError));
-  assignIfDefined(task, "triedRecordingVideo", readOptionalBoolean(payload.triedRecordingVideo));
+  assignIfDefined(task, "triedRecordingVideo", optionalBoolean(payload.triedRecordingVideo));
   assignIfDefined(task, "videoUrl", readNullableString(payload.videoUrl));
   assignIfDefined(task, "videoRemovedAt", readNullableInteger(payload.videoRemovedAt));
   assignIfDefined(task, "retriedOriginalTaskId", readNullableString(payload.retriedOriginalTaskId));
@@ -538,9 +536,9 @@ function readCookiesInput(value: unknown): Array<Record<string, unknown>> {
       domain: optionalString(cookie.domain),
       expirationDate: readOptionalInteger(cookie.expirationDate),
       path: optionalString(cookie.path),
-      secure: readOptionalBoolean(cookie.secure),
-      httpOnly: readOptionalBoolean(cookie.httpOnly),
-      hostOnly: readOptionalBoolean(cookie.hostOnly),
+      secure: optionalBoolean(cookie.secure),
+      httpOnly: optionalBoolean(cookie.httpOnly),
+      hostOnly: optionalBoolean(cookie.hostOnly),
     });
   });
 }
@@ -552,9 +550,9 @@ function normalizeCookie(payload: Record<string, unknown>): Record<string, unkno
     domain: optionalString(payload.domain),
     expirationDate: readOptionalInteger(payload.expirationDate),
     path: optionalString(payload.path),
-    secure: readOptionalBoolean(payload.secure),
-    httpOnly: readOptionalBoolean(payload.httpOnly),
-    hostOnly: readOptionalBoolean(payload.hostOnly),
+    secure: optionalBoolean(payload.secure),
+    httpOnly: optionalBoolean(payload.httpOnly),
+    hostOnly: optionalBoolean(payload.hostOnly),
   });
 }
 
@@ -720,10 +718,6 @@ function readRequiredBoolean(value: unknown, fieldName: string): boolean {
     throw new ProviderRequestError(502, `${fieldName} must be a boolean`);
   }
   return value;
-}
-
-function readOptionalBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
 }
 
 function assignIfDefined<T extends object, K extends keyof T>(target: T, key: K, value: T[K] | undefined): void {

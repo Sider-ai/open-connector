@@ -1,5 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { Buffer } from "node:buffer";
@@ -14,6 +14,7 @@ import { queryParams } from "../../core/request.ts";
 import {
   createProviderTimeout,
   isAbortSignalError,
+  providerInputError,
   providerUserAgent,
   ProviderRequestError,
 } from "../provider-runtime.ts";
@@ -21,7 +22,6 @@ import {
 export const textmagicApiBaseUrl = "https://rest.textmagic.com/api/v2";
 
 const textmagicValidationPath = "/user";
-const textmagicRequestTimeoutMs = 30_000;
 
 export interface TextmagicActionContext {
   apiKey: string;
@@ -57,7 +57,7 @@ export const textmagicActionHandlers: ProviderActionHandlers<"textmagic", Textma
         phase: "execute",
         body: compactObject({
           text: input.text,
-          phones: requiredStringArray(input.phones, "phones", invalidInput).join(","),
+          phones: requiredStringArray(input.phones, "phones", providerInputError).join(","),
           from: input.from,
           referenceId: input.referenceId,
           cutExtra: input.cutExtra,
@@ -146,7 +146,6 @@ export async function validateTextmagicCredential(
       accountId: userId === undefined ? `textmagic:${accountUsername}` : `textmagic:${userId}`,
       displayName: fullName || email || `Textmagic (${accountUsername})`,
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: textmagicApiBaseUrl,
       validationEndpoint: textmagicValidationPath,
@@ -158,7 +157,7 @@ export async function validateTextmagicCredential(
 }
 
 export function requireTextmagicUsername(value: unknown): string {
-  return requiredString(value, "Textmagic username", invalidInput);
+  return requiredString(value, "Textmagic username", providerInputError);
 }
 
 export function textmagicAuthorization(username: string, apiKey: string): string {
@@ -174,15 +173,15 @@ async function requestTextmagicJson(
     url.searchParams.set(name, value);
   }
 
-  const timeout = createProviderTimeout(context.signal, textmagicRequestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   let response: Response;
   let payload: unknown;
   try {
     response = await context.fetcher(url, {
       method: input.method ?? "GET",
       headers: {
-        accept: "application/json",
-        authorization: textmagicAuthorization(context.username, context.apiKey),
+        "accept": "application/json",
+        "authorization": textmagicAuthorization(context.username, context.apiKey),
         ...(input.body ? { "content-type": "application/json" } : {}),
         "user-agent": providerUserAgent,
       },
@@ -252,8 +251,4 @@ function readPositiveInteger(value: unknown, fieldName: string): number {
     throw new ProviderRequestError(400, `${fieldName} must be a positive integer`);
   }
   return Number(value);
-}
-
-function invalidInput(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

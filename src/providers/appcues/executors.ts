@@ -1,14 +1,11 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
-import {
-  defineProviderExecutors,
-  defineProviderProxy,
-  ProviderRequestError,
-  providerUserAgent,
-  requireApiKeyCredential,
-} from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 interface Context {
   accountId: string;
   baseUrl: string;
@@ -21,7 +18,11 @@ async function request(suffix: string, method: string, context: Context): Promis
     new URL(`/v2/accounts/${encodeURIComponent(context.accountId)}/${suffix}`, context.baseUrl),
     {
       method,
-      headers: { accept: "application/json", authorization: context.authorization, "user-agent": providerUserAgent },
+      headers: {
+        "accept": "application/json",
+        "authorization": context.authorization,
+        "user-agent": providerUserAgent,
+      },
       signal: context.signal,
     },
   );
@@ -92,7 +93,6 @@ export const credentialValidators: CredentialValidators = {
     });
     return {
       profile: { accountId: resolved.accountId, displayName: `Appcues Account ${resolved.accountId}` },
-      grantedScopes: [],
       metadata: {
         accountId: resolved.accountId,
         region: resolved.region,

@@ -1,21 +1,20 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
+  optionalBooleanOrNull,
   optionalInteger,
   optionalRecord,
   optionalString,
+  rawStringOrNull,
   requiredRecord,
-  requiredString,
 } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { providerUserAgent, ProviderRequestError, requiredInputString } from "../provider-runtime.ts";
 
-const marketstackApiBaseUrl = "https://api.marketstack.com/v2";
+export const marketstackApiBaseUrl = "https://api.marketstack.com/v2";
 
-type MarketstackActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type MarketstackActionHandler = (input: Record<string, unknown>, context: MarketstackActionContext) => Promise<unknown>;
+type MarketstackActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 type MarketstackQueryValue = string | number | undefined;
 
 export const marketstackActionHandlers: ProviderActionHandlers<"marketstack", MarketstackActionHandler> = {
@@ -51,7 +50,6 @@ export async function validateMarketstackCredential(
       accountId: "marketstack",
       displayName: "Marketstack API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       validationEndpoint: "/currencies",
       apiBaseUrl: marketstackApiBaseUrl,
@@ -61,7 +59,7 @@ export async function validateMarketstackCredential(
   };
 }
 
-async function listTickers(input: Record<string, unknown>, context: MarketstackActionContext): Promise<unknown> {
+async function listTickers(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await marketstackGet(
     "/tickers",
     {
@@ -81,7 +79,7 @@ async function listTickers(input: Record<string, unknown>, context: MarketstackA
   };
 }
 
-async function getTickerInfo(input: Record<string, unknown>, context: MarketstackActionContext): Promise<unknown> {
+async function getTickerInfo(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const ticker = requiredInputString(input.ticker, "ticker");
   const payload = await marketstackGet(`/tickers/${encodeURIComponent(ticker)}`, {}, context);
 
@@ -90,7 +88,7 @@ async function getTickerInfo(input: Record<string, unknown>, context: Marketstac
   };
 }
 
-async function getLatestEod(input: Record<string, unknown>, context: MarketstackActionContext): Promise<unknown> {
+async function getLatestEod(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await marketstackGet(
     "/eod/latest",
     {
@@ -105,7 +103,7 @@ async function getLatestEod(input: Record<string, unknown>, context: Marketstack
   };
 }
 
-async function getHistoricalEod(input: Record<string, unknown>, context: MarketstackActionContext): Promise<unknown> {
+async function getHistoricalEod(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await marketstackGet(
     "/eod",
     {
@@ -128,7 +126,7 @@ async function getHistoricalEod(input: Record<string, unknown>, context: Markets
   };
 }
 
-async function listExchanges(input: Record<string, unknown>, context: MarketstackActionContext): Promise<unknown> {
+async function listExchanges(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await marketstackGet(
     "/exchanges",
     {
@@ -147,7 +145,7 @@ async function listExchanges(input: Record<string, unknown>, context: Marketstac
   };
 }
 
-async function listCurrencies(input: Record<string, unknown>, context: MarketstackActionContext): Promise<unknown> {
+async function listCurrencies(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await marketstackGet(
     "/currencies",
     {
@@ -168,7 +166,7 @@ async function listCurrencies(input: Record<string, unknown>, context: Marketsta
 async function marketstackGet(
   path: string,
   query: Record<string, MarketstackQueryValue>,
-  context: MarketstackActionContext,
+  context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
   const url = new URL(path.replace(/^\//, ""), `${marketstackApiBaseUrl}/`);
   for (const [key, value] of Object.entries(compactObject({ ...query, access_key: context.apiKey }))) {
@@ -180,7 +178,7 @@ async function marketstackGet(
     response = await context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
       signal: context.signal,
@@ -253,22 +251,22 @@ function normalizePagination(input: Record<string, unknown>): Record<string, unk
 
 function normalizeTickerSummary(input: Record<string, unknown>): Record<string, unknown> {
   return {
-    name: nullableString(input.name),
-    ticker: nullableString(input.ticker),
-    hasEod: nullableBoolean(input.has_eod),
-    hasIntraday: nullableBoolean(input.has_intraday),
+    name: rawStringOrNull(input.name),
+    ticker: rawStringOrNull(input.ticker),
+    hasEod: optionalBooleanOrNull(input.has_eod),
+    hasIntraday: optionalBooleanOrNull(input.has_intraday),
     stockExchange: normalizeOptionalStockExchange(optionalRecord(input.stock_exchange)),
   };
 }
 
 function normalizeTickerInfo(input: Record<string, unknown>): Record<string, unknown> {
   return {
-    name: nullableString(input.name),
-    ticker: nullableString(input.ticker),
-    exchangeCode: nullableString(input.exchange_code),
-    website: nullableString(input.website),
-    sector: nullableString(input.sector),
-    industry: nullableString(input.industry),
+    name: rawStringOrNull(input.name),
+    ticker: rawStringOrNull(input.ticker),
+    exchangeCode: rawStringOrNull(input.exchange_code),
+    website: rawStringOrNull(input.website),
+    sector: rawStringOrNull(input.sector),
+    industry: rawStringOrNull(input.industry),
     address: normalizeOptionalAddress(optionalRecord(input.address)),
   };
 }
@@ -280,11 +278,11 @@ function normalizeEod(input: Record<string, unknown>): Record<string, unknown> {
     low: nullableNumber(input.low),
     close: nullableNumber(input.close),
     volume: nullableNumber(input.volume),
-    date: nullableString(input.date),
-    symbol: nullableString(input.symbol),
-    exchange: nullableString(input.exchange),
-    exchangeCode: nullableString(input.exchange_code),
-    name: nullableString(input.name),
+    date: rawStringOrNull(input.date),
+    symbol: rawStringOrNull(input.symbol),
+    exchange: rawStringOrNull(input.exchange),
+    exchangeCode: rawStringOrNull(input.exchange_code),
+    name: rawStringOrNull(input.name),
     adjOpen: nullableNumber(input.adj_open),
     adjHigh: nullableNumber(input.adj_high),
     adjLow: nullableNumber(input.adj_low),
@@ -292,32 +290,32 @@ function normalizeEod(input: Record<string, unknown>): Record<string, unknown> {
     adjVolume: nullableNumber(input.adj_volume),
     dividend: nullableNumber(input.dividend),
     splitFactor: nullableNumber(input.split_factor),
-    assetType: nullableString(input.asset_type),
-    priceCurrency: nullableString(input.price_currency),
+    assetType: rawStringOrNull(input.asset_type),
+    priceCurrency: rawStringOrNull(input.price_currency),
   };
 }
 
 function normalizeExchange(input: Record<string, unknown>): Record<string, unknown> {
   return {
-    mic: nullableString(input.mic),
-    acronym: nullableString(input.acronym),
-    name: nullableString(input.name),
-    city: nullableString(input.city),
-    country: nullableString(input.country),
-    countryCode: nullableString(input.country_code),
-    currency: nullableString(input.currency),
-    website: nullableString(input.website),
-    exchangeStatus: nullableString(input.exchange_status),
-    operatingMic: nullableString(input.operating_mic),
+    mic: rawStringOrNull(input.mic),
+    acronym: rawStringOrNull(input.acronym),
+    name: rawStringOrNull(input.name),
+    city: rawStringOrNull(input.city),
+    country: rawStringOrNull(input.country),
+    countryCode: rawStringOrNull(input.country_code),
+    currency: rawStringOrNull(input.currency),
+    website: rawStringOrNull(input.website),
+    exchangeStatus: rawStringOrNull(input.exchange_status),
+    operatingMic: rawStringOrNull(input.operating_mic),
   };
 }
 
 function normalizeCurrency(input: Record<string, unknown>): Record<string, unknown> {
   return {
-    code: nullableString(input.code),
-    name: nullableString(input.name),
-    symbol: nullableString(input.symbol),
-    symbolNative: nullableString(input.symbol_native),
+    code: rawStringOrNull(input.code),
+    name: rawStringOrNull(input.name),
+    symbol: rawStringOrNull(input.symbol),
+    symbolNative: rawStringOrNull(input.symbol_native),
   };
 }
 
@@ -327,9 +325,9 @@ function normalizeOptionalStockExchange(input: Record<string, unknown> | undefin
   }
 
   return {
-    mic: nullableString(input.mic),
-    name: nullableString(input.name),
-    acronym: nullableString(input.acronym),
+    mic: rawStringOrNull(input.mic),
+    name: rawStringOrNull(input.name),
+    acronym: rawStringOrNull(input.acronym),
   };
 }
 
@@ -339,12 +337,12 @@ function normalizeOptionalAddress(input: Record<string, unknown> | undefined): R
   }
 
   return {
-    city: nullableString(input.city),
-    street1: nullableString(input.street1),
-    street2: nullableString(input.street2),
-    postalCode: nullableString(input.postal_code),
-    stateOrCountry: nullableString(input.state_or_country) ?? nullableString(input.stateOrCountry),
-    stateOrCountryDescription: nullableString(input.state_or_country_description),
+    city: rawStringOrNull(input.city),
+    street1: rawStringOrNull(input.street1),
+    street2: rawStringOrNull(input.street2),
+    postalCode: rawStringOrNull(input.postal_code),
+    stateOrCountry: rawStringOrNull(input.state_or_country) ?? rawStringOrNull(input.stateOrCountry),
+    stateOrCountryDescription: rawStringOrNull(input.state_or_country_description),
   };
 }
 
@@ -366,18 +364,6 @@ function requiredInteger(value: unknown, fieldName: string): number {
   return value;
 }
 
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
-}
-
-function nullableString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
-}
-
 function nullableNumber(value: unknown): number | null {
   return typeof value === "number" ? value : null;
-}
-
-function nullableBoolean(value: unknown): boolean | null {
-  return typeof value === "boolean" ? value : null;
 }

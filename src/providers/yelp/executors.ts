@@ -1,9 +1,10 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { compactObject, optionalBoolean, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "yelp";
 const yelpApiBaseUrl = "https://api.yelp.com";
@@ -76,6 +77,14 @@ export const yelpActionHandlers: ProviderActionHandlers<"yelp", YelpActionHandle
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, yelpActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: yelpApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = await requestYelpJson({
@@ -98,7 +107,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "yelp-api-key",
         displayName: "Yelp API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: yelpApiBaseUrl,
         validationEndpoint: yelpValidationPath,
@@ -111,7 +119,7 @@ export const credentialValidators: CredentialValidators = {
 async function requestYelpJson(input: {
   path: string;
   query: Record<string, YelpQueryValue>;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   phase: "validate" | "execute";
 }): Promise<unknown> {
   let response: Response;
@@ -150,8 +158,8 @@ function buildYelpUrl(path: string, query: Record<string, YelpQueryValue>): stri
 
 function yelpHeaders(apiKey: string): Headers {
   return new Headers({
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "user-agent": providerUserAgent,
   });
 }

@@ -1,6 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -9,17 +8,16 @@ import {
   optionalNumber,
   optionalRecord,
   optionalString,
-  requiredString,
 } from "../../core/cast.ts";
 import {
   createProviderTimeout,
   isAbortLikeError,
   ProviderRequestError,
   providerUserAgent,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 const theDogApiBaseUrl = "https://api.thedogapi.com/v1/";
-const defaultTimeoutMs = 30_000;
 
 type TheDogApiMethod = "GET" | "POST" | "DELETE";
 type TheDogApiHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
@@ -147,7 +145,6 @@ export async function validateTheDogApiCredential(
   const breed = normalizeBreed(arrayPayload(payload, "The Dog API validation response")[0]);
   return {
     profile: { accountId: "the_dog_api:api-key", displayName: "The Dog API Key" },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: "https://api.thedogapi.com/v1",
       validationEndpoint: "/breeds",
@@ -191,12 +188,12 @@ function buildAccountRecordQuery(input: Record<string, unknown>): Record<string,
 async function requestTheDogApiJson(input: {
   method: TheDogApiMethod;
   path: string;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   query?: Record<string, string | undefined>;
   body?: Record<string, unknown>;
   phase?: "validate" | "execute";
 }): Promise<unknown> {
-  const timeout = createProviderTimeout(input.context.signal, defaultTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   const url = new URL(input.path.startsWith("/") ? input.path.slice(1) : input.path, theDogApiBaseUrl);
   for (const [key, value] of Object.entries(input.query ?? {})) {
     if (value !== undefined) url.searchParams.set(key, value);
@@ -205,7 +202,7 @@ async function requestTheDogApiJson(input: {
     const response = await input.context.fetcher(url, {
       method: input.method,
       headers: compactObject({
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": input.body ? "application/json" : undefined,
         "user-agent": providerUserAgent,
         "x-api-key": input.context.apiKey,
@@ -303,10 +300,6 @@ function normalizeCategory(payload: unknown): (Record<string, unknown> & { id: s
 
 function mutationPayload(payload: unknown): Record<string, unknown> {
   return optionalRecord(payload) ?? { message: typeof payload === "string" ? payload : "ok" };
-}
-
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function stringifyInteger(value: number | undefined): string | undefined {

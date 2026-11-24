@@ -1,9 +1,9 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
-import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { booleanString, compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
+import { providerUserAgent, ProviderRequestError, requiredInputString } from "../provider-runtime.ts";
 
 export const statsigApiBaseUrl = "https://statsigapi.net";
 export const statsigApiVersion = "20240601";
@@ -11,8 +11,7 @@ export const statsigApiVersion = "20240601";
 type StatsigRequestPhase = "validate" | "execute";
 type StatsigRequestMethod = "GET";
 type StatsigQueryValue = string | number | boolean | readonly (string | number | boolean)[] | null | undefined;
-type StatsigActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type StatsigActionHandler = (input: Record<string, unknown>, context: StatsigActionContext) => Promise<unknown>;
+type StatsigActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 interface StatsigRequestOptions {
   apiKey: string;
@@ -46,9 +45,9 @@ export const statsigActionHandlers: ProviderActionHandlers<"statsig", StatsigAct
   },
   get_gate(input, context) {
     return readSingleStatsigData({
-      path: `/console/v1/gates/${encodeURIComponent(readRequiredString(input.id, "id"))}`,
+      path: `/console/v1/gates/${encodeURIComponent(requiredInputString(input.id, "id"))}`,
       query: {
-        includeArchiveMetadata: optionalBooleanString(input.includeArchiveMetadata),
+        includeArchiveMetadata: booleanString(input.includeArchiveMetadata),
       },
       apiKey: context.apiKey,
       fetcher: context.fetcher,
@@ -68,7 +67,7 @@ export const statsigActionHandlers: ProviderActionHandlers<"statsig", StatsigAct
   },
   get_dynamic_config(input, context) {
     return readSingleStatsigData({
-      path: `/console/v1/dynamic_configs/${encodeURIComponent(readRequiredString(input.id, "id"))}`,
+      path: `/console/v1/dynamic_configs/${encodeURIComponent(requiredInputString(input.id, "id"))}`,
       apiKey: context.apiKey,
       fetcher: context.fetcher,
       signal: context.signal,
@@ -87,7 +86,7 @@ export const statsigActionHandlers: ProviderActionHandlers<"statsig", StatsigAct
   },
   get_segment(input, context) {
     return readSingleStatsigData({
-      path: `/console/v1/segments/${encodeURIComponent(readRequiredString(input.id, "id"))}`,
+      path: `/console/v1/segments/${encodeURIComponent(requiredInputString(input.id, "id"))}`,
       apiKey: context.apiKey,
       fetcher: context.fetcher,
       signal: context.signal,
@@ -121,7 +120,6 @@ export async function validateStatsigCredential(
       accountId: projectId ? `statsig:${projectId}` : "statsig:project",
       displayName: projectId ? `Statsig ${projectId}` : "Statsig Project",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: statsigApiBaseUrl,
       apiVersion: statsigApiVersion,
@@ -156,7 +154,7 @@ async function requestStatsig(options: StatsigRequestOptions): Promise<Record<st
     response = await options.fetcher(buildStatsigUrl(options.path, options.query), {
       method: options.method ?? "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "statsig-api-key": options.apiKey,
         "statsig-api-version": statsigApiVersion,
         "user-agent": providerUserAgent,
@@ -250,9 +248,9 @@ function buildListGatesQuery(input: Record<string, unknown>): Record<string, Sta
     releasePipelineID: optionalString(input.releasePipelineID),
     teamID: optionalString(input.teamID),
     targetAppID: optionalString(input.targetAppID),
-    includeArchived: optionalBooleanString(input.includeArchived),
-    includeArchiveMetadata: optionalBooleanString(input.includeArchiveMetadata),
-    store0100Exposures: optionalBooleanString(input.store0100Exposures),
+    includeArchived: booleanString(input.includeArchived),
+    includeArchiveMetadata: booleanString(input.includeArchiveMetadata),
+    store0100Exposures: booleanString(input.store0100Exposures),
     creatorName: optionalString(input.creatorName),
     creatorID: optionalString(input.creatorID),
     tags: readOptionalArray(input.tags),
@@ -281,14 +279,6 @@ function buildPagingQuery(input: Record<string, unknown>): Record<string, Statsi
     limit: optionalInteger(input.limit),
     page: optionalInteger(input.page),
   };
-}
-
-function optionalBooleanString(value: unknown): string | undefined {
-  return typeof value === "boolean" ? String(value) : undefined;
-}
-
-function readRequiredString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function readArray(value: unknown, fieldName: string): unknown[] {

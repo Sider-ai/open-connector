@@ -1,5 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 import type { ProviderFetch } from "../provider-runtime.ts";
 
 import {
@@ -11,8 +11,8 @@ import {
   optionalString,
   requiredString,
 } from "../../core/cast.ts";
-import { assertPublicHttpUrl } from "../../core/request.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { assertPublicHttpUrl, isPrivateNetworkAccessAllowed } from "../../core/request.ts";
+import { providerUserAgent, ProviderRequestError, requiredInputString } from "../provider-runtime.ts";
 
 export const outlineCloudApiBaseUrl = "https://app.getoutline.com/api";
 
@@ -95,7 +95,6 @@ export async function validateOutlineCredential(
       accountId: userId,
       displayName: userName ?? userEmail ?? "Outline API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       baseUrl: apiBaseUrl,
       validationEndpoint: "/auth.info",
@@ -141,7 +140,7 @@ function getCollection(input: Record<string, unknown>, context: OutlineActionCon
     signal: context.signal,
     phase: "execute",
     body: {
-      id: requireInputString(input.id, "id"),
+      id: requiredInputString(input.id, "id"),
     },
   }).then((payload) => ({
     collection: normalizeCollection(requireResponseObject(readData(payload), "collections.info.data")),
@@ -157,7 +156,7 @@ function listCollectionDocuments(input: Record<string, unknown>, context: Outlin
     signal: context.signal,
     phase: "execute",
     body: {
-      id: requireInputString(input.id, "id"),
+      id: requiredInputString(input.id, "id"),
     },
   }).then((payload) => ({
     tree: requireResponseObjectArray(readData(payload), "collections.documents.data").map((item) =>
@@ -202,7 +201,7 @@ function searchDocuments(input: Record<string, unknown>, context: OutlineActionC
     signal: context.signal,
     phase: "execute",
     body: compactObject({
-      query: requireInputString(input.query, "query"),
+      query: requiredInputString(input.query, "query"),
       offset: optionalInteger(input.offset),
       limit: optionalInteger(input.limit),
       userId: optionalString(input.userId),
@@ -278,8 +277,8 @@ async function requestOutlineJson(options: OutlineRequestOptions): Promise<unkno
 
 function buildOutlineHeaders(apiKey: string) {
   return {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "content-type": "application/json",
     "user-agent": providerUserAgent,
   };
@@ -466,11 +465,15 @@ function readData(payload: unknown) {
   return record.data;
 }
 
-export function normalizeOutlineBaseUrl(value: unknown): string {
+export function normalizeOutlineBaseUrl(
+  value: unknown,
+  allowPrivateNetwork: boolean = isPrivateNetworkAccessAllowed(),
+): string {
   const candidate = optionalString(value) ?? outlineCloudApiBaseUrl;
   const parsed = assertPublicHttpUrl(candidate, {
     fieldName: "baseUrl",
     createError: (message) => new ProviderRequestError(400, message),
+    allowPrivateNetwork,
   });
   if (parsed.protocol !== "https:") {
     throw new ProviderRequestError(400, "baseUrl must use https");
@@ -502,10 +505,6 @@ function requireResponseObjectArray(value: unknown, label: string) {
   }
 
   return value.map((item, index) => requireResponseObject(item, `${label}[${index}]`));
-}
-
-function requireInputString(value: unknown, fieldName: string) {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function requireResponseString(value: unknown, fieldName: string) {

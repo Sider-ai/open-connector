@@ -1,17 +1,26 @@
-import type { CredentialValidators, ExecutionContext, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type {
+  CredentialValidators,
+  ExecutionContext,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
-import { assertPublicHttpUrl } from "../../core/request.ts";
+import { assertPublicHttpUrl, isPrivateNetworkAccessAllowed } from "../../core/request.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
-  defineProviderExecutors,
+  createProviderFetch,
+  isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
-  requireApiKeyCredential,
+  requiredResponseRecord,
+  defaultProviderRequestTimeoutMs,
 } from "../provider-runtime.ts";
 
 const service = "flowiseai";
-const flowiseaiRequestTimeoutMs = 30_000;
 
 type FlowiseaiRequestPhase = "validate" | "execute";
 type FlowiseaiActionHandler = (input: Record<string, unknown>, context: FlowiseaiActionContext) => Promise<unknown>;
@@ -104,17 +113,30 @@ export const executors: ProviderExecutors = defineProviderExecutors<FlowiseaiAct
       signal: context.signal,
     };
   },
+  allowPrivateNetwork: isPrivateNetworkAccessAllowed,
+});
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  async baseUrl(context) {
+    const credential = await requireApiKeyCredential(context, service);
+    return normalizeBaseUrl(credential.metadata.baseUrl ?? credential.values.baseUrl);
+  },
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  allowPrivateNetwork: isPrivateNetworkAccessAllowed,
+  defaultHeaders: { accept: "application/json" },
 });
 
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const baseUrl = normalizeBaseUrl(input.values.baseUrl);
+    const guardedFetcher = createProviderFetch({ fetch: fetcher, allowPrivateNetwork: isPrivateNetworkAccessAllowed });
     const chatflow = normalizeChatflow(
       await requestFlowiseJson({
         baseUrl,
         apiKey: input.apiKey,
         path: `/chatflows/apikey/${encodeURIComponent(input.apiKey)}`,
-        fetcher,
+        fetcher: guardedFetcher,
         signal,
         phase: "validate",
       }),
@@ -125,7 +147,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: chatflow.id,
         displayName: chatflow.name || "FlowiseAI Chatflow API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         baseUrl,
         chatflowId: chatflow.id,
@@ -142,15 +163,15 @@ export const credentialValidators: CredentialValidators = {
 };
 
 async function requestFlowiseJson(input: FlowiseaiRequestInput): Promise<unknown> {
-  const timeoutSignal = AbortSignal.timeout(flowiseaiRequestTimeoutMs);
+  const timeoutSignal = AbortSignal.timeout(defaultProviderRequestTimeoutMs);
   const signal = input.signal ? AbortSignal.any([input.signal, timeoutSignal]) : timeoutSignal;
 
   try {
     const response = await input.fetcher(buildFlowiseUrl(input.baseUrl, input.path), {
       method: input.method ?? "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${input.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${input.apiKey}`,
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },
@@ -168,7 +189,7 @@ async function requestFlowiseJson(input: FlowiseaiRequestInput): Promise<unknown
     if (error instanceof ProviderRequestError) {
       throw error;
     }
-    if (timeoutSignal.aborted && isAbortError(error)) {
+    if (timeoutSignal.aborted && isAbortLikeError(error)) {
       throw new ProviderRequestError(504, "FlowiseAI request timed out", error);
     }
 
@@ -244,7 +265,7 @@ function readFlowiseErrorMessage(payload: unknown): string | undefined {
 }
 
 function normalizeChatflow(payload: unknown): FlowiseaiChatflowResponse {
-  const record = readObject(payload, "chatflow response");
+  const record = requiredResponseRecord(payload, "chatflow response");
   const id = requireProviderString(record.id, "id");
 
   return {
@@ -266,7 +287,7 @@ function normalizeChatflow(payload: unknown): FlowiseaiChatflowResponse {
 }
 
 function normalizePrediction(payload: unknown): Record<string, unknown> {
-  const record = readObject(payload, "prediction response");
+  const record = requiredResponseRecord(payload, "prediction response");
 
   return {
     text: readProviderString(record.text, "text"),
@@ -283,7 +304,7 @@ function normalizePrediction(payload: unknown): Record<string, unknown> {
 }
 
 function normalizeSourceDocument(value: unknown, index: number): Record<string, unknown> {
-  const record = readObject(value, `sourceDocuments[${index}]`);
+  const record = requiredResponseRecord(value, `sourceDocuments[${index}]`);
   const metadata = optionalRecord(record.metadata);
 
   return {
@@ -293,7 +314,7 @@ function normalizeSourceDocument(value: unknown, index: number): Record<string, 
 }
 
 function normalizeUsedTool(value: unknown, index: number): Record<string, unknown> {
-  const record = readObject(value, `usedTools[${index}]`);
+  const record = requiredResponseRecord(value, `usedTools[${index}]`);
 
   return {
     tool: readProviderString(record.tool, `usedTools[${index}].tool`),
@@ -308,7 +329,7 @@ function normalizeHistory(value: unknown): Array<Record<string, unknown>> | unde
   }
 
   return value.map((entry, index) => {
-    const record = readObject(entry, `history[${index}]`);
+    const record = requiredResponseRecord(entry, `history[${index}]`);
     const role = requireProviderString(record.role, `history[${index}].role`, 400);
     if (role !== "apiMessage" && role !== "userMessage") {
       throw new ProviderRequestError(400, `history[${index}].role must be apiMessage or userMessage`);
@@ -347,11 +368,9 @@ function normalizeBaseUrl(value: unknown): string {
   const url = assertPublicHttpUrl(raw, {
     fieldName: "baseUrl",
     createError: (message) => new ProviderRequestError(400, message),
+    allowPrivateNetwork: isPrivateNetworkAccessAllowed(),
   });
 
-  if (url.protocol !== "https:") {
-    throw new ProviderRequestError(400, "baseUrl must use https");
-  }
   if (url.username || url.password || url.search || url.hash) {
     throw new ProviderRequestError(400, "baseUrl must be a clean API root URL");
   }
@@ -372,14 +391,6 @@ function assertSendMessageInput(input: Record<string, unknown>): void {
   if (input.question === undefined && input.form === undefined && input.humanInput === undefined) {
     throw new ProviderRequestError(400, "Provide at least one of question, form, or humanInput.");
   }
-}
-
-function readObject(value: unknown, fieldName: string): Record<string, unknown> {
-  const record = optionalRecord(value);
-  if (!record) {
-    throw new ProviderRequestError(502, `${fieldName} must be an object`);
-  }
-  return record;
 }
 
 function readProviderBoolean(value: unknown, fieldName: string): boolean {
@@ -423,7 +434,7 @@ function readNullableObject(value: unknown): Record<string, unknown> | null {
     return null;
   }
 
-  return readObject(value, "FlowiseAI object field");
+  return requiredResponseRecord(value, "FlowiseAI object field");
 }
 
 function readNullableString(value: unknown): string | null {
@@ -454,8 +465,4 @@ function readChatflowType(value: unknown): FlowiseaiChatflowType {
 
 function stringifyRecordValues(input: Record<string, unknown>): Record<string, string> {
   return Object.fromEntries(Object.entries(input).map(([key, value]) => [key, value == null ? "" : String(value)]));
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
 }

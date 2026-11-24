@@ -1,14 +1,19 @@
 import type { CredentialValidationResult, ResolvedCredential } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
-import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { booleanString, compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
+import {
+  isAbortLikeError,
+  providerUserAgent,
+  ProviderRequestError,
+  requiredInputString,
+  defaultProviderRequestTimeoutMs,
+} from "../provider-runtime.ts";
 import { readAlpacaGrantedScopes } from "./scopes.ts";
 
 const paperTradingBaseUrl = "https://paper-api.alpaca.markets";
 const liveTradingBaseUrl = "https://api.alpaca.markets";
 const dataBaseUrl = "https://data.alpaca.markets";
-const requestTimeoutMs = 30_000;
 
 type Environment = "paper" | "live";
 type ApiFamily = "trading" | "data";
@@ -108,7 +113,7 @@ export const alpacaActionHandlers: ProviderActionHandlers<"alpaca", ActionHandle
         after: optionalString(input.after),
         until: optionalString(input.until),
         direction: optionalString(input.direction),
-        nested: optionalBooleanString(input.nested),
+        nested: booleanString(input.nested),
         symbols: optionalStringList(input.symbols),
       }),
       context,
@@ -319,7 +324,7 @@ export const alpacaActionHandlers: ProviderActionHandlers<"alpaca", ActionHandle
       path: "/v2/options/contracts",
       query: compactObject({
         underlying_symbols: optionalStringList(input.underlyingSymbols),
-        show_deliverables: optionalBooleanString(input.showDeliverables),
+        show_deliverables: booleanString(input.showDeliverables),
         status: optionalString(input.status),
         expiration_date: optionalString(input.expirationDate),
         expiration_date_gte: optionalString(input.expirationDateGte),
@@ -331,7 +336,7 @@ export const alpacaActionHandlers: ProviderActionHandlers<"alpaca", ActionHandle
         strike_price_lte: optionalNumberString(input.strikePriceLte),
         page_token: optionalString(input.pageToken),
         limit: optionalNumberString(input.limit),
-        ppind: optionalBooleanString(input.ppind),
+        ppind: booleanString(input.ppind),
       }),
       context,
       phase: "execute",
@@ -386,8 +391,8 @@ export const alpacaActionHandlers: ProviderActionHandlers<"alpaca", ActionHandle
       query: compactObject({
         symbols: optionalStringList(input.symbols),
         limit: optionalNumberString(input.limit),
-        include_content: optionalBooleanString(input.includeContent),
-        exclude_contentless: optionalBooleanString(input.excludeContentless),
+        include_content: booleanString(input.includeContent),
+        exclude_contentless: booleanString(input.excludeContentless),
         start: optionalString(input.start),
         end: optionalString(input.end),
         sort: optionalString(input.sort),
@@ -518,7 +523,7 @@ async function requestAlpacaJson(input: {
   context: ActionContext;
   phase: Phase;
 }): Promise<unknown> {
-  const timeoutSignal = AbortSignal.timeout(requestTimeoutMs);
+  const timeoutSignal = AbortSignal.timeout(defaultProviderRequestTimeoutMs);
   const signal = input.context.signal ? AbortSignal.any([input.context.signal, timeoutSignal]) : timeoutSignal;
 
   try {
@@ -574,14 +579,14 @@ function buildAlpacaUrl(
 export function alpacaCredentialHeaders(credential: Credential): Record<string, string> {
   if (credential.authType === "oauth2") {
     return {
-      accept: "application/json",
-      authorization: `${credential.tokenType} ${credential.accessToken}`,
+      "accept": "application/json",
+      "authorization": `${credential.tokenType} ${credential.accessToken}`,
       "user-agent": providerUserAgent,
     };
   }
 
   return {
-    accept: "application/json",
+    "accept": "application/json",
     "APCA-API-KEY-ID": credential.apiKeyId,
     "APCA-API-SECRET-KEY": credential.apiSecretKey,
     "user-agent": providerUserAgent,
@@ -720,14 +725,6 @@ function optionalNumberString(value: unknown): string | undefined {
   return typeof value === "number" && Number.isFinite(value) ? String(value) : undefined;
 }
 
-function optionalBooleanString(value: unknown): string | undefined {
-  return typeof value === "boolean" ? String(value) : undefined;
-}
-
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
-}
-
 function readEnvironment(value: unknown, fallback?: Environment): Environment {
   const normalized = optionalString(value) ?? fallback;
   if (normalized === "paper" || normalized === "live") {
@@ -735,8 +732,4 @@ function readEnvironment(value: unknown, fallback?: Environment): Environment {
   }
 
   throw new ProviderRequestError(400, "environment must be paper or live");
-}
-
-function isAbortLikeError(error: unknown): boolean {
-  return error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
 }

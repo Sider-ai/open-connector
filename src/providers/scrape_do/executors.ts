@@ -1,6 +1,11 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderRequestContext } from "../provider-runtime.ts";
 
 import {
   compactObject,
@@ -10,7 +15,9 @@ import {
   optionalString,
   requiredString,
 } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent, providerInputError } from "../provider-runtime.ts";
 
 const service = "scrape_do";
 const scrapeDoApiBaseUrl = "https://api.scrape.do";
@@ -44,6 +51,16 @@ export const scrapeDoActionHandlers: ProviderActionHandlers<"scrape_do", ScrapeD
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, scrapeDoActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: scrapeDoApiBaseUrl,
+  auth: { type: "api_key_query", name: "token" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "*/*");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }): Promise<CredentialValidationResult> {
     const apiKey = requiredString(input.apiKey, "apiKey", (message) => new ProviderRequestError(401, message));
@@ -53,7 +70,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "scrape_do",
         displayName: "Scrape.do API Token",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: scrapeDoApiBaseUrl,
         validationEndpoint: "/info",
@@ -184,7 +200,7 @@ async function requestScrapeDoAccount(
 async function requestScrapeDoRaw(
   url: string,
   input: Record<string, unknown>,
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">,
+  context: ProviderRequestContext,
   phase: ScrapeDoPhase,
 ): Promise<Response> {
   const controller = new AbortController();
@@ -194,7 +210,7 @@ async function requestScrapeDoRaw(
     const response = await context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "*/*",
+        "accept": "*/*",
         "user-agent": providerUserAgent,
       },
       signal,
@@ -294,7 +310,7 @@ function createScrapeDoError(status: number, body: string, phase: ScrapeDoPhase)
     return new ProviderRequestError(429, message);
   }
   if (phase === "validate" && status >= 400 && status < 500) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   return new ProviderRequestError(status || 500, message);
 }

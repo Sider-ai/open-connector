@@ -1,12 +1,12 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import { assertPublicHttpUrl } from "../../core/request.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
   isAbortLikeError,
   ProviderRequestError,
   providerUserAgent,
@@ -15,7 +15,6 @@ import {
 const service = "opengraph_io";
 const opengraphIoApiBaseUrl = "https://opengraph.io";
 const opengraphIoValidationTargetUrl = "https://example.com";
-const opengraphIoRequestTimeoutMs = 30_000;
 
 type OpenGraphIoRequestPhase = "validate" | "execute";
 type OpenGraphIoQueryValue = string | number | boolean | undefined;
@@ -61,6 +60,16 @@ export const opengraphIoActionHandlers: ProviderActionHandlers<"opengraph_io", O
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, opengraphIoActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: opengraphIoApiBaseUrl,
+  auth: { type: "api_key_query", name: "app_id" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const validationPath = buildPath("site", opengraphIoValidationTargetUrl);
@@ -79,9 +88,7 @@ export const credentialValidators: CredentialValidators = {
     return {
       profile: {
         displayName: "OpenGraph.io App ID",
-        grantedScopes: [],
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: opengraphIoApiBaseUrl,
         validationEndpoint: `${validationPath}?app_id=***`,
@@ -180,7 +187,7 @@ function buildScreenshotQuery(input: Record<string, unknown>): Record<string, Op
 async function opengraphIoRequest(input: {
   path: string;
   query: Record<string, OpenGraphIoQueryValue>;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   phase: OpenGraphIoRequestPhase;
 }): Promise<unknown> {
   const url = new URL(input.path, opengraphIoApiBaseUrl);
@@ -191,12 +198,12 @@ async function opengraphIoRequest(input: {
     }
   }
 
-  const timeout = createProviderTimeout(input.context.signal, opengraphIoRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   try {
     const response = await input.context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
       signal: timeout.signal,

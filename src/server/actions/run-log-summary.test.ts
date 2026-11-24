@@ -11,6 +11,9 @@ describe("summarizeForRunLog", () => {
         cookies: [{ name: "session", value: "cookie-secret" }],
         headers: { authorization: "Basic dXNlcjpwYXNz" },
         accessKey: "access-secret",
+        accountKey: "account-secret",
+        aliyunDeviceAccessKeyId: "device-key-id",
+        aliyunDeviceAccessKeySecret: "device-key-secret",
         token: "abc.def.ghi",
         temporaryUrl: "https://user:pass@example.com/file?token=secret#fragment",
       }),
@@ -18,6 +21,9 @@ describe("summarizeForRunLog", () => {
       cookies: "[redacted]",
       headers: "[redacted]",
       accessKey: "[redacted]",
+      accountKey: "[redacted]",
+      aliyunDeviceAccessKeyId: "[redacted]",
+      aliyunDeviceAccessKeySecret: "[redacted]",
       token: "[redacted]",
       temporaryUrl: "[redacted-url]",
     });
@@ -201,9 +207,9 @@ describe("safeRunLogError", () => {
   it("retains schema field hints without rejected values or unknown field names", () => {
     const action = githubActions.find((action) => action.name === "list_workflow_run_jobs")!;
     const validation = validateActionInput(action, {
-      owner: "example",
-      repo: "project",
-      runId: "private-value",
+      "owner": "example",
+      "repo": "project",
+      "runId": "private-value",
       "private-unknown-field": "private-secret",
     });
     const summary = safeRunLogError(
@@ -234,6 +240,18 @@ describe("safeRunLogError", () => {
     expect(
       safeRunLogError({ code: "provider_error", message: "provider returned secret-token", details: { raw: true } }),
     ).toEqual({ errorCode: "provider_error", errorMessage: "The provider request failed." });
+  });
+
+  it("explains a failed OAuth refresh without the provider message", () => {
+    expect(
+      safeRunLogError({
+        code: "oauth_token_refresh_failed",
+        message: "invalid_grant: refresh token revoked for client secret",
+      }),
+    ).toEqual({
+      errorCode: "oauth_token_refresh_failed",
+      errorMessage: "The OAuth credential could not be refreshed.",
+    });
   });
 });
 

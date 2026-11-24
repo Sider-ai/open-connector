@@ -1,25 +1,22 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, objectArray, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import {
-  createProviderTimeout,
-  isAbortLikeError,
+  providerInputError,
   providerUserAgent,
   ProviderRequestError,
+  runProviderRequest,
 } from "../provider-runtime.ts";
 
 export const cockroachLabsApiBaseUrl = "https://cockroachlabs.cloud";
-const cockroachLabsApiVersion = "2024-09-16";
-const cockroachLabsDefaultRequestTimeoutMs = 30_000;
+export const cockroachLabsApiVersion = "2024-09-16";
 
 interface CockroachLabsCredentialInput {
   apiKey: string;
 }
 
 type CockroachLabsRequestPhase = "validate" | "execute";
-type CockroachLabsRuntimeContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
 type CockroachLabsActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 export const cockroachLabsActionHandlers: ProviderActionHandlers<"cockroach_labs", CockroachLabsActionHandler> = {
@@ -39,7 +36,7 @@ export const cockroachLabsActionHandlers: ProviderActionHandlers<"cockroach_labs
       context,
       path: "/api/v1/clusters",
       query: buildQueryParams({
-        show_inactive: input.showInactive,
+        "show_inactive": input.showInactive,
         "pagination.page": input.page,
         "pagination.limit": input.limit,
         "pagination.as_of_time": input.asOfTime,
@@ -51,13 +48,13 @@ export const cockroachLabsActionHandlers: ProviderActionHandlers<"cockroach_labs
     });
 
     return {
-      clusters: objectArray(payload.clusters, "clusters", providerResponseError),
+      clusters: objectArray(payload.clusters, "clusters", cockroachLabsResponseError),
       pagination: normalizePagination(payload.pagination),
     };
   },
 
   async get_cluster(input, context) {
-    const clusterId = requiredString(input.clusterId, "clusterId", invalidInputError);
+    const clusterId = requiredString(input.clusterId, "clusterId", providerInputError);
     return {
       cluster: await requestCockroachLabsObject({
         context,
@@ -73,8 +70,8 @@ export const cockroachLabsActionHandlers: ProviderActionHandlers<"cockroach_labs
       context,
       path: "/api/v1/clusters/available-regions",
       query: buildQueryParams({
-        provider: input.provider,
-        serverless: input.serverless,
+        "provider": input.provider,
+        "serverless": input.serverless,
         "pagination.page": input.page,
         "pagination.limit": input.limit,
         "pagination.as_of_time": input.asOfTime,
@@ -85,18 +82,18 @@ export const cockroachLabsActionHandlers: ProviderActionHandlers<"cockroach_labs
     });
 
     return {
-      regions: objectArray(payload.regions, "regions", providerResponseError),
+      regions: objectArray(payload.regions, "regions", cockroachLabsResponseError),
       pagination: normalizePagination(payload.pagination),
     };
   },
 
   async list_cluster_nodes(input, context) {
-    const clusterId = requiredString(input.clusterId, "clusterId", invalidInputError);
+    const clusterId = requiredString(input.clusterId, "clusterId", providerInputError);
     const payload = await requestCockroachLabsObject({
       context,
       path: `/api/v1/clusters/${encodeURIComponent(clusterId)}/nodes`,
       query: buildQueryParams({
-        region_name: input.regionName,
+        "region_name": input.regionName,
         "pagination.page": input.page,
         "pagination.limit": input.limit,
         "pagination.as_of_time": input.asOfTime,
@@ -107,13 +104,13 @@ export const cockroachLabsActionHandlers: ProviderActionHandlers<"cockroach_labs
     });
 
     return {
-      nodes: objectArray(payload.nodes, "nodes", providerResponseError),
+      nodes: objectArray(payload.nodes, "nodes", cockroachLabsResponseError),
       pagination: normalizePagination(payload.pagination),
     };
   },
 
   async list_databases(input, context) {
-    const clusterId = requiredString(input.clusterId, "clusterId", invalidInputError);
+    const clusterId = requiredString(input.clusterId, "clusterId", providerInputError);
     const payload = await requestCockroachLabsObject({
       context,
       path: `/api/v1/clusters/${encodeURIComponent(clusterId)}/databases`,
@@ -123,13 +120,13 @@ export const cockroachLabsActionHandlers: ProviderActionHandlers<"cockroach_labs
     });
 
     return {
-      databases: objectArray(payload.databases, "databases", providerResponseError),
+      databases: objectArray(payload.databases, "databases", cockroachLabsResponseError),
       pagination: normalizePagination(payload.pagination),
     };
   },
 
   async list_sql_users(input, context) {
-    const clusterId = requiredString(input.clusterId, "clusterId", invalidInputError);
+    const clusterId = requiredString(input.clusterId, "clusterId", providerInputError);
     const payload = await requestCockroachLabsObject({
       context,
       path: `/api/v1/clusters/${encodeURIComponent(clusterId)}/sql-users`,
@@ -139,7 +136,7 @@ export const cockroachLabsActionHandlers: ProviderActionHandlers<"cockroach_labs
     });
 
     return {
-      users: objectArray(payload.users, "users", providerResponseError),
+      users: objectArray(payload.users, "users", cockroachLabsResponseError),
       pagination: normalizePagination(payload.pagination),
     };
   },
@@ -149,7 +146,7 @@ export async function validateCockroachLabsApiKey(
   input: CockroachLabsCredentialInput,
   options: { fetcher: typeof fetch; signal?: AbortSignal },
 ): Promise<CredentialValidationResult> {
-  const context: CockroachLabsRuntimeContext = {
+  const context: ApiKeyProviderContext = {
     apiKey: input.apiKey,
     fetcher: options.fetcher,
     signal: options.signal,
@@ -161,7 +158,7 @@ export async function validateCockroachLabsApiKey(
     responseContext: "CockroachDB Cloud organization response",
   });
 
-  const organizationId = requiredString(organization.id, "id", providerResponseError);
+  const organizationId = requiredString(organization.id, "id", cockroachLabsResponseError);
   const accountLabel =
     optionalString(organization.name) ?? optionalString(organization.label) ?? "CockroachDB Cloud Organization";
 
@@ -170,7 +167,6 @@ export async function validateCockroachLabsApiKey(
       accountId: organizationId,
       displayName: accountLabel,
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: cockroachLabsApiBaseUrl,
       validationEndpoint: "/api/v1/organization",
@@ -182,7 +178,7 @@ export async function validateCockroachLabsApiKey(
 }
 
 async function requestCockroachLabsObject(input: {
-  context: CockroachLabsRuntimeContext;
+  context: ApiKeyProviderContext;
   path: string;
   phase: CockroachLabsRequestPhase;
   responseContext: string;
@@ -198,22 +194,21 @@ async function requestCockroachLabsObject(input: {
 }
 
 async function requestCockroachLabsJson(input: {
-  context: CockroachLabsRuntimeContext;
+  context: ApiKeyProviderContext;
   path: string;
   phase: CockroachLabsRequestPhase;
   query?: URLSearchParams;
 }): Promise<unknown> {
-  const timeout = createProviderTimeout(input.context.signal, cockroachLabsDefaultRequestTimeoutMs);
-  try {
+  return runProviderRequest({ signal: input.context.signal, label: "CockroachDB Cloud" }, async (signal) => {
     const response = await input.context.fetcher(buildCockroachLabsUrl(input.path, input.query), {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${input.context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${input.context.apiKey}`,
         "cc-version": cockroachLabsApiVersion,
         "user-agent": providerUserAgent,
       },
-      signal: timeout.signal,
+      signal,
     });
     const payload = await readCockroachLabsPayload(response);
     if (!response.ok) {
@@ -221,22 +216,7 @@ async function requestCockroachLabsJson(input: {
     }
 
     return payload;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-    if (timeout.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "CockroachDB Cloud request timed out");
-    }
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error
-        ? `CockroachDB Cloud request failed: ${error.message}`
-        : "CockroachDB Cloud request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+  });
 }
 
 function buildCockroachLabsUrl(path: string, query?: URLSearchParams): URL {
@@ -334,10 +314,6 @@ function normalizePagination(value: unknown): Record<string, unknown> | null {
   });
 }
 
-function invalidInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
-}
-
-function providerResponseError(message: string): ProviderRequestError {
+function cockroachLabsResponseError(message: string): ProviderRequestError {
   return new ProviderRequestError(502, `CockroachDB Cloud ${message}`);
 }

@@ -1,12 +1,16 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { optionalBoolean, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { createProviderTimeout, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import {
+  createProviderTimeout,
+  providerUserAgent,
+  ProviderRequestError,
+  providerInputError,
+} from "../provider-runtime.ts";
 
 export const workizApiBaseUrl = "https://api.workiz.com/api/v1";
-const timeoutMs = 30_000;
 
 function setQuery(query: URLSearchParams, name: string, value: unknown) {
   if (value !== undefined) query.set(name, String(value));
@@ -50,15 +54,14 @@ export async function validateWorkizCredential(
   await request("/team/all/", { apiKey, fetcher, signal }, "validate");
   return {
     profile: { displayName: "Workiz API Token" },
-    grantedScopes: [],
     metadata: { apiBaseUrl: workizApiBaseUrl },
   };
 }
 async function request(path: string, context: ApiKeyProviderContext, phase: "validate" | "execute") {
-  const timeout = createProviderTimeout(context.signal, timeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const response = await context.fetcher(`${workizApiBaseUrl}/${encodeURIComponent(context.apiKey)}${path}`, {
-      headers: { accept: "application/json", "user-agent": providerUserAgent },
+      headers: { "accept": "application/json", "user-agent": providerUserAgent },
       signal: timeout.signal,
     });
     const text = await response.text();
@@ -81,9 +84,12 @@ async function request(path: string, context: ApiKeyProviderContext, phase: "val
   }
 }
 function records(payload: unknown) {
+  if (payload == null) return [];
   if (Array.isArray(payload)) return payload;
-  const data = optionalRecord(payload)?.data;
+  const body = optionalRecord(payload);
+  const data = body?.data;
   if (Array.isArray(data)) return data;
+  if (body && data === undefined) return [];
   throw new ProviderRequestError(502, "workiz response did not include a record list");
 }
 function unwrapData(value: unknown) {
@@ -95,6 +101,6 @@ function mapError(status: number, payload: unknown, phase: "validate" | "execute
     optionalString(body?.message) ?? optionalString(body?.error) ?? `workiz request failed with status ${status}`;
   if (status === 429) return new ProviderRequestError(429, message);
   if (status === 401 || status === 403) return new ProviderRequestError(phase === "validate" ? 400 : status, message);
-  if (phase === "validate" && status < 500) return new ProviderRequestError(400, message);
+  if (phase === "validate" && status < 500) return providerInputError(message);
   return new ProviderRequestError(status >= 500 ? 502 : status, message);
 }

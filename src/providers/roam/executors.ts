@@ -1,9 +1,10 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "roam";
 const roamApiBaseUrl = "https://api.ro.am/v1";
@@ -94,6 +95,17 @@ export const roamActionHandlers: ProviderActionHandlers<"roam", RoamActionHandle
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, roamActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: roamApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+    headers.set("content-type", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = await requestRoamJson({
@@ -110,7 +122,6 @@ export const credentialValidators: CredentialValidators = {
       profile: {
         displayName: "Roam HQ API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: roamApiBaseUrl,
         validationEndpoint: "/test",
@@ -121,7 +132,7 @@ export const credentialValidators: CredentialValidators = {
 };
 
 async function requestRoamJson(input: {
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   path: string;
   phase: RoamRequestPhase;
   method?: string;
@@ -171,8 +182,8 @@ function buildRoamUrl(path: string, query?: Record<string, string | number | und
 
 function roamHeaders(apiKey: string): Record<string, string> {
   return {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "content-type": "application/json",
     "user-agent": providerUserAgent,
   };

@@ -1,8 +1,9 @@
 import type { TransitFileWriter } from "../../../core/types.ts";
 import type { FeishuJsonRequest } from "./client.ts";
 
-import { ProviderRequestError } from "../../provider-runtime.ts";
+import { ProviderRequestError, requiredResponseRecord } from "../../provider-runtime.ts";
 import { storeFeishuTransitBytes } from "./media.ts";
+import { FeishuPagination } from "./pagination.ts";
 
 interface NoteHandler {
   (input: Record<string, unknown>): Promise<unknown>;
@@ -24,8 +25,7 @@ export function createFeishuNoteActionHandlers(deps: FeishuNoteRuntimeDeps): Rec
 
 async function getNote(input: Record<string, unknown>, request: FeishuJsonRequest) {
   const noteId = requiredString(input.noteId, "noteId");
-  const data = await request({ path: `/vc/v1/notes/${encodeURIComponent(noteId)}` });
-  return normalizeNote(noteId, recordValue(data.note));
+  return fetchFeishuNote(noteId, request);
 }
 
 async function getMeetingNote(input: Record<string, unknown>, request: FeishuJsonRequest) {
@@ -36,11 +36,12 @@ async function getMeetingNote(input: Record<string, unknown>, request: FeishuJso
   });
   const meeting = recordValue(meetingData.meeting);
   const noteId = requiredString(meeting.note_id, "meeting.note_id");
-  const noteData = await request({ path: `/vc/v1/notes/${encodeURIComponent(noteId)}` });
-  return {
-    meetingId,
-    note: normalizeNote(noteId, recordValue(noteData.note)),
-  };
+  return { meetingId, note: await fetchFeishuNote(noteId, request) };
+}
+
+export async function fetchFeishuNote(noteId: string, request: FeishuJsonRequest): Promise<FeishuNote> {
+  const data = await request({ path: `/vc/v1/notes/${encodeURIComponent(noteId)}` });
+  return normalizeNote(noteId, requiredResponseRecord(data.note, "Feishu note"));
 }
 
 async function downloadTranscript(input: Record<string, unknown>, deps: FeishuNoteRuntimeDeps) {
@@ -54,7 +55,7 @@ async function downloadTranscript(input: Record<string, unknown>, deps: FeishuNo
   }
 
   const chunks: string[] = [];
-  const seenCursors = new Set<string>();
+  const pagination = new FeishuPagination("note transcript");
   let cursor: string | undefined;
   for (let page = 0; page < 500; page++) {
     const data = await deps.request({
@@ -71,18 +72,8 @@ async function downloadTranscript(input: Record<string, unknown>, deps: FeishuNo
     if (chunk) {
       chunks.push(chunk);
     }
-    if (data.has_more !== true) {
-      cursor = undefined;
-      break;
-    }
-    const nextCursor = scalarString(data.next_cursor_id);
-    if (!nextCursor || nextCursor === cursor || seenCursors.has(nextCursor)) {
-      throw new ProviderRequestError(502, "Feishu note transcript pagination cursor did not advance");
-    }
-    if (cursor) {
-      seenCursors.add(cursor);
-    }
-    cursor = nextCursor;
+    cursor = pagination.next(data.has_more, scalarString(data.next_cursor_id));
+    if (!cursor) break;
   }
   if (cursor) {
     throw new ProviderRequestError(502, "Feishu note transcript exceeded 500 pages");
@@ -105,7 +96,18 @@ async function downloadTranscript(input: Record<string, unknown>, deps: FeishuNo
   };
 }
 
-function normalizeNote(noteId: string, note: Record<string, unknown>) {
+interface FeishuNote {
+  noteId: string;
+  displayType: "normal" | "unified" | "unknown";
+  creatorId: string;
+  createTime: string;
+  noteDocumentToken: string;
+  verbatimDocumentToken: string;
+  sharedDocumentTokens: string[];
+  raw: Record<string, unknown>;
+}
+
+function normalizeNote(noteId: string, note: Record<string, unknown>): FeishuNote {
   let noteDocumentToken = "";
   let verbatimDocumentToken = "";
   for (const artifact of recordArray(note.artifacts)) {

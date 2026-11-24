@@ -1,22 +1,19 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ApiKeyActionRequest, ProviderActionHandlers } from "../provider-executors.ts";
 import type { AppcircleActionName } from "./actions.ts";
 
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import {
+  ProviderRequestError,
+  providerUserAgent,
+  providerInputError,
+  providerResponseError,
+} from "../provider-runtime.ts";
 
 export interface AppcircleCredentialCheck {
   providerAccountId?: string;
   accountLabel: string;
   providerScopes: string[];
   providerMetadata: Record<string, unknown>;
-}
-
-interface ApiKeyProviderActionInput {
-  apiKey: string;
-  actionName: string;
-  input: Record<string, unknown>;
-  providerMetadata?: Record<string, unknown>;
-  values?: Record<string, string>;
 }
 
 export const appcircleApiBaseUrl = "https://api.appcircle.io";
@@ -95,7 +92,7 @@ export async function validateAppcircleCredential(
 }
 
 export async function executeAppcircleAction(
-  input: ApiKeyProviderActionInput & {
+  input: ApiKeyActionRequest & {
     actionName: AppcircleActionName;
     input: Record<string, unknown>;
   },
@@ -174,8 +171,8 @@ async function requestAppcircleJsonWithToken(input: {
   const response = await input.fetcher(url, {
     method: "GET",
     headers: {
-      accept: "application/json",
-      authorization: `Bearer ${input.accessToken}`,
+      "accept": "application/json",
+      "authorization": `Bearer ${input.accessToken}`,
       "user-agent": providerUserAgent,
     },
   });
@@ -201,7 +198,7 @@ async function exchangeAppcircleAccessToken(
   const response = await fetcher(appcircleAuthTokenUrl, {
     method: "POST",
     headers: {
-      accept: "application/json",
+      "accept": "application/json",
       "content-type": "application/x-www-form-urlencoded",
       "user-agent": providerUserAgent,
     },
@@ -228,10 +225,7 @@ function resolveAppcircleCredential(input: {
   values?: Record<string, string>;
   providerMetadata?: Record<string, unknown>;
 }): AppcircleCredential {
-  const secret = readRequiredString(
-    requiredString(input.apiKey, "apiKey", (message) => new ProviderRequestError(400, message)),
-    "apiKey",
-  );
+  const secret = readRequiredString(requiredString(input.apiKey, "apiKey", providerInputError), "apiKey");
   const name = readRequiredString(
     input.apiKeyName ?? input.values?.apiKeyName ?? input.providerMetadata?.apiKeyName,
     "apiKeyName",
@@ -294,7 +288,7 @@ async function readAppcirclePayload(response: Response) {
 function mapAppcircleError(status: number, payload: unknown, phase: AppcirclePhase) {
   const message = extractAppcircleErrorMessage(payload) ?? `Appcircle request failed (${status})`;
   if (status === 400) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (status === 401) {
     return new ProviderRequestError(phase === "validate" ? 400 : status, message);
@@ -319,14 +313,14 @@ function extractAppcircleErrorMessage(payload: unknown) {
 function requireObject(value: unknown, message: string) {
   const object = optionalRecord(value);
   if (!object) {
-    throw new ProviderRequestError(502, message);
+    throw providerResponseError(message);
   }
   return object;
 }
 
 function requireObjectArray(value: unknown, message: string) {
   if (!Array.isArray(value)) {
-    throw new ProviderRequestError(502, message);
+    throw providerResponseError(message);
   }
   return value.map((item) => requireObject(item, message));
 }

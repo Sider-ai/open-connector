@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import {
@@ -9,10 +9,10 @@ import {
   providerUserAgent,
   ProviderRequestError,
   readProviderTextBody,
+  providerInputError,
 } from "../provider-runtime.ts";
 
 export const tuskrApiBaseUrl = "https://api.tuskr.live/api";
-const requestTimeoutMs = 30_000;
 const maxResponseBytes = 10 * 1024 * 1024;
 
 export interface TuskrActionContext {
@@ -58,7 +58,6 @@ export async function validateTuskrCredential(
   await tuskrGet("/project", {}, context, "validate");
   return {
     profile: { accountId: `tuskr:${tenantId}`, displayName: "Tuskr API Token" },
-    grantedScopes: [],
     metadata: { apiBaseUrl: tuskrApiBaseUrl, tenantId, validationEndpoint: "/project" },
   };
 }
@@ -100,7 +99,7 @@ async function tuskrRequest(
   context: TuskrActionContext,
   phase: "validate" | "execute",
 ): Promise<unknown> {
-  const timeout = createProviderTimeout(context.signal, requestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const headers = new Headers(init.headers);
     headers.set("authorization", `Bearer ${context.accessToken}`);
@@ -132,7 +131,7 @@ function buildProjectListQuery(input: Record<string, unknown>) {
   return compactObject({
     "filter[name]": optionalString(input.name),
     "filter[status]": optionalString(input.status),
-    page: optionalInteger(input.page),
+    "page": optionalInteger(input.page),
   });
 }
 
@@ -144,7 +143,7 @@ function buildTestCaseListQuery(input: Record<string, unknown>) {
     "filter[key]": optionalString(input.key),
     "filter[testCaseType]": optionalString(input.testCaseType),
     "filter[name]": optionalString(input.name),
-    page: optionalInteger(input.page),
+    "page": optionalInteger(input.page),
     ...flattenCustomFieldFilters(input.customFields),
   });
 }
@@ -156,7 +155,7 @@ function buildTestRunListQuery(input: Record<string, unknown>) {
     "filter[key]": optionalString(input.key),
     "filter[status]": optionalString(input.status),
     "filter[assignedTo]": optionalString(input.assignedTo),
-    page: optionalInteger(input.page),
+    "page": optionalInteger(input.page),
   });
 }
 
@@ -245,7 +244,7 @@ function createTuskrError(status: number, payload: unknown, phase: "validate" | 
     optionalString(record?.errorMessage) ??
     `Tuskr request failed with status ${status}`;
   if ((status === 401 || status === 403) && phase === "validate") {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (status >= 400 && status < 500) return new ProviderRequestError(status, message);
   return new ProviderRequestError(status || 502, message);

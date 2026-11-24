@@ -1,5 +1,6 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
 import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
@@ -447,7 +448,6 @@ export async function validateTwitterApiIoCredential(
   profile: {
     accountId: string;
     displayName: string;
-    grantedScopes: string[];
   };
   metadata: Record<string, unknown>;
 }> {
@@ -463,7 +463,6 @@ export async function validateTwitterApiIoCredential(
     profile: {
       accountId: "twitterapi_io",
       displayName: "TwitterAPI.io API Key",
-      grantedScopes: [],
     },
     metadata: compactObject({
       apiBaseUrl: twitterapiIoApiBaseUrl,
@@ -530,7 +529,7 @@ async function requestTwitterApiIo(input: {
   const method = input.method ?? "GET";
   const body = input.body ? compactObject(input.body) : undefined;
   const headers: Record<string, string> = {
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     "x-api-key": input.apiKey,
   };

@@ -1,11 +1,10 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
-import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
+import { providerUserAgent, ProviderRequestError, requiredInputString } from "../provider-runtime.ts";
 
-const mailerliteApiBaseUrl = "https://connect.mailerlite.com/api";
+export const mailerliteApiBaseUrl: string = "https://connect.mailerlite.com/api";
 const validationPath = "/groups";
 
 type MailerliteMode = "validate" | "execute";
@@ -13,7 +12,7 @@ type MailerliteActionHandler = (input: Record<string, unknown>, context: ApiKeyP
 
 interface MailerliteRequestOptions {
   path: string;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   mode: MailerliteMode;
   method?: string;
   query?: Record<string, string | number | undefined>;
@@ -26,9 +25,9 @@ export const mailerliteActionHandlers: ProviderActionHandlers<"mailerlite", Mail
       path: "/subscribers",
       query: compactObject({
         "filter[status]": optionalString(input.status),
-        limit: optionalInteger(input.limit),
-        cursor: optionalString(input.cursor),
-        include: input.include_groups === true ? "groups" : undefined,
+        "limit": optionalInteger(input.limit),
+        "cursor": optionalString(input.cursor),
+        "include": input.include_groups === true ? "groups" : undefined,
       }),
       context,
       mode: "execute",
@@ -92,10 +91,10 @@ export const mailerliteActionHandlers: ProviderActionHandlers<"mailerlite", Mail
     return requestMailerliteJson({
       path: "/groups",
       query: compactObject({
-        limit: optionalInteger(input.limit),
-        page: optionalInteger(input.page),
+        "limit": optionalInteger(input.limit),
+        "page": optionalInteger(input.page),
         "filter[name]": optionalString(input.name),
-        sort: optionalString(input.sort),
+        "sort": optionalString(input.sort),
       }),
       context,
       mode: "execute",
@@ -133,9 +132,9 @@ export const mailerliteActionHandlers: ProviderActionHandlers<"mailerlite", Mail
       path: `/groups/${encodeURIComponent(requiredInputString(input.group_id, "group_id"))}/subscribers`,
       query: compactObject({
         "filter[status]": optionalString(input.status),
-        limit: optionalInteger(input.limit),
-        cursor: optionalString(input.cursor),
-        include: input.include_groups === true ? "groups" : undefined,
+        "limit": optionalInteger(input.limit),
+        "cursor": optionalString(input.cursor),
+        "include": input.include_groups === true ? "groups" : undefined,
       }),
       context,
       mode: "execute",
@@ -162,11 +161,11 @@ export const mailerliteActionHandlers: ProviderActionHandlers<"mailerlite", Mail
     return requestMailerliteJson({
       path: "/fields",
       query: compactObject({
-        limit: optionalInteger(input.limit),
-        page: optionalInteger(input.page),
+        "limit": optionalInteger(input.limit),
+        "page": optionalInteger(input.page),
         "filter[keyword]": optionalString(input.keyword),
         "filter[type]": optionalString(input.type),
-        sort: optionalString(input.sort),
+        "sort": optionalString(input.sort),
       }),
       context,
       mode: "execute",
@@ -196,7 +195,6 @@ export async function validateMailerliteCredential(
       accountId: "mailerlite",
       displayName: "MailerLite API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: mailerliteApiBaseUrl,
       validationEndpoint: validationPath,
@@ -252,8 +250,8 @@ async function mailerliteFetch(input: MailerliteRequestOptions): Promise<Respons
 
 function mailerliteHeaders(apiKey: string, hasBody: boolean): Record<string, string> {
   return {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     ...(hasBody ? { "content-type": "application/json" } : {}),
     "user-agent": providerUserAgent,
   };
@@ -327,10 +325,6 @@ function extractMailerliteErrorMessage(payload: Record<string, unknown>): string
     }
   }
   return undefined;
-}
-
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function optionalStringArray(value: unknown): string[] | undefined {

@@ -1,8 +1,14 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ApiKeyActionRequest, ProviderActionHandlers } from "../provider-executors.ts";
 import type { InstabotActionName } from "./actions.ts";
 
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { createProviderTimeout, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import {
+  ProviderRequestError,
+  providerUserAgent,
+  runProviderRequest,
+  providerInputError,
+  providerResponseError,
+} from "../provider-runtime.ts";
 
 export interface InstabotCredentialCheck {
   providerAccountId?: string;
@@ -11,16 +17,7 @@ export interface InstabotCredentialCheck {
   providerMetadata: Record<string, unknown>;
 }
 
-interface ApiKeyProviderActionInput {
-  apiKey: string;
-  actionName: string;
-  input: Record<string, unknown>;
-  providerMetadata?: Record<string, unknown>;
-  values?: Record<string, string>;
-}
-
 const instabotApiBaseUrl = "https://api.instabot.io/v1";
-const instabotDefaultRequestTimeoutMs = 30_000;
 
 type InstabotPhase = "validate" | "execute";
 type InstabotCredential = {
@@ -140,7 +137,7 @@ export async function validateInstabotCredential(
 }
 
 export async function executeInstabotAction(
-  input: ApiKeyProviderActionInput & {
+  input: ApiKeyActionRequest & {
     actionName: InstabotActionName;
     input: Record<string, unknown>;
   },
@@ -153,7 +150,7 @@ export async function executeInstabotAction(
   return handler(
     input.input,
     readInstabotCredential({
-      apiKey: requiredString(input.apiKey, "apiKey", (message) => new ProviderRequestError(400, message)),
+      apiKey: requiredString(input.apiKey, "apiKey", providerInputError),
       masterApiKey: input.values?.masterApiKey ?? "",
     }),
     fetcher,
@@ -192,8 +189,7 @@ async function listUsers(
 }
 
 async function requestInstabotJson(input: InstabotRequestInput) {
-  const timeoutHandle = createProviderTimeout(undefined, instabotDefaultRequestTimeoutMs);
-  try {
+  return runProviderRequest({ label: "Instabot" }, async (signal) => {
     const url = new URL(input.path.replace(/^\//, ""), `${instabotApiBaseUrl}/`);
     for (const [key, value] of Object.entries(input.query ?? {})) {
       if (value !== undefined) {
@@ -203,14 +199,14 @@ async function requestInstabotJson(input: InstabotRequestInput) {
     const response = await input.fetcher(url, {
       method: input.method,
       headers: {
-        accept: "application/json",
-        authorization: `X-Instabot-Master-Api-Key ${input.credential.masterApiKey}`,
+        "accept": "application/json",
+        "authorization": `X-Instabot-Master-Api-Key ${input.credential.masterApiKey}`,
         ...(input.body ? { "content-type": "application/json" } : {}),
         "user-agent": providerUserAgent,
         "x-instabot-api-key": input.credential.apiKey,
       },
       body: input.body ? JSON.stringify(input.body) : undefined,
-      signal: timeoutHandle.signal,
+      signal,
     });
     const payload = await readPayload(response);
     if (!response.ok) {
@@ -225,20 +221,7 @@ async function requestInstabotJson(input: InstabotRequestInput) {
       throw createInstabotError(response.status, record, input.phase);
     }
     return record;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-    if (timeoutHandle.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "Instabot request timed out");
-    }
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Instabot request failed: ${error.message}` : "Instabot request failed",
-    );
-  } finally {
-    timeoutHandle.cleanup();
-  }
+  });
 }
 
 async function readPayload(response: Response) {
@@ -263,7 +246,7 @@ function createInstabotError(status: number, payload: unknown, phase: InstabotPh
     return new ProviderRequestError(429, message);
   }
   if (phase === "validate" && status >= 400 && status < 500) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (phase === "execute" && status === 401) {
     return new ProviderRequestError(401, message);
@@ -286,7 +269,7 @@ function normalizeStatus(payload: Record<string, unknown>) {
 
 function readInstabotCredential(input: Record<string, string>): InstabotCredential {
   return {
-    apiKey: requiredString(input.apiKey, "apiKey", (message) => new ProviderRequestError(400, message)),
+    apiKey: requiredString(input.apiKey, "apiKey", providerInputError),
     masterApiKey: readRequiredString(input.masterApiKey, "masterApiKey"),
   };
 }
@@ -297,7 +280,7 @@ function readUserId(value: unknown) {
 
 function requirePositiveInteger(value: unknown, message: string) {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
-    throw new ProviderRequestError(400, message);
+    throw providerInputError(message);
   }
   return value;
 }
@@ -327,15 +310,11 @@ function readResolve(value: unknown) {
 function requireObject(value: unknown, message: string) {
   const record = optionalRecord(value);
   if (!record) {
-    throw new ProviderRequestError(502, message);
+    throw providerResponseError(message);
   }
   return record;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return optionalRecord(value) !== undefined;
-}
-
-function isAbortLikeError(error: unknown) {
-  return error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
 }

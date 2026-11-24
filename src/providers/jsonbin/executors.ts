@@ -1,13 +1,10 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { optionalRecord, optionalString, requiredRecord, requiredString } from "../../core/cast.ts";
-import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
-  providerUserAgent,
-  ProviderRequestError,
-} from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerInputError, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "jsonbin";
 const jsonbinApiBaseUrl = "https://api.jsonbin.io/v3";
@@ -69,7 +66,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "api_key",
         displayName: "JSONBin.io Master Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: jsonbinApiBaseUrl,
         validationEndpoint: jsonbinValidationPath,
@@ -80,7 +76,7 @@ export const credentialValidators: CredentialValidators = {
 };
 
 async function createBin(input: Record<string, unknown>, context: JsonbinActionContext): Promise<unknown> {
-  const record = requiredRecord(input.record, "record", jsonbinInputError);
+  const record = requiredRecord(input.record, "record", providerInputError);
   const response = await jsonbinFetch(buildJsonbinUrl("/b"), {
     method: "POST",
     headers: jsonbinJsonHeaders(context.apiKey, {
@@ -122,7 +118,7 @@ async function readBin(input: Record<string, unknown>, context: JsonbinActionCon
 }
 
 async function updateBin(input: Record<string, unknown>, context: JsonbinActionContext): Promise<unknown> {
-  const record = requiredRecord(input.record, "record", jsonbinInputError);
+  const record = requiredRecord(input.record, "record", providerInputError);
   const response = await jsonbinFetch(buildJsonbinUrl(`/b/${readBinIdPathSegment(input.binId)}`), {
     method: "PUT",
     headers: jsonbinJsonHeaders(context.apiKey, {
@@ -158,7 +154,7 @@ async function deleteBin(input: Record<string, unknown>, context: JsonbinActionC
 function jsonbinHeaders(apiKey: string, extraHeaders: Record<string, string | undefined> = {}): Record<string, string> {
   return pruneHeaders({
     "X-Master-Key": apiKey,
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     ...extraHeaders,
   });
@@ -287,9 +283,5 @@ function readPayloadObject(payload: unknown): Record<string, unknown> {
 }
 
 function readBinIdPathSegment(value: unknown): string {
-  return encodeURIComponent(requiredString(value, "binId", jsonbinInputError));
-}
-
-function jsonbinInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
+  return encodeURIComponent(requiredString(value, "binId", providerInputError));
 }

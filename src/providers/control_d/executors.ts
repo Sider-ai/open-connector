@@ -1,11 +1,12 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { createHash } from "node:crypto";
 import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
@@ -13,7 +14,6 @@ import {
 
 const service = "control_d";
 const apiBaseUrl = "https://api.controld.com";
-const defaultRequestTimeoutMs = 30_000;
 
 type ControlDRequestPhase = "validate" | "execute";
 
@@ -54,6 +54,16 @@ const actionHandlers: ProviderActionHandlers<"control_d", ControlDActionHandler>
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, actionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: apiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const context = { apiKey: input.apiKey, fetcher, signal };
@@ -66,7 +76,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: buildProviderAccountId(input.apiKey),
         displayName: "Control D API Token",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl,
         validationEndpoint: "/profiles",
@@ -234,8 +243,8 @@ async function requestControlD(input: {
   body?: Record<string, unknown>;
 }): Promise<Record<string, unknown>> {
   const headers = new Headers({
-    authorization: `Bearer ${input.context.apiKey}`,
-    accept: "application/json",
+    "authorization": `Bearer ${input.context.apiKey}`,
+    "accept": "application/json",
     "user-agent": providerUserAgent,
   });
   if (input.forceOrgId) {
@@ -247,7 +256,7 @@ async function requestControlD(input: {
 
   let response: Response;
   let payload: unknown;
-  const timeout = createProviderTimeout(input.context.signal, defaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   try {
     response = await input.context.fetcher(new URL(input.path, apiBaseUrl), {
       method: input.method ?? "GET",

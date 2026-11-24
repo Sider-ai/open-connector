@@ -4,20 +4,24 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { requireCustomCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
 import {
-  createProviderFetch,
   createProviderProxyUrl,
-  defineProviderExecutors,
   normalizeProviderProxyHeaders,
-  ProviderRequestError,
-  providerUserAgent,
   readProviderProxyErrorMessage,
   readProviderProxyResponse,
-  requireCustomCredential,
   toProviderProxyError,
+} from "../provider-proxy.ts";
+import {
+  createProviderFetch,
+  providerInputError,
+  ProviderRequestError,
+  providerUserAgent,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 const service = "one_page_crm";
@@ -59,7 +63,7 @@ export const onePageCrmActionHandlers: ProviderActionHandlers<"one_page_crm", On
     });
   },
   get_contact(input, context) {
-    const contactId = readInputString(input.contactId, "contactId");
+    const contactId = requiredInputString(input.contactId, "contactId");
     return readRecord({
       context,
       path: `/contacts/${encodeURIComponent(contactId)}`,
@@ -84,7 +88,7 @@ export const onePageCrmActionHandlers: ProviderActionHandlers<"one_page_crm", On
     });
   },
   get_deal(input, context) {
-    const dealId = readInputString(input.dealId, "dealId");
+    const dealId = requiredInputString(input.dealId, "dealId");
     return readRecord({
       context,
       path: `/deals/${encodeURIComponent(dealId)}`,
@@ -165,7 +169,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: credential.userId,
         displayName: readAccountLabel(user, credential.userId),
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: onePageCrmApiBaseUrl,
         userId: credential.userId,
@@ -256,8 +259,8 @@ async function requestOnePageCrmJson(options: OnePageCrmRequestOptions): Promise
   }
 
   const headers: Record<string, string> = {
-    accept: "application/json",
-    authorization: buildOnePageCrmAuthorizationHeader(options.credential),
+    "accept": "application/json",
+    "authorization": buildOnePageCrmAuthorizationHeader(options.credential),
     "user-agent": providerUserAgent,
   };
   if (options.body !== undefined) {
@@ -365,8 +368,8 @@ function buildDealBody(input: Record<string, unknown>): Record<string, unknown> 
 
 function readOnePageCrmCredential(input: Record<string, string>): OnePageCrmCredential {
   return {
-    userId: requiredString(input.userId, "userId", inputError),
-    apiKey: requiredString(input.apiKey, "apiKey", inputError),
+    userId: requiredString(input.userId, "userId", providerInputError),
+    apiKey: requiredString(input.apiKey, "apiKey", providerInputError),
   };
 }
 
@@ -487,14 +490,6 @@ function requireObject(value: unknown, message: string): Record<string, unknown>
     throw new ProviderRequestError(502, message);
   }
   return record;
-}
-
-function readInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, inputError);
-}
-
-function inputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }
 
 function readOptionalInteger(value: unknown, fieldName: string): number | undefined {

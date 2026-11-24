@@ -3,7 +3,7 @@ import type { ActionDefinition } from "../../core/types.ts";
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
 
-const service = "mails_so" as const;
+const service = "mails_so";
 
 const validationResultType = s.stringEnum("The overall Mails validation result.", [
   "deliverable",
@@ -60,6 +60,7 @@ const batchMetadataSchema = {
 export const mailsSoActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "validate_email",
+    operationType: "read",
     description: "Validate one email address with the Mails single validation endpoint.",
     inputSchema: s.object("The input payload for validating one email address.", {
       email: s.email("The email address to validate."),
@@ -68,6 +69,7 @@ export const mailsSoActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_validation_batch",
+    operationType: "write",
     description: "Create one Mails batch validation job for a list of email addresses.",
     inputSchema: s.object("The input payload for creating one batch validation job.", {
       emails: s.array(
@@ -85,6 +87,7 @@ export const mailsSoActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_validation_batch",
+    operationType: "read",
     description: "Fetch one Mails batch validation job together with its email results.",
     inputSchema: s.object("The input payload for fetching one batch validation job.", {
       batchId: s.uuid("The batch job identifier returned by Mails."),

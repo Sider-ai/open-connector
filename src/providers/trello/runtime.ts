@@ -1,39 +1,34 @@
-import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { CredentialValidationResult, ResolvedCredential } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalBoolean, optionalRecord, optionalString } from "../../core/cast.ts";
-import { sanitizeProviderDiagnosticMessage } from "../../core/provider-error-diagnostic.ts";
-import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { createProviderErrorDetails } from "../../core/provider-error-diagnostic.ts";
+import { readOAuthScopes } from "../../oauth/oauth-scopes.ts";
+import { ProviderRequestError, providerUserAgent, requiredResponseRecord } from "../provider-runtime.ts";
 
-export const trelloApiBaseUrl: string = "https://api.trello.com/1";
+const trelloApiBaseUrl = "https://api.trello.com/1";
+const trelloOAuthApiBaseUrl = "https://trello.com/1";
 
-export type TrelloCredential =
-  | {
-      authType: "custom_credential";
-      apiKey: string;
-      apiToken: string;
-    }
-  | {
-      authType: "oauth2";
-      accessToken: string;
-    };
+export type TrelloAuth =
+  | { type: "key"; apiKey: string; apiToken: string }
+  | { type: "bearer"; accessToken: string; tokenType: string };
 
-export type TrelloActionContext = TrelloCredential & {
+export interface TrelloActionContext {
+  auth: TrelloAuth;
   fetcher: typeof fetch;
   signal?: AbortSignal;
-};
+}
 
 type TrelloActionHandler = (input: Record<string, unknown>, context: TrelloActionContext) => Promise<unknown>;
 
 type TrelloRequestInput = {
-  credential: TrelloCredential;
+  credential: Pick<TrelloActionContext, "auth">;
   fetcher: typeof fetch;
   method?: "DELETE" | "GET" | "POST" | "PUT";
   path: string;
   query?: Array<[string, string | number | boolean | null | undefined]>;
   body?: Record<string, unknown>;
   phase: "validate" | "execute";
-  signal?: AbortSignal;
 };
 
 const defaultMemberFields = ["id", "username", "fullName"];
@@ -465,15 +460,13 @@ export const trelloActionHandlers: ProviderActionHandlers<"trello", TrelloAction
       ],
       phase: "execute",
     });
-    return {
-      results: normalizeSearchResults(payload),
-    };
+    return { results: normalizeSearchResults(payload) };
   },
 };
 
 function normalizeSearchResults(payload: unknown): Record<string, unknown>[] {
   if (Array.isArray(payload)) {
-    return payload.map((result) => asObjectPayload(result));
+    return payload.map((result) => requiredResponseRecord(result, "Trello search result"));
   }
   const groups = optionalRecord(payload);
   const results: Record<string, unknown>[] = [];
@@ -494,7 +487,7 @@ function normalizeSearchResults(payload: unknown): Record<string, unknown>[] {
       throw new ProviderRequestError(502, `Trello search ${key} response was not an array`);
     }
     for (const item of items) {
-      results.push({ ...asObjectPayload(item), modelType });
+      results.push({ ...requiredResponseRecord(item, "Trello search result"), modelType });
     }
   }
   if (!foundGroup) {
@@ -503,26 +496,28 @@ function normalizeSearchResults(payload: unknown): Record<string, unknown>[] {
   return results;
 }
 
-export async function validateTrelloCredential(
+export function validateTrelloCredential(
   input: { values: Record<string, string> },
   options: { fetcher: typeof fetch; signal?: AbortSignal },
 ): Promise<CredentialValidationResult> {
-  const credential = resolveTrelloCredential(input.values);
-  return validateTrelloRequestCredential(credential, [], options);
+  return validateTrelloAuth(resolveTrelloCredential(input.values), options);
 }
 
-export async function validateTrelloOAuthCredential(
-  accessToken: string,
-  scope: unknown,
+export function validateTrelloOAuthCredential(
+  input: Extract<ResolvedCredential, { authType: "oauth2" }>,
   options: { fetcher: typeof fetch; signal?: AbortSignal },
 ): Promise<CredentialValidationResult> {
-  return validateTrelloRequestCredential({ authType: "oauth2", accessToken }, parseTrelloGrantedScopes(scope), options);
+  return validateTrelloAuth({ auth: trelloBearerAuth(input) }, options, readOAuthScopes(input.metadata.scope));
 }
 
-async function validateTrelloRequestCredential(
-  credential: TrelloCredential,
-  grantedScopes: string[],
+export function trelloBearerAuth(credential: { accessToken: string; tokenType: string }): TrelloAuth {
+  return { type: "bearer", accessToken: credential.accessToken, tokenType: credential.tokenType };
+}
+
+async function validateTrelloAuth(
+  credential: Pick<TrelloActionContext, "auth">,
   options: { fetcher: typeof fetch; signal?: AbortSignal },
+  grantedScopes?: string[],
 ): Promise<CredentialValidationResult> {
   const member = await trelloRequest<Record<string, unknown>>({
     credential,
@@ -530,7 +525,6 @@ async function validateTrelloRequestCredential(
     path: "/members/me",
     query: [["fields", defaultMemberFields.join(",")]],
     phase: "validate",
-    signal: options.signal,
   });
   const memberId = readOptionalString(member.id);
   const username = readOptionalString(member.username);
@@ -544,7 +538,7 @@ async function validateTrelloRequestCredential(
     },
     grantedScopes,
     metadata: compactObject({
-      apiBaseUrl: trelloApiBaseUrl,
+      apiBaseUrl: trelloBaseUrl(credential.auth),
       memberId,
       username,
       validationEndpoint: "/members/me",
@@ -552,16 +546,27 @@ async function validateTrelloRequestCredential(
   };
 }
 
-function resolveTrelloCredential(input: Record<string, string | undefined>): TrelloCredential {
+function resolveTrelloCredential(input: Record<string, string | undefined>): Pick<TrelloActionContext, "auth"> {
   return {
-    authType: "custom_credential",
-    apiKey: readRequiredString(input.apiKey, "apiKey"),
-    apiToken: readRequiredString(input.apiToken, "apiToken"),
+    auth: {
+      type: "key",
+      apiKey: readRequiredString(input.apiKey, "apiKey"),
+      apiToken: readRequiredString(input.apiToken, "apiToken"),
+    },
   };
 }
 
+export function trelloBaseUrl(auth: TrelloAuth): string {
+  return auth.type === "bearer" ? trelloOAuthApiBaseUrl : trelloApiBaseUrl;
+}
+
 async function trelloRequest<T>(input: TrelloRequestInput): Promise<T> {
-  const url = new URL(`${trelloApiBaseUrl}${input.path}`);
+  const { auth } = input.credential;
+  const url = new URL(`${trelloBaseUrl(auth)}${input.path}`);
+  if (auth.type === "key") {
+    url.searchParams.set("key", auth.apiKey);
+    url.searchParams.set("token", auth.apiToken);
+  }
   for (const [key, value] of input.query ?? []) {
     if (value === undefined || value === null) {
       continue;
@@ -569,18 +574,15 @@ async function trelloRequest<T>(input: TrelloRequestInput): Promise<T> {
     url.searchParams.set(key, String(value));
   }
 
-  const headers = new Headers({
-    accept: "application/json",
-    "user-agent": providerUserAgent,
-    ...(input.body ? { "content-type": "application/json" } : {}),
-  });
-  applyTrelloAuthentication(url, headers, input.credential);
-
   const response = await input.fetcher(url.toString(), {
     method: input.method ?? "GET",
-    headers,
+    headers: {
+      "accept": "application/json",
+      "user-agent": providerUserAgent,
+      ...(auth.type === "bearer" ? { authorization: `${auth.tokenType} ${auth.accessToken}` } : {}),
+      ...(input.body ? { "content-type": "application/json" } : {}),
+    },
     ...(input.body ? { body: JSON.stringify(input.body) } : {}),
-    signal: input.signal,
   });
 
   if (response.ok) {
@@ -599,48 +601,41 @@ async function trelloRequest<T>(input: TrelloRequestInput): Promise<T> {
     }
   }
 
-  const message = await readTrelloError(response);
-  const details = { upstreamMessage: message };
-  if (response.status === 401) {
-    throw new ProviderRequestError(401, trelloAuthenticationError(message, input.credential.authType), details);
-  }
-  if (response.status === 403) {
-    throw new ProviderRequestError(403, `Trello denied this request (HTTP 403): ${message}`, details);
+  const details = createProviderErrorDetails(response.status, await readTrelloError(response));
+  const message = details.upstreamMessage;
+  if (
+    auth.type === "key" &&
+    input.phase === "validate" &&
+    (response.status === 401 || response.status === 403) &&
+    (message === "invalid key" || message === "invalid token")
+  ) {
+    throw new ProviderRequestError(400, normalizeTrelloAuthError(message));
   }
   if (response.status === 429) {
-    throw new ProviderRequestError(429, message, details);
+    throw new ProviderRequestError(429, message);
   }
+  const failure = auth.type === "bearer" ? `failed (HTTP ${response.status} from ${url.host})` : "failed";
   throw new ProviderRequestError(
     response.status >= 400 && response.status < 600 ? response.status : 502,
-    `Trello ${input.phase} request failed: ${message}`,
+    `Trello ${input.phase} request ${failure}: ${message}`,
     details,
+    trelloResponseErrorCode(auth, response.status, message),
   );
 }
 
-/** Apply the selected Trello credential without allowing proxy input to override it. */
-export function applyTrelloAuthentication(url: URL, headers: Headers, credential: TrelloCredential): void {
-  url.searchParams.delete("key");
-  url.searchParams.delete("token");
-  headers.delete("authorization");
-  if (credential.authType === "oauth2") {
-    headers.set("authorization", `Bearer ${credential.accessToken}`);
-    return;
+export function trelloResponseErrorCode(
+  auth: TrelloAuth,
+  status: number,
+  message: string,
+): "authorization_failed" | "provider_error" | undefined {
+  const text = message.trim();
+  if ((status === 400 || status === 401) && (text === "invalid key" || text === "invalid token")) {
+    return "authorization_failed";
   }
-  url.searchParams.set("key", credential.apiKey);
-  url.searchParams.set("token", credential.apiToken);
+  return status === 401 || status === 403 ? "provider_error" : undefined;
 }
 
-function parseTrelloGrantedScopes(value: unknown): string[] {
-  return (optionalString(value) ?? "")
-    .split(/[ ,]+/u)
-    .map((scope) => scope.trim())
-    .filter(Boolean);
-}
-
-function trelloAuthenticationError(message: string, authType: TrelloCredential["authType"]): string {
-  if (authType === "oauth2") {
-    return `Trello authentication failed (HTTP 401): ${message}`;
-  }
+function normalizeTrelloAuthError(message: string) {
   if (message === "invalid key") {
     return "Invalid Trello API key. Use the Key from https://trello.com/power-ups/admin, not the API Secret or an Atlassian API token.";
   }
@@ -656,21 +651,19 @@ async function readTrelloError(response: Response) {
   if (contentType.includes("application/json")) {
     const payload = (await response.json().catch(() => undefined)) as unknown;
     if (typeof payload === "string" && payload) {
-      return sanitizeProviderDiagnosticMessage(payload) || fallback;
+      return payload;
     }
     const record = optionalRecord(payload);
     return (
-      sanitizeProviderDiagnosticMessage(
-        readOptionalString(record?.message) ??
-          readOptionalString(record?.error) ??
-          readOptionalString(record?.detail) ??
-          fallback,
-      ) || fallback
+      readOptionalString(record?.message) ??
+      readOptionalString(record?.error) ??
+      readOptionalString(record?.detail) ??
+      fallback
     );
   }
 
   const text = await response.text().catch(() => "");
-  return sanitizeProviderDiagnosticMessage(text || fallback) || fallback;
+  return text || fallback;
 }
 
 function readFields(value: unknown, fallback: string[]) {

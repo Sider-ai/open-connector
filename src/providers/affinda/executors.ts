@@ -1,14 +1,17 @@
-import type { CredentialValidators, ExecutionContext, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type {
+  CredentialValidators,
+  ExecutionContext,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalBoolean, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { encodePathSegment } from "../../core/request.ts";
-import {
-  defineProviderExecutors,
-  providerUserAgent,
-  ProviderRequestError,
-  requireApiKeyCredential,
-} from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerInputError, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "affinda";
 const affindaDefaultApiBaseUrl = "https://api.affinda.com";
@@ -130,6 +133,18 @@ export const executors: ProviderExecutors = defineProviderExecutors<AffindaActio
     };
   },
 });
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  async baseUrl(context) {
+    const credential = await requireApiKeyCredential(context, service);
+    return resolveAffindaApiBaseUrl(credential.metadata);
+  },
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
 
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
@@ -156,7 +171,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: primaryOrganizationId,
         displayName: primaryOrganizationName ?? "Affinda API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl,
         organizationCount: organizations.length,
@@ -285,8 +299,8 @@ function appendAffindaQueryValue(url: URL, key: string, value: unknown): void {
 
 function buildAffindaHeaders(apiKey: string, body?: BodyInit): Record<string, string> {
   return {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "user-agent": providerUserAgent,
     ...(body && !(body instanceof FormData) ? { "content-type": "application/json" } : {}),
   };
@@ -387,8 +401,4 @@ function resolveAffindaApiBaseUrl(input: Record<string, unknown> | undefined): s
     throw new ProviderRequestError(400, "apiBaseUrl must be an official Affinda API URL");
   }
   return normalized;
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

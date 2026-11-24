@@ -1,10 +1,15 @@
 import type { ActionExecutor, CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../core/types.ts";
+import type { ProviderOAuthRuntime } from "../oauth/oauth-token.ts";
+import type { IntegrationDefinition } from "../triggers/common/integration.ts";
+import type { PollDefinition } from "../triggers/common/poll.ts";
 
-import { withProviderFallbackMessage } from "./provider-runtime.ts";
+import { withProviderFallbackMessage } from "./provider-executors.ts";
 
 export interface ExecutorModule {
+  triggers?: readonly (IntegrationDefinition | PollDefinition)[];
   credentialValidators?: CredentialValidators;
   executors: ProviderExecutors;
+  oauth?: ProviderOAuthRuntime;
   proxy?: ProviderProxyExecutor;
 }
 
@@ -13,7 +18,8 @@ export interface ExecutorModules {
 }
 
 /**
- * Loads provider executor modules only when an action is executed.
+ * Loads provider runtime modules only when an action, proxy, credential validator,
+ * or provider-specific OAuth token operation runs.
  *
  * Provider definitions are intentionally not exposed here. Runtime catalog
  * reads should use generated `catalog/apps/*.json` instead of importing
@@ -38,6 +44,11 @@ export interface IProviderLoader {
    * Load a provider credential validator only when a connection is created.
    */
   loadCredentialValidators(service: string): Promise<CredentialValidators | undefined>;
+
+  loadTriggerDefinitions?(service: string): Promise<readonly (IntegrationDefinition | PollDefinition)[]>;
+
+  /** Load provider-specific OAuth operations when the provider defines them. */
+  loadProviderOAuthRuntime?(service: string): Promise<ProviderOAuthRuntime | undefined>;
 }
 
 /**
@@ -83,6 +94,20 @@ export class ProviderLoader implements IProviderLoader {
 
     const module = await loadExecutors();
     return module.credentialValidators;
+  }
+
+  async loadProviderOAuthRuntime(service: string): Promise<ProviderOAuthRuntime | undefined> {
+    const loadRuntime = this.executorModules[service];
+    if (!loadRuntime) {
+      return undefined;
+    }
+
+    return (await loadRuntime()).oauth;
+  }
+
+  async loadTriggerDefinitions(service: string): Promise<readonly (IntegrationDefinition | PollDefinition)[]> {
+    const load = this.executorModules[service];
+    return load ? ((await load()).triggers ?? []) : [];
   }
 
   private _findActionExecutor(

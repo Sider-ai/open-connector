@@ -1,6 +1,7 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { optionalRecord, optionalString } from "../../core/cast.ts";
 import {
@@ -8,12 +9,14 @@ import {
   isAbortLikeError,
   ProviderRequestError,
   providerUserAgent,
+  requiredResponseRecord,
+  providerInputError,
+  providerResponseError,
+  defaultProviderRequestTimeoutMs,
 } from "../provider-runtime.ts";
 
 export const v2exApiBaseUrl = "https://www.v2ex.com/api/v2";
 export const v2exLegacyApiBaseUrl = "https://www.v2ex.com/api";
-
-const v2exRequestTimeoutMs = 30_000;
 
 type V2exRequestPhase = "validate" | "execute";
 type V2exActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
@@ -188,7 +191,6 @@ export async function validateV2exCredential(
     profile: {
       accountId: accountId ? `v2ex:${accountId}` : "v2ex-member",
       displayName: username ? `V2EX ${username}` : "V2EX Member",
-      grantedScopes: [],
     },
     metadata: {
       apiBaseUrl: v2exApiBaseUrl,
@@ -216,14 +218,14 @@ async function requestV2exLegacyJson(input: {
   fetcher: ProviderFetch;
   signal?: AbortSignal;
 }): Promise<unknown> {
-  const timeout = createProviderTimeout(input.signal, v2exRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   const url = new URL(`${v2exLegacyApiBaseUrl}${input.path}`);
   let response: Response;
   let payload: unknown;
   try {
     response = await input.fetcher(url, {
       method: "GET",
-      headers: { accept: "application/json", "user-agent": providerUserAgent },
+      headers: { "accept": "application/json", "user-agent": providerUserAgent },
       signal: timeout.signal,
     });
     payload = await readV2exPayload(response);
@@ -231,7 +233,7 @@ async function requestV2exLegacyJson(input: {
     if (timeout.didTimeout() || isAbortLikeError(error)) {
       throw new ProviderRequestError(
         504,
-        `V2EX legacy ${input.path} request timed out after ${Math.ceil(v2exRequestTimeoutMs / 1000)} seconds`,
+        `V2EX legacy ${input.path} request timed out after ${Math.ceil(defaultProviderRequestTimeoutMs / 1000)} seconds`,
       );
     }
     if (error instanceof ProviderRequestError) throw error;
@@ -259,7 +261,7 @@ async function requestV2exJson(input: {
   signal?: AbortSignal;
   phase: V2exRequestPhase;
 }): Promise<unknown> {
-  const timeout = createProviderTimeout(input.signal, v2exRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   const url = buildV2exUrl(input.path, input.query);
   let response: Response;
   let payload: unknown;
@@ -275,7 +277,7 @@ async function requestV2exJson(input: {
     if (timeout.didTimeout() || isAbortLikeError(error)) {
       throw new ProviderRequestError(
         504,
-        `V2EX ${input.path} request timed out after ${Math.ceil(v2exRequestTimeoutMs / 1000)} seconds`,
+        `V2EX ${input.path} request timed out after ${Math.ceil(defaultProviderRequestTimeoutMs / 1000)} seconds`,
       );
     }
     if (error instanceof ProviderRequestError) throw error;
@@ -303,8 +305,8 @@ function buildV2exUrl(path: string, query?: Record<string, unknown>): URL {
 
 function buildV2exHeaders(apiKey: string, hasJsonBody: boolean): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "user-agent": providerUserAgent,
   };
   if (hasJsonBody) headers["content-type"] = "application/json";
@@ -326,7 +328,7 @@ function unwrapV2exEnvelope(
   label: string,
   phase: V2exRequestPhase,
 ): { message: string | undefined; result: unknown } {
-  const envelope = requireObject(payload, `V2EX ${label} response`);
+  const envelope = requiredResponseRecord(payload, `V2EX ${label} response`);
   if (envelope.success === false) {
     throw mapV2exSuccessError(extractV2exErrorMessage(envelope), phase);
   }
@@ -338,7 +340,7 @@ function unwrapV2exEnvelope(
 
 function ensureV2exAccepted(payload: unknown, label: string): void {
   if (payload == null) return;
-  const envelope = requireObject(payload, `V2EX ${label} response`);
+  const envelope = requiredResponseRecord(payload, `V2EX ${label} response`);
   if (envelope.success === false) {
     throw mapV2exSuccessError(extractV2exErrorMessage(envelope), "execute");
   }
@@ -347,7 +349,7 @@ function ensureV2exAccepted(payload: unknown, label: string): void {
 }
 
 function requireV2exObjectResult(envelope: { result: unknown }, label: string): Record<string, unknown> {
-  return requireObject(envelope.result, `V2EX ${label} result`);
+  return requiredResponseRecord(envelope.result, `V2EX ${label} result`);
 }
 
 function requireV2exArrayResult(envelope: { result: unknown }, label: string): unknown[] {
@@ -393,7 +395,7 @@ function mapV2exError(
   const resolvedMessage = message || "V2EX request failed";
   const authAware = options?.authAware ?? true;
   if (status === 429) return new ProviderRequestError(429, resolvedMessage);
-  if (phase === "validate" && (status === 401 || status === 403)) return new ProviderRequestError(400, resolvedMessage);
+  if (phase === "validate" && (status === 401 || status === 403)) return providerInputError(resolvedMessage);
   if (authAware && phase === "execute" && status === 401) return new ProviderRequestError(401, resolvedMessage);
   if (phase === "execute" && status === 403) return new ProviderRequestError(403, resolvedMessage);
   return new ProviderRequestError(status || 500, resolvedMessage);
@@ -401,12 +403,6 @@ function mapV2exError(
 
 function mapV2exSuccessError(message: string | undefined, phase: V2exRequestPhase): ProviderRequestError {
   const resolvedMessage = message || "V2EX request failed";
-  if (phase === "validate") return new ProviderRequestError(400, resolvedMessage);
-  return new ProviderRequestError(502, resolvedMessage);
-}
-
-function requireObject(value: unknown, label: string): Record<string, unknown> {
-  const record = optionalRecord(value);
-  if (!record) throw new ProviderRequestError(502, `${label} must be an object`);
-  return record;
+  if (phase === "validate") return providerInputError(resolvedMessage);
+  return providerResponseError(resolvedMessage);
 }

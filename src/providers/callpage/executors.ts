@@ -1,9 +1,10 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "callpage";
 const callpageApiBaseUrl = "https://core.callpage.io";
@@ -45,6 +46,16 @@ const callpageActionHandlers: ProviderActionHandlers<"callpage", CallpageActionH
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, callpageActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: callpageApiBaseUrl,
+  auth: { type: "api_key_header", name: "Authorization" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = await callpageGetJson(
@@ -62,7 +73,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "callpage",
         displayName: "CallPage API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: callpageApiBaseUrl,
         validationEndpoint: callpageValidationPath,
@@ -261,7 +271,7 @@ async function executeCreateWidgetCall(
 
 async function callpageGetJson(
   path: string,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: CallpagePhase,
 ): Promise<Record<string, unknown>> {
   return callpageRequestEnvelope(
@@ -281,14 +291,14 @@ async function callpageGetJson(
 async function callpagePostJson(
   path: string,
   body: Record<string, unknown>,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
   return callpageRequestEnvelope(
     new URL(path, callpageApiBaseUrl),
     {
       method: "POST",
       headers: callpageHeaders(context.apiKey, {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
       }),
       body: JSON.stringify(body),
@@ -389,7 +399,7 @@ function createCallpageError(
 
 function callpageHeaders(apiKey: string, extraHeaders: Record<string, string>): Record<string, string> {
   return {
-    Authorization: apiKey,
+    "Authorization": apiKey,
     "user-agent": providerUserAgent,
     ...extraHeaders,
   };

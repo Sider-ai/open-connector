@@ -1,19 +1,18 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
+import { compactObject, optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import {
-  compactObject,
-  optionalBoolean,
-  optionalInteger,
-  optionalRecord,
-  optionalString,
-  requiredString,
-} from "../../core/cast.ts";
-import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+  ProviderRequestError,
+  providerUserAgent,
+  requiredInputString,
+  requiredResponseRecord,
+  providerInputError,
+} from "../provider-runtime.ts";
 
-const contentfulApiBaseUrl = "https://api.contentful.com";
-const contentfulJsonContentType = "application/vnd.contentful.management.v1+json";
+export const contentfulApiBaseUrl = "https://api.contentful.com";
+export const contentfulJsonContentType = "application/vnd.contentful.management.v1+json";
 
 interface ContentfulRequestInput {
   path: string;
@@ -78,8 +77,8 @@ export async function validateContentfulCredential(
     invalidInputMessage: "invalid Contentful personal access token",
   });
 
-  const user = requireObjectPayload(payload, "Contentful user profile");
-  const sys = requireObjectPayload(user.sys, "Contentful user sys");
+  const user = requiredResponseRecord(payload, "Contentful user profile");
+  const sys = requiredResponseRecord(user.sys, "Contentful user sys");
   const userId = optionalString(sys.id);
   if (!userId) {
     throw new ProviderRequestError(502, "Contentful user profile must include sys.id");
@@ -100,9 +99,7 @@ export async function validateContentfulCredential(
     profile: {
       accountId: userId,
       displayName: accountLabel || userId,
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: compactObject({
       userId,
       email,
@@ -157,7 +154,7 @@ async function listEnvironments(
   input: Record<string, unknown>,
   context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
-  const spaceId = requireProviderString(input.spaceId, "spaceId");
+  const spaceId = requiredInputString(input.spaceId, "spaceId");
   const payload = await requestContentfulJson({
     path: `/spaces/${encodeURIComponent(spaceId)}/environments`,
     apiKey: context.apiKey,
@@ -178,8 +175,8 @@ async function listContentTypes(
   input: Record<string, unknown>,
   context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
-  const spaceId = requireProviderString(input.spaceId, "spaceId");
-  const environmentId = requireProviderString(input.environmentId, "environmentId");
+  const spaceId = requiredInputString(input.spaceId, "spaceId");
+  const environmentId = requiredInputString(input.environmentId, "environmentId");
   const payload = await requestContentfulJson({
     path: `/spaces/${encodeURIComponent(spaceId)}/environments/${encodeURIComponent(environmentId)}/content_types`,
     apiKey: context.apiKey,
@@ -205,8 +202,8 @@ async function listEntries(
   input: Record<string, unknown>,
   context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
-  const spaceId = requireProviderString(input.spaceId, "spaceId");
-  const environmentId = requireProviderString(input.environmentId, "environmentId");
+  const spaceId = requiredInputString(input.spaceId, "spaceId");
+  const environmentId = requiredInputString(input.environmentId, "environmentId");
   const payload = await requestContentfulJson({
     path: `/spaces/${encodeURIComponent(spaceId)}/environments/${encodeURIComponent(environmentId)}/entries`,
     apiKey: context.apiKey,
@@ -238,9 +235,9 @@ async function getEntry(
   input: Record<string, unknown>,
   context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
-  const spaceId = requireProviderString(input.spaceId, "spaceId");
-  const environmentId = requireProviderString(input.environmentId, "environmentId");
-  const entryId = requireProviderString(input.entryId, "entryId");
+  const spaceId = requiredInputString(input.spaceId, "spaceId");
+  const environmentId = requiredInputString(input.environmentId, "environmentId");
+  const entryId = requiredInputString(input.entryId, "entryId");
   const entry = await requestContentfulJson({
     path: `/spaces/${encodeURIComponent(spaceId)}/environments/${encodeURIComponent(environmentId)}/entries/${encodeURIComponent(entryId)}`,
     apiKey: context.apiKey,
@@ -255,9 +252,9 @@ async function createEntry(
   input: Record<string, unknown>,
   context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
-  const spaceId = requireProviderString(input.spaceId, "spaceId");
-  const environmentId = requireProviderString(input.environmentId, "environmentId");
-  const contentType = requireProviderString(input.contentType, "contentType");
+  const spaceId = requiredInputString(input.spaceId, "spaceId");
+  const environmentId = requiredInputString(input.environmentId, "environmentId");
+  const contentType = requiredInputString(input.contentType, "contentType");
   const entry = await requestContentfulJson({
     path: `/spaces/${encodeURIComponent(spaceId)}/environments/${encodeURIComponent(environmentId)}/entries`,
     apiKey: context.apiKey,
@@ -268,7 +265,7 @@ async function createEntry(
       "x-contentful-content-type": contentType,
     },
     body: compactObject({
-      fields: requireObjectPayload(input.fields, "Contentful entry fields"),
+      fields: requiredResponseRecord(input.fields, "Contentful entry fields"),
       metadata: optionalRecord(input.metadata),
     }),
   });
@@ -279,10 +276,10 @@ async function updateEntry(
   input: Record<string, unknown>,
   context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
-  const spaceId = requireProviderString(input.spaceId, "spaceId");
-  const environmentId = requireProviderString(input.environmentId, "environmentId");
-  const entryId = requireProviderString(input.entryId, "entryId");
-  const contentType = requireProviderString(input.contentType, "contentType");
+  const spaceId = requiredInputString(input.spaceId, "spaceId");
+  const environmentId = requiredInputString(input.environmentId, "environmentId");
+  const entryId = requiredInputString(input.entryId, "entryId");
+  const contentType = requiredInputString(input.contentType, "contentType");
   const version = optionalInteger(input.version);
   if (version === undefined || version <= 0) {
     throw new ProviderRequestError(400, "version must be a positive integer");
@@ -298,7 +295,7 @@ async function updateEntry(
       "x-contentful-version": String(version),
     },
     body: compactObject({
-      fields: requireObjectPayload(input.fields, "Contentful entry fields"),
+      fields: requiredResponseRecord(input.fields, "Contentful entry fields"),
       metadata: optionalRecord(input.metadata),
     }),
   });
@@ -341,9 +338,9 @@ function buildContentfulHeaders(
   includeJsonContentType = false,
 ): Record<string, string> {
   return compactObject({
-    authorization: `Bearer ${apiKey}`,
+    "authorization": `Bearer ${apiKey}`,
     "user-agent": providerUserAgent,
-    accept: contentfulJsonContentType,
+    "accept": contentfulJsonContentType,
     "content-type": includeJsonContentType ? contentfulJsonContentType : undefined,
     ...extraHeaders,
   }) as Record<string, string>;
@@ -357,7 +354,7 @@ function createContentfulError(
 ): ProviderRequestError {
   const message = optionalString(optionalRecord(payload)?.message);
   if (response.status === 404 && notFoundMessage) {
-    return new ProviderRequestError(400, notFoundMessage);
+    return providerInputError(notFoundMessage);
   }
   if (response.status === 400) {
     return new ProviderRequestError(400, message ?? "invalid Contentful request");
@@ -373,7 +370,7 @@ function createContentfulError(
 }
 
 function parseCollectionPayload(payload: unknown, label: string): ContentfulCollectionShape {
-  const record = requireObjectPayload(payload, label);
+  const record = requiredResponseRecord(payload, label);
   if (!Array.isArray(record.items)) {
     throw new ProviderRequestError(502, `${label} response must include an items array`);
   }
@@ -384,16 +381,4 @@ function parseCollectionPayload(payload: unknown, label: string): ContentfulColl
     limit: optionalInteger(record.limit) ?? record.items.length,
     includes: optionalRecord(record.includes),
   };
-}
-
-function requireObjectPayload(value: unknown, label: string): Record<string, unknown> {
-  const record = optionalRecord(value);
-  if (!record) {
-    throw new ProviderRequestError(502, `${label} must be an object`);
-  }
-  return record;
-}
-
-function requireProviderString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }

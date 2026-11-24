@@ -1,7 +1,14 @@
-import type { CredentialValidators, ExecutionContext, ProviderExecutors } from "../../core/types.ts";
+import type {
+  CredentialValidators,
+  ExecutionContext,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
 
-import { defineProviderExecutors, ProviderRequestError } from "../provider-runtime.ts";
-import { executeOpenfdaAction, validateOpenfdaCredential } from "./runtime.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError } from "../provider-runtime.ts";
+import { executeOpenfdaAction, openfdaApiBaseUrl, validateOpenfdaCredential } from "./runtime.ts";
 
 const service = "openfda";
 
@@ -33,6 +40,14 @@ export const executors: ProviderExecutors = defineProviderExecutors<OpenfdaConte
     throw new ProviderRequestError(401, "Connect openFDA without authentication or configure an API key.");
   },
   skipDnsValidation: true,
+});
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: openfdaApiBaseUrl,
+  auth: { type: "optional_api_key_query", name: "api_key" },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
 });
 
 export const credentialValidators: CredentialValidators = {

@@ -1,6 +1,7 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 import type { SpeechmaticsBatchRegion } from "./constants.ts";
 
 import { optionalBoolean, optionalRecord, optionalString } from "../../core/cast.ts";
@@ -189,7 +190,6 @@ export async function validateSpeechmaticsCredential(
       accountId: `speechmatics-api-key:${region}`,
       displayName: `Speechmatics API Key (${region})`,
     },
-    grantedScopes: [],
     metadata: {
       defaultRegion: region,
       apiBaseUrl: `https://${speechmaticsBatchHosts[region]}/v2`,
@@ -234,7 +234,7 @@ async function speechmaticsRequest(
 ): Promise<unknown> {
   const timeout = createProviderTimeout(context.signal, speechmaticsRequestTimeoutMs);
   const headers = new Headers({
-    accept: options.accept ?? "application/json",
+    "accept": options.accept ?? "application/json",
     "user-agent": providerUserAgent,
   });
   if (options.authenticated !== false) {

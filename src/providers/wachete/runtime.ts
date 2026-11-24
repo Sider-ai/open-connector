@@ -1,5 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 import type { ProviderFetch } from "../provider-runtime.ts";
 
 import {
@@ -10,19 +10,18 @@ import {
   optionalRecord,
   optionalString,
   requiredRecord,
-  requiredString,
 } from "../../core/cast.ts";
 import {
   createProviderTimeout,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 export const wacheteApiBaseUrl = "https://api.wachete.com";
 
 const wacheteLoginPath = "/thirdparty/v1/user/apilogin";
-const wacheteRequestTimeoutMs = 30_000;
 
 type WacheteRequestPhase = "validate" | "execute";
 type WacheteActionHandler = (input: Record<string, unknown>, context: WacheteContext) => Promise<unknown>;
@@ -45,7 +44,7 @@ export const wacheteActionHandlers: ProviderActionHandlers<"wachete", WacheteAct
     return { monitor: requireObjectPayload(payload, "monitor") };
   },
   async get_monitor(input, context) {
-    const id = requireWacheteString(input.id, "id");
+    const id = requiredInputString(input.id, "id");
     const payload = await requestWacheteJson({
       context,
       path: `/thirdparty/v1/task/${encodeURIComponent(id)}`,
@@ -54,7 +53,7 @@ export const wacheteActionHandlers: ProviderActionHandlers<"wachete", WacheteAct
     return { monitor: requireObjectPayload(payload, "monitor") };
   },
   async delete_monitor(input, context) {
-    const id = requireWacheteString(input.id, "id");
+    const id = requiredInputString(input.id, "id");
     await requestWacheteJson({
       context,
       path: `/thirdparty/v1/task/${encodeURIComponent(id)}`,
@@ -83,7 +82,7 @@ export const wacheteActionHandlers: ProviderActionHandlers<"wachete", WacheteAct
     };
   },
   async get_monitor_history(input, context) {
-    const id = requireWacheteString(input.id, "id");
+    const id = requiredInputString(input.id, "id");
     const payload = requireObjectPayload(
       await requestWacheteJson({
         context,
@@ -134,7 +133,7 @@ export async function validateWacheteCredential(
   fetcher: ProviderFetch,
   signal?: AbortSignal,
 ): Promise<CredentialValidationResult> {
-  const userId = requireWacheteString(userIdInput, "userId");
+  const userId = requiredInputString(userIdInput, "userId");
   await requestWacheteToken({
     apiKey,
     userId,
@@ -147,7 +146,6 @@ export async function validateWacheteCredential(
       accountId: `wachete:${userId}`,
       displayName: "Wachete Account",
     },
-    grantedScopes: [],
     metadata: { userId },
   };
 }
@@ -159,12 +157,12 @@ export async function requestWacheteToken(input: {
   signal?: AbortSignal;
   phase: WacheteRequestPhase;
 }): Promise<string> {
-  const timeout = createProviderTimeout(input.signal, wacheteRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   try {
     const response = await input.fetcher(buildWacheteUrl(wacheteLoginPath), {
       method: "POST",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },
@@ -191,7 +189,7 @@ export function resolveWacheteUserId(input: {
   values?: Record<string, string>;
   metadata?: Record<string, unknown>;
 }): string {
-  return requireWacheteString(input.metadata?.userId ?? input.values?.userId, "userId");
+  return requiredInputString(input.metadata?.userId ?? input.values?.userId, "userId");
 }
 
 async function requestWacheteJson(input: {
@@ -208,10 +206,10 @@ async function requestWacheteJson(input: {
     signal: input.context.signal,
     phase: "execute",
   });
-  const timeout = createProviderTimeout(input.context.signal, wacheteRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   const headers: Record<string, string> = {
-    accept: "application/json",
-    authorization: `Bearer ${token}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${token}`,
     "user-agent": providerUserAgent,
   };
   const init: RequestInit = {
@@ -294,10 +292,6 @@ function normalizeWacheteRequestError(
     502,
     error instanceof Error ? `${label} failed: ${error.message}` : `${label} failed`,
   );
-}
-
-function requireWacheteString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function requireObjectPayload(payload: unknown, label: string): Record<string, unknown> {

@@ -7,14 +7,12 @@ import type {
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { normalizeCredentialValues } from "../core/credential-fields.ts";
-import {
-  normalizeShopifyAuthorizationValues,
-  ShopifyOAuthValidationError,
-  verifyShopifyOAuthCallback,
-} from "../providers/shopify_admin/oauth.ts";
-import { normalizeSlackAuthorizationCredential } from "../providers/slack/oauth.ts";
+import { ProviderLoader } from "../providers/provider-loader.ts";
+import { executorModules } from "../providers/registry.generated.ts";
 import { OAuthClientConfigError } from "./oauth-client-config-service.ts";
-import { requestAuthorizationCodeToken } from "./oauth-token.ts";
+import { exchangeOAuthCode } from "./oauth-code-exchange.ts";
+import { readOAuthScopes } from "./oauth-scopes.ts";
+const providerLoader = new ProviderLoader(executorModules);
 
 type OAuthCredential = Extract<ResolvedCredential, { authType: "oauth2" }>;
 
@@ -101,7 +99,6 @@ export class OAuthAuthorizationService {
     const state = randomUUID();
     const pkceCodeVerifier = auth.pkce ? createPkceCodeVerifier() : undefined;
     const authorizationValues = normalizeAuthorizationValues(
-      service,
       auth.authorizationFields ?? [],
       input.authorizationValues ?? {},
     );
@@ -118,6 +115,7 @@ export class OAuthAuthorizationService {
     const authorizationUrl = new URL(
       this.clientConfigs.resolveEndpointUrl(service, auth.authorizationUrl, config, authorizationValues),
     );
+    if (auth.resource) authorizationUrl.searchParams.set("resource", auth.resource);
     for (const [key, value] of Object.entries(auth.authorizationParams ?? {})) {
       authorizationUrl.searchParams.set(key, value);
     }
@@ -126,7 +124,7 @@ export class OAuthAuthorizationService {
       authorizationUrl,
       auth.authorizationRequestFields?.redirectUri,
       "redirect_uri",
-      this.clientConfigs.expectedRedirectUri(service),
+      this.clientConfigs.expectedRedirectUri(service, config),
     );
     setAuthorizationParam(authorizationUrl, auth.authorizationRequestFields?.responseType, "response_type", "code");
     setAuthorizationParam(authorizationUrl, auth.authorizationRequestFields?.state, "state", state);
@@ -142,8 +140,15 @@ export class OAuthAuthorizationService {
       authorizationUrl.searchParams.set("code_challenge_method", auth.pkce?.method ?? "S256");
     }
 
+    const providerOAuth = await providerLoader.loadProviderOAuthRuntime(service);
     return {
-      authorizationUrl: authorizationUrl.toString(),
+      authorizationUrl: providerOAuth?.buildAuthorizationUrl
+        ? await providerOAuth.buildAuthorizationUrl({
+            authorizationUrl,
+            clientConfig: { ...config, requestedScopes: effectiveScopes },
+            now: new Date(),
+          })
+        : authorizationUrl.toString(),
       pending,
     };
   }
@@ -159,53 +164,45 @@ export class OAuthAuthorizationService {
       );
     }
 
-    if (pending.service === "shopify_admin") {
-      try {
-        verifyShopifyOAuthCallback({
-          parameters: input.callbackParameters ?? [],
-          clientSecret: config.clientSecret,
-          expectedCode: input.code,
-          expectedShopDomain: pending.authorizationValues?.shopDomain,
-          expectedState: pending.state,
-        });
-      } catch (error) {
-        if (error instanceof ShopifyOAuthValidationError) {
-          throw new OAuthFlowError("oauth_callback_validation_failed", error.message);
-        }
-        throw error;
-      }
+    const callbackParameters = Object.fromEntries(input.callbackParameters ?? []);
+    if (
+      auth.issuer &&
+      ((callbackParameters.iss !== undefined && callbackParameters.iss !== auth.issuer) ||
+        (auth.requireIssuer && !callbackParameters.iss))
+    ) {
+      throw new OAuthFlowError("invalid_oauth_issuer", "OAuth authorization server identity does not match.");
     }
-
-    let tokenResponse = await requestAuthorizationCodeToken({
-      code: input.code,
+    const tokenResponse = await exchangeOAuthCode({
+      service: pending.service,
       state: pending.state,
-      clientId: config.clientId,
-      clientSecret: config.clientSecret,
-      redirectUri: this.clientConfigs.expectedRedirectUri(pending.service),
-      responseEnvelope: auth.tokenResponseEnvelope,
-      tokenRequestFields: auth.tokenRequestFields,
-      tokenEndpointAuthMethod: auth.tokenEndpointAuthMethod,
-      tokenRequestFormat: auth.tokenRequestFormat,
+      pkceCodeVerifier: pending.pkceCodeVerifier,
+      auth,
+      config,
+      code: input.code,
+      callbackParameters,
+      callbackQuery: new URLSearchParams(input.callbackParameters?.map(([k, v]) => [k, v])).toString(),
+      redirectUri: this.clientConfigs.expectedRedirectUri(pending.service, config),
       tokenUrl: this.clientConfigs.resolveEndpointUrl(
         pending.service,
         auth.tokenUrl,
         config,
         pending.authorizationValues,
       ),
-      extraFields: createTokenExtraFields(auth.tokenRequestParams?.authorizationCode, pending),
+      providerOAuth: await providerLoader.loadProviderOAuthRuntime(pending.service),
       createError: (message) => new OAuthFlowError("oauth_token_exchange_failed", message),
     });
-    if (pending.service === "slack") {
-      // Slack returns a separately rotated user grant in `authed_user`.
-      // Move it out of non-secret metadata before returning the credential.
-      tokenResponse = normalizeSlackAuthorizationCredential(tokenResponse);
-    }
 
     return {
       service: pending.service,
       connectionName: pending.connectionName,
       credential: {
+        authType: "oauth2",
         ...tokenResponse,
+        profile: {
+          accountId: "oauth2",
+          displayName: "OAuth Credential",
+          grantedScopes: readOAuthScopes(tokenResponse.metadata.scope) ?? [],
+        },
         metadata: {
           ...tokenResponse.metadata,
           oauthClientId: config.clientId,
@@ -242,41 +239,15 @@ function setAuthorizationParam(
   }
 }
 
-function createTokenExtraFields(
-  configured: Record<string, string> | undefined,
-  state: OAuthAuthorizationState,
-): Record<string, string> | undefined {
-  if (!state.pkceCodeVerifier && configured === undefined) {
-    return undefined;
-  }
-
-  return {
-    ...(configured ?? {}),
-    ...(state.pkceCodeVerifier === undefined ? {} : { code_verifier: state.pkceCodeVerifier }),
-  };
-}
-
 function normalizeAuthorizationValues(
-  service: string,
   fields: CredentialDefinition[],
   input: Record<string, unknown>,
 ): Record<string, string> {
-  const values = normalizeCredentialValues({
+  return normalizeCredentialValues({
     fields,
     values: input,
     createError: (message) => new OAuthFlowError("invalid_authorization_values", message),
   });
-  if (service !== "shopify_admin") {
-    return values;
-  }
-  try {
-    return normalizeShopifyAuthorizationValues(values);
-  } catch (error) {
-    if (error instanceof ShopifyOAuthValidationError) {
-      throw new OAuthFlowError("invalid_authorization_values", error.message);
-    }
-    throw error;
-  }
 }
 
 function createPkceCodeVerifier(): string {

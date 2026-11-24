@@ -1,8 +1,13 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
-import { compactObject, optionalInteger, optionalString, requiredRecord, requiredString } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { compactObject, optionalInteger, optionalString, requiredRecord } from "../../core/cast.ts";
+import {
+  providerUserAgent,
+  ProviderRequestError,
+  requiredInputString,
+  providerInputError,
+} from "../provider-runtime.ts";
 
 export const altTextAiApiBaseUrl = "https://alttext.ai/api/v1";
 
@@ -156,7 +161,6 @@ export async function validateAltTextAiCredential(
       accountId: accountName ?? "alt_text_ai_api_key",
       displayName: accountName ?? "AltText.ai API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: altTextAiApiBaseUrl,
       validationEndpoint: "/account",
@@ -222,7 +226,7 @@ async function fetchResponseJson(
 function headers(apiKey: string, extraHeaders: Record<string, string>): HeadersInit {
   return {
     "X-API-Key": apiKey,
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     ...extraHeaders,
   };
@@ -251,7 +255,7 @@ function createError(response: Response, payload: unknown, phase: RequestPhase):
   const message = extractErrorMessage(payload) ?? response.statusText ?? "AltText.ai request failed";
 
   if (phase === "validate" && (response.status === 401 || response.status === 403)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   return new ProviderRequestError(response.status || 500, message, payload);
@@ -321,8 +325,4 @@ function readNullableHeaderInteger(headers: Headers, name: string): number | nul
   }
   const parsed = Number(value);
   return Number.isInteger(parsed) ? parsed : null;
-}
-
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }

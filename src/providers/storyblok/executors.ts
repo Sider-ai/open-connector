@@ -1,15 +1,12 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { compactObject, optionalRecord, optionalString, optionalStringArray, requiredString } from "../../core/cast.ts";
-import {
-  defineProviderExecutors,
-  defineProviderProxy,
-  providerUserAgent,
-  ProviderRequestError,
-  requireApiKeyCredential,
-} from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerInputError, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "storyblok";
 
@@ -168,7 +165,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: spaceId === undefined ? `storyblok:${region}` : String(spaceId),
         displayName: spaceName ?? `Storyblok ${storyblokRegionLabels[region]} Space`,
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: baseUrl,
         region,
@@ -224,7 +220,7 @@ async function storyblokRawRequest(
     const response = await context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
       signal: context.signal,
@@ -403,8 +399,4 @@ function readInteger(value: unknown): number | undefined {
     }
   }
   return undefined;
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

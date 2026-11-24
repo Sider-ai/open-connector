@@ -1,8 +1,8 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
-import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
+import { compactObject, optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 export const simpleAnalyticsBaseUrl: string = "https://simpleanalytics.com";
@@ -79,7 +79,6 @@ export async function validateSimpleAnalyticsCredential(
       accountId: userId,
       displayName: hostnames[0] ?? userId,
     },
-    grantedScopes: [],
     metadata: compactObject({
       userId,
       validationEndpoint: "/api/websites",
@@ -103,13 +102,13 @@ async function listSimpleAnalyticsWebsites(context: SimpleAnalyticsContext): Pro
   );
 
   return {
-    success: readOptionalBoolean(payload.success) ?? true,
+    success: optionalBoolean(payload.success) ?? true,
     websites: readWebsiteSummaries(payload).map((website) => ({
       hostname: optionalString(website.hostname) ?? "",
-      is_public: readOptionalBoolean(website.is_public) ?? false,
+      is_public: optionalBoolean(website.is_public) ?? false,
       timezone: optionalString(website.timezone) ?? "",
-      has_ssl: readOptionalBoolean(website.has_ssl) ?? false,
-      has_script: readOptionalBoolean(website.has_script) ?? false,
+      has_ssl: optionalBoolean(website.has_ssl) ?? false,
+      has_script: optionalBoolean(website.has_script) ?? false,
       pageviews: optionalInteger(website.pageviews) ?? 0,
       events: optionalInteger(website.events) ?? 0,
       own_hostname: optionalString(website.own_hostname),
@@ -125,7 +124,7 @@ async function getSimpleAnalyticsAggregatedStats(
   const url = new URL(`${simpleAnalyticsBaseUrl}/${encodeURIComponent(hostname)}.json`);
   url.searchParams.set(
     "fields",
-    [...simpleAnalyticsStatsFields, ...(readOptionalBoolean(input.includeHistogram) ? ["histogram"] : [])].join(","),
+    [...simpleAnalyticsStatsFields, ...(optionalBoolean(input.includeHistogram) ? ["histogram"] : [])].join(","),
   );
   url.searchParams.set("info", "false");
   url.searchParams.set("version", "6");
@@ -158,7 +157,7 @@ async function getSimpleAnalyticsAggregatedStats(
   );
 
   return compactObject({
-    ok: readOptionalBoolean(payload.ok),
+    ok: optionalBoolean(payload.ok),
     docs: optionalString(payload.docs),
     hostname: optionalString(payload.hostname),
     url: optionalString(payload.url),
@@ -287,7 +286,7 @@ async function sendSimpleAnalyticsEvent(
   try {
     const payload = JSON.parse(text) as Record<string, unknown>;
     return {
-      success: readOptionalBoolean(payload.success) ?? true,
+      success: optionalBoolean(payload.success) ?? true,
       message: optionalString(payload.message),
     };
   } catch {
@@ -456,10 +455,6 @@ function requireInputString(input: Record<string, unknown>, key: string): string
     throw new ProviderRequestError(400, `${key} is required`);
   }
   return value;
-}
-
-function readOptionalBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
 }
 
 function normalizeMetadata(input: Record<string, unknown>): Record<string, string | number | boolean> {

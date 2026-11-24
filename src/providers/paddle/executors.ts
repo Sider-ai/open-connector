@@ -1,10 +1,13 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent, providerInputError } from "../provider-runtime.ts";
 
+const service = "paddle";
 const paddleApiBaseUrl = "https://api.paddle.com";
 const paddleValidationPath = "/products";
 
@@ -50,7 +53,17 @@ export const paddleActionHandlers: ProviderActionHandlers<"paddle", PaddleAction
   },
 };
 
-export const executors: ProviderExecutors = defineApiKeyProviderExecutors("paddle", paddleActionHandlers);
+export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, paddleActionHandlers);
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: paddleApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
 
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher }) {
@@ -218,8 +231,8 @@ async function paddleRequest(
 
 function paddleHeaders(apiKey: string, hasBody: boolean, skipCount: boolean) {
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${apiKey}`,
-    accept: "application/json",
+    "Authorization": `Bearer ${apiKey}`,
+    "accept": "application/json",
     "user-agent": providerUserAgent,
   };
   if (hasBody) {
@@ -259,7 +272,7 @@ function createPaddleError(response: Response, payload: unknown, phase: PaddleRe
   }
 
   if (phase === "validate" && (response.status === 401 || response.status === 403)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   if (phase === "execute" && (response.status === 401 || response.status === 403)) {
@@ -267,7 +280,7 @@ function createPaddleError(response: Response, payload: unknown, phase: PaddleRe
   }
 
   if (phase === "execute" && [400, 404, 422].includes(response.status)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   return new ProviderRequestError(response.status || 500, message);

@@ -1,25 +1,43 @@
 import type { CatalogStore } from "../../catalog-store.ts";
-import type { ConnectionService, ConnectionSummary, ExecutionConnection } from "../../connection-service.ts";
-import type { ActionPolicyDecision, ActionPolicyService, ActionPolicySnapshot } from "../../core/action-policy.ts";
-import type { ExecutionContext, ExecutionResult, TransitFileWriter } from "../../core/types.ts";
+import type { ConnectionService, ConnectionSummary } from "../../connection-service.ts";
+import type { ActionPolicyDecision, ActionPolicySnapshot } from "../../core/action-policy.ts";
+import type { ExecutionFailureKind } from "../../core/execution-error.ts";
+import type { RuntimeExecutionOptions } from "../../core/runtime-execution.ts";
+import type { ActionDefinition } from "../../core/types.ts";
+import type { RuntimeLogger, ExecutionContext, ExecutionResult, TransitFileWriter } from "../../core/types.ts";
+import type { ExecutionTarget } from "../../execution-target.ts";
+import type { MarketplaceService } from "../../marketplace/marketplace-service.ts";
 import type { IProviderLoader } from "../../providers/provider-loader.ts";
-import type { Logger } from "../logger.ts";
+import type { SaasExecutionService } from "../../saas/saas-execution-service.ts";
 import type { IRunLogStore, RunLog, RunLogCaller, RunLogListInput, RunLogPage } from "../storage/runtime-store.ts";
 import type { ProviderFailureDiagnostic } from "./run-log-summary.ts";
 
-import { ConnectionError } from "../../connection-service.ts";
-import { executeAction as executeProviderAction } from "../../core/execution.ts";
+import { ConnectionError } from "../../connection-error.ts";
+import { ExecutionError, ExecutionPolicyError } from "../../core/execution-error.ts";
+import { getExecutionTimings, measureExecutionPhase, withExecutionTimings } from "../../core/execution-timing.ts";
+import { executeAction as executeProviderAction, unavailableActionExecutor } from "../../core/execution.ts";
+import { withRuntimeExecution } from "../../core/runtime-execution.ts";
 import { generateUuidV7 } from "../../core/uuid-v7.ts";
+import { resolveExecutionTarget } from "../../execution-target.ts";
+import {
+  ProviderDispatchRequestError,
+  toProviderExecutionError,
+  withProviderHttpDispatchResult,
+} from "../../providers/provider-runtime.ts";
+import { SaasError, saasExecutionFailureKind } from "../../saas/saas-client.ts";
 import { safeProviderFailureDiagnostic, safeRunLogError, summarizeForRunLog } from "./run-log-summary.ts";
 
-export interface ActionRunnerOptions {
+export interface ActionRunnerOptions extends RuntimeExecutionOptions {
+  /** Correlate the runtime log with the embedding host request. */
+  requestId?: string;
   catalog: CatalogStore;
   providerLoader: IProviderLoader;
   connections: ConnectionService;
   runs: IRunLogStore;
   transitFiles?: TransitFileWriter;
-  actionPolicy?: ActionPolicyService;
-  logger?: Logger;
+  logger?: RuntimeLogger;
+  marketplace?: MarketplaceService;
+  saas?: SaasExecutionService;
 }
 
 export interface RunActionInput {
@@ -27,7 +45,8 @@ export interface RunActionInput {
   input: unknown;
   caller: RunLogCaller;
   connectionName?: string;
-  policy?: ActionPolicySnapshot;
+  connectionId?: string;
+  policy: ActionPolicySnapshot;
   runtimeTokenId?: string;
   signal?: AbortSignal;
 }
@@ -35,6 +54,9 @@ export interface RunActionInput {
 export interface ActionRunResult {
   executionId: string;
   auditPersisted: boolean;
+  remoteExecutionId?: string;
+  failureKind?: ExecutionFailureKind;
+  retryAfter?: string;
   result: ExecutionResult;
   connection?: ConnectionSummary;
   providerFailure?: ProviderFailureDiagnostic;
@@ -51,6 +73,17 @@ export class ActionRunner {
   }
 
   async run(input: RunActionInput): Promise<ActionRunResult | undefined> {
+    const action = this.options.catalog.actionsById.get(input.actionId);
+    const run = () => this.runAction(input);
+    return withRuntimeExecution(
+      this.options,
+      { operation: "action", service: action?.service, actionId: action?.id },
+      () => (this.options.logger ? withExecutionTimings(run, this.options.requestId) : run()),
+    );
+  }
+
+  private async runAction(input: RunActionInput): Promise<ActionRunResult | undefined> {
+    let definition: ActionDefinition | undefined;
     const action = this.options.catalog.actionsById.get(input.actionId);
     if (!action) {
       this.options.logger?.warn(
@@ -70,58 +103,108 @@ export class ActionRunner {
       service: action.service,
       caller: input.caller,
       executionId,
+      requestId: getExecutionTimings()?.requestId,
     };
     this.options.logger?.info(logContext, "action run started");
     const startedAtMs = Date.now();
     const startedAt = new Date(startedAtMs).toISOString();
-    const snapshot = input.policy ?? this.options.actionPolicy?.createSnapshot();
-    let policy: ActionPolicyDecision = snapshot?.evaluate(action) ?? { allowed: true, checks: [] };
-    let connection: ExecutionConnection | undefined;
+    let policy: ActionPolicyDecision = input.policy.evaluate(action);
+    let connection: ExecutionTarget | undefined;
     let result: ExecutionResult;
+    let remoteExecutionId: string | undefined;
+    let failureKind: ExecutionFailureKind | undefined;
+    let retryAfter: string | undefined;
     if (!policy.allowed) {
       result = { ok: false, error: { code: policy.code, message: policy.message } };
     } else if (input.signal?.aborted) {
       result = cancelledExecutionResult();
     } else {
       try {
-        const summary = await this.options.connections.getConnectionSummary(action.service, input.connectionName);
+        definition = await measureExecutionPhase("schemaMs", () => this.options.catalog.getAction(action.id));
+        if (!definition) throw new ExecutionError("unknown_action", `Unknown action: ${action.id}`, "not_found");
         input.signal?.throwIfAborted();
-        const connectionPolicy =
-          summary?.authType === "no_auth" ? undefined : snapshot?.evaluateConnection(summary?.id);
-        if (connectionPolicy && !connectionPolicy.allowed) {
-          policy = connectionPolicy;
-          result = { ok: false, error: { code: policy.code, message: policy.message } };
-        } else {
-          connection = await this.options.connections.resolveForExecution(action.service, input.connectionName);
-          input.signal?.throwIfAborted();
-          const executor = action.execution.locallyExecutable
-            ? await this.options.providerLoader.loadActionExecutor(
-                action.service,
-                action.id,
-                this.options.catalog.providers.find((provider) => provider.service === action.service)?.displayName,
-              )
-            : undefined;
-          input.signal?.throwIfAborted();
-          result = await executeProviderAction(
-            action,
-            executor,
-            input.input,
-            this.createExecutionContext(connection.getCredential, input.signal),
-          );
-          if (input.signal?.aborted) {
-            result = cancelledExecutionResult();
-          }
-        }
-      } catch (error) {
-        const missingConnectionPolicy =
-          error instanceof ConnectionError && error.code === "connection_not_found"
-            ? snapshot?.evaluateConnection()
-            : undefined;
+        result = await executeProviderAction(
+          definition,
+          async (actionInput, context) => {
+            connection = await resolveExecutionTarget({
+              connections: this.options.connections,
+              service: action.service,
+              connectionName: input.connectionName,
+              connectionId: input.connectionId,
+              operation: "action",
+              actionId: action.id,
+              marketplace: this.options.marketplace,
+              policy: input.policy,
+              signal: input.signal,
+            });
+            const executor =
+              action.execution.locallyExecutable && connection.kind === "local"
+                ? await measureExecutionPhase("executorLoadMs", () =>
+                    this.options.providerLoader.loadActionExecutor(
+                      action.service,
+                      action.id,
+                      this.options.catalog.providers.find((provider) => provider.service === action.service)
+                        ?.displayName,
+                    ),
+                  )
+                : undefined;
+            input.signal?.throwIfAborted();
+            const target = connection;
+            return measureExecutionPhase("providerMs", () =>
+              withProviderHttpDispatchResult(
+                {
+                  operation: "action",
+                  service: action.service,
+                  actionId: action.id,
+                  executionId,
+                  connectionId: target.summary?.id,
+                  connectionName: target.summary?.connectionName,
+                },
+                async () => {
+                  if (target.kind === "saas") {
+                    if (!this.options.saas)
+                      throw new SaasError("oauth_source_unavailable", "SaaS execution is unavailable.", 503);
+                    const remote = await this.options.saas.executeAction(
+                      target.reference,
+                      action.service,
+                      action.id,
+                      actionInput,
+                      input.signal,
+                    );
+                    remoteExecutionId = remote.executionId;
+                    return { ok: true, output: remote.output };
+                  }
+                  if (target.kind === "marketplace")
+                    return this.options.marketplace!.execute(action.id, actionInput, input.signal);
+                  return (executor ?? unavailableActionExecutor)(actionInput, context);
+                },
+                this.options.providerHttpDispatch,
+              ),
+            );
+          },
+          input.input,
+          this.createExecutionContext(
+            async (service) => (connection?.kind === "local" ? connection.getCredential(service) : undefined),
+            input.signal,
+          ),
+        );
         if (input.signal?.aborted) {
           result = cancelledExecutionResult();
-        } else if (missingConnectionPolicy && !missingConnectionPolicy.allowed) {
-          policy = missingConnectionPolicy;
-          result = { ok: false, error: { code: policy.code, message: policy.message } };
+        }
+      } catch (error) {
+        if (input.signal?.aborted) {
+          result = cancelledExecutionResult();
+        } else if (error instanceof ExecutionError) {
+          failureKind = error.kind;
+          if (error instanceof ExecutionPolicyError) policy = error.decision;
+          result = { ok: false, error: { code: error.code, message: error.message } };
+        } else if (error instanceof SaasError) {
+          remoteExecutionId = error.remoteExecutionId;
+          failureKind = saasExecutionFailureKind(error);
+          retryAfter = error.retryAfter;
+          result = { ok: false, error: { code: error.code, message: error.message } };
+        } else if (error instanceof ProviderDispatchRequestError) {
+          result = toProviderExecutionError(error, error.message);
         } else {
           result =
             error instanceof ConnectionError
@@ -135,10 +218,11 @@ export class ActionRunner {
     }
     const completedAtMs = Date.now();
     const durationMs = completedAtMs - startedAtMs;
-    const auditError = safeRunLogError(result.error, action);
+    const auditError = safeRunLogError(result.error, definition);
     const providerFailure = safeProviderFailureDiagnostic(result.error);
     const runLog: RunLog = {
       id: executionId,
+      remoteExecutionId,
       service: action.service,
       actionId: input.actionId,
       caller: input.caller,
@@ -150,14 +234,14 @@ export class ActionRunner {
       connectionProfile: connection?.summary?.profile,
       runtimeTokenId: input.runtimeTokenId,
       policy,
-      inputSummary: this.summarizeAuditValue(input.input, logContext),
-      outputSummary: result.ok ? this.summarizeAuditValue(result.output, logContext) : undefined,
+      inputSummary: summarizeForRunLog(input.input),
+      outputSummary: result.ok ? summarizeForRunLog(result.output) : undefined,
       ...auditError,
     };
 
     let auditPersisted = false;
     try {
-      const write = await this.options.runs.add(runLog);
+      const write = await measureExecutionPhase("auditMs", () => this.options.runs.add(runLog));
       auditPersisted = true;
       if (!write.retentionApplied) {
         this.options.logger?.warn({ ...logContext, auditPersisted }, "run audit retention failed");
@@ -168,11 +252,13 @@ export class ActionRunner {
 
     const completedLogContext = {
       ...logContext,
+      remoteExecutionId,
       connectionId: connection?.summary?.id,
       durationMs,
       ok: result.ok,
       errorCode: result.error?.code,
       auditPersisted,
+      timings: getExecutionTimings(),
     };
     if (result.ok) {
       this.options.logger?.info(completedLogContext, "action run completed");
@@ -185,7 +271,16 @@ export class ActionRunner {
       );
     }
 
-    return { executionId, auditPersisted, result, connection: connection?.summary, providerFailure };
+    return {
+      executionId,
+      remoteExecutionId,
+      failureKind,
+      retryAfter,
+      providerFailure,
+      auditPersisted,
+      result,
+      connection: connection?.summary,
+    };
   }
 
   listRuns(input?: RunLogListInput): Promise<RunLogPage> {
@@ -197,26 +292,18 @@ export class ActionRunner {
   }
 
   private createExecutionContext(
-    getCredential: ExecutionConnection["getCredential"],
+    getCredential: ExecutionContext["getCredential"],
     signal: AbortSignal | undefined,
   ): ExecutionContext {
     const context: ExecutionContext = {
       getCredential,
       signal,
+      logger: this.options.logger,
     };
     if (this.options.transitFiles) {
       context.transitFiles = this.options.transitFiles;
     }
     return context;
-  }
-
-  private summarizeAuditValue(value: unknown, logContext: Record<string, unknown>): unknown {
-    try {
-      return summarizeForRunLog(value);
-    } catch {
-      this.options.logger?.warn(logContext, "run audit summary unavailable");
-      return "[unavailable]";
-    }
   }
 }
 

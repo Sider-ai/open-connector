@@ -1,4 +1,4 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
 import {
@@ -75,7 +75,6 @@ export async function validateHtmlCssToImageCredential(
   options: { fetcher: typeof fetch; signal?: AbortSignal },
 ): Promise<{
   profile: { accountId: string; displayName: string };
-  grantedScopes: string[];
   metadata: Record<string, unknown>;
 }> {
   const credential = {
@@ -96,7 +95,6 @@ export async function validateHtmlCssToImageCredential(
       accountId: `htmlcsstoimage:${credential.userId}`,
       displayName: `HTML/CSS to Image ${credential.userId}`,
     },
-    grantedScopes: [],
     metadata: {
       userId: credential.userId,
       apiBaseUrl: htmlCssToImageApiBaseUrl,
@@ -226,8 +224,8 @@ async function requestHtmlCssToImage(input: HtmlCssToImageRequestInput): Promise
     response = await input.fetcher(buildHtmlCssToImageUrl(input.path, input.query), {
       method: input.method ?? (input.body === undefined ? "GET" : "POST"),
       headers: {
-        accept: "application/json",
-        authorization: buildHtmlCssToImageAuthorization(input.credential),
+        "accept": "application/json",
+        "authorization": buildHtmlCssToImageAuthorization(input.credential),
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },

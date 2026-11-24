@@ -1,5 +1,5 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 import type { SendlaneActionName } from "./actions.ts";
 
 import { optionalRecord, optionalString } from "../../core/cast.ts";
@@ -78,9 +78,9 @@ export const sendlaneActionHandlers: ProviderActionHandlers<
 export async function validateSendlaneCredential(
   apiKey: string,
   fetcher: typeof fetch,
-): Promise<{ profile: { displayName: string }; grantedScopes: string[] }> {
+): Promise<{ profile: { displayName: string } }> {
   await sendlaneRequest({ path: "/lists", query: { limit: "1", page: "1" } }, apiKey, fetcher, "validate");
-  return { profile: { displayName: "Sendlane API Token" }, grantedScopes: [] };
+  return { profile: { displayName: "Sendlane API Token" } };
 }
 
 function buildRequest(
@@ -113,8 +113,8 @@ async function sendlaneRequest(
   const url = new URL(`${sendlaneApiBaseUrl}${request.path}`);
   for (const [key, value] of Object.entries(request.query ?? {})) url.searchParams.set(key, value);
   const headers = new Headers({
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "user-agent": providerUserAgent,
   });
   const init: RequestInit = { method: request.method ?? "GET", headers };

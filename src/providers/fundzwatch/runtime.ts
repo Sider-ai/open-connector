@@ -1,5 +1,5 @@
 import type { CredentialValidationResult, ExecutionContext } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
@@ -149,7 +149,6 @@ export async function validateFundzwatchCredential(
   );
   return {
     profile: { accountId: "fundzwatch", displayName: "FundzWatch API Key" },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: baseUrl,
       validationEndpoint: "/v1/watch/usage",
@@ -186,7 +185,7 @@ async function request(context: FundzwatchContext, input: RequestInput): Promise
   const url = new URL(input.path, baseUrl);
   for (const [key, value] of Object.entries(input.query ?? {}))
     if (value !== undefined) url.searchParams.set(key, String(value));
-  const headers = new Headers({ accept: "application/json", "user-agent": providerUserAgent });
+  const headers = new Headers({ "accept": "application/json", "user-agent": providerUserAgent });
   if (context.apiKey) headers.set("authorization", `Bearer ${context.apiKey}`);
   if (input.body) headers.set("content-type", "application/json");
   const response = await context.fetcher(url, {

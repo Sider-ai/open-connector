@@ -1,8 +1,7 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
-import { optionalRecord, optionalString } from "../../core/cast.ts";
+import { optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
 import { queryParams } from "../../core/request.ts";
 import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
@@ -67,9 +66,9 @@ export const whoisfreaksActionHandlers: ProviderActionHandlers<"whoisfreaks", Wh
       domain: optionalString(payload.domain) ?? optionalString(input.domain),
       subdomains: Array.isArray(payload.subdomains) ? payload.subdomains : [],
       pagination: {
-        currentPage: readNumber(payload.current_page) ?? readNumber(payload.currentPage) ?? 1,
-        totalPages: readNumber(payload.total_pages) ?? readNumber(payload.totalPages) ?? 1,
-        totalRecords: readNumber(payload.total_records) ?? readNumber(payload.totalRecords) ?? 0,
+        currentPage: optionalNumber(payload.current_page) ?? optionalNumber(payload.currentPage) ?? 1,
+        totalPages: optionalNumber(payload.total_pages) ?? optionalNumber(payload.totalPages) ?? 1,
+        totalRecords: optionalNumber(payload.total_records) ?? optionalNumber(payload.totalRecords) ?? 0,
       },
     };
   },
@@ -116,7 +115,6 @@ export async function validateWhoisfreaksCredential(
       accountId: "whoisfreaks",
       displayName: "WhoisFreaks API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: whoisfreaksApiBaseUrl,
       validationFamily: "domain_availability",
@@ -127,7 +125,7 @@ export async function validateWhoisfreaksCredential(
 
 async function whoisfreaksRequest(
   input: WhoisfreaksRequestInput,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: WhoisfreaksRequestPhase,
 ): Promise<Record<string, unknown>> {
   let response: Response;
@@ -136,7 +134,7 @@ async function whoisfreaksRequest(
     response = await context.fetcher(buildWhoisfreaksUrl(input, context.apiKey), {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
       signal: context.signal,
@@ -193,8 +191,4 @@ function readWhoisfreaksMessage(payload: unknown): string | undefined {
     optionalString(objectPayload?.message) ??
     optionalString(objectPayload?.error_message)
   );
-}
-
-function readNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }

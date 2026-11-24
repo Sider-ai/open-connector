@@ -8,14 +8,14 @@ describe("Trello provider definition", () => {
     expect(oauth).toMatchObject({
       authorizationUrl: "https://auth.atlassian.com/authorize",
       tokenUrl: "https://auth.atlassian.com/oauth/token",
-      scopes: [
+      requiredScopes: expect.arrayContaining(["offline_access"]),
+      scopes: expect.arrayContaining([
         "read:board:trello",
         "write:board:trello",
         "read:member:trello",
         "read:organization:trello",
         "write:organization:trello",
-        "offline_access",
-      ],
+      ]),
       tokenEndpointAuthMethod: "client_secret_post",
       tokenRequestFormat: "json",
       pkce: { method: "S256" },

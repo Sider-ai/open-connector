@@ -1,11 +1,9 @@
-import type { ProviderActionHandlers, ProviderActionSources, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ProviderActionSources, ProviderRuntimeHandler } from "../provider-executors.ts";
 
-import {
-  defineProviderExecutors,
-  mapProviderActionSources,
-  ProviderRequestError,
-  providerUserAgent,
-} from "../provider-runtime.ts";
+import { defineProviderExecutors, mapProviderActionSources } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 interface Context {
   fetcher: typeof fetch;
@@ -20,8 +18,8 @@ async function execute(input: Record<string, unknown>, context: Context, name: s
   const url = new URL(path, "https://www.indiegogo.com");
   if (input.urlName !== undefined) url.searchParams.set("urlName", String(input.urlName));
   const response = await context.fetcher(url, {
-    headers: { accept: "application/json", "user-agent": providerUserAgent },
-    redirect: "error",
+    headers: { "accept": "application/json", "user-agent": providerUserAgent },
+    redirect: "manual",
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok)
@@ -39,9 +37,19 @@ const handlers: ProviderActionHandlers<"indiegogo", ProviderRuntimeHandler<Conte
   (name, path) => (input, context) => execute(input, context, name, path),
 );
 
-export const executors: import("../../core/types.ts").ProviderExecutors = defineProviderExecutors<Context>({
+export const executors: ProviderExecutors = defineProviderExecutors<Context>({
   service: "indiegogo",
   createContext: (_context, fetcher) => ({ fetcher }),
   skipDnsValidation: true,
   handlers,
+});
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service: "indiegogo",
+  baseUrl: "https://www.indiegogo.com",
+  auth: { type: "none" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
 });

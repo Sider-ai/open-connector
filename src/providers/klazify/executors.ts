@@ -1,6 +1,10 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -10,17 +14,17 @@ import {
   optionalRecord,
   optionalString,
 } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
-  createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
+  runProviderRequest,
+  providerInputError,
 } from "../provider-runtime.ts";
 
 const service = "klazify";
 const klazifyApiBaseUrl = "https://www.klazify.com/api";
-const klazifyDefaultRequestTimeoutMs = 30_000;
 
 type KlazifyPhase = "validate" | "execute";
 type KlazifyActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
@@ -173,6 +177,17 @@ export const klazifyActionHandlers: ProviderActionHandlers<"klazify", KlazifyAct
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, klazifyActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: klazifyApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+    headers.set("content-type", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     return validateKlazifyCredential({
@@ -183,9 +198,7 @@ export const credentialValidators: CredentialValidators = {
   },
 };
 
-async function validateKlazifyCredential(
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
-): Promise<CredentialValidationResult> {
+async function validateKlazifyCredential(context: ApiKeyProviderContext): Promise<CredentialValidationResult> {
   await requestKlazifyJson({
     apiKey: context.apiKey,
     path: "/categorize",
@@ -202,7 +215,6 @@ async function validateKlazifyCredential(
       accountId: "api_key",
       displayName: "Klazify API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: klazifyApiBaseUrl,
       validationPath: "/categorize",
@@ -243,19 +255,17 @@ async function requestKlazifyJson(input: {
   signal?: AbortSignal;
   phase: KlazifyPhase;
 }): Promise<Record<string, unknown>> {
-  const timeout = createProviderTimeout(input.signal, klazifyDefaultRequestTimeoutMs);
-
-  try {
+  return runProviderRequest({ signal: input.signal, label: "Klazify" }, async (signal) => {
     const response = await input.fetcher(buildKlazifyUrl(input.path), {
       method: "POST",
       headers: {
-        authorization: `Bearer ${input.apiKey}`,
-        accept: "application/json",
+        "authorization": `Bearer ${input.apiKey}`,
+        "accept": "application/json",
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },
       body: JSON.stringify(input.body),
-      signal: timeout.signal,
+      signal,
     });
     const payload = await readKlazifyPayload(response);
 
@@ -268,22 +278,7 @@ async function requestKlazifyJson(input: {
     }
 
     return payload;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-
-    if (timeout.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "Klazify request timed out");
-    }
-
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Klazify request failed: ${error.message}` : "Klazify request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+  });
 }
 
 function buildKlazifyUrl(path: string): URL {
@@ -343,12 +338,12 @@ function createKlazifyError(
     }
 
     if (normalizedMessage.includes("/unreachable") || normalizedMessage.includes("/no indexable content")) {
-      return new ProviderRequestError(400, message);
+      return providerInputError(message);
     }
   }
 
   if (phase === "validate" && status < 400) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   return new ProviderRequestError(status || 500, message);

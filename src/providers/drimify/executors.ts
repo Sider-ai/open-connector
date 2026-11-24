@@ -1,6 +1,6 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import {
   objectArray,
@@ -11,9 +11,11 @@ import {
   requiredRecord,
   requiredString,
 } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
+  providerInputError,
+  providerResponseError,
   providerUserAgent,
   ProviderRequestError,
 } from "../provider-runtime.ts";
@@ -99,7 +101,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "api_key",
         displayName: "Drimify API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: drimifyApiBaseUrl,
         validationEndpoint: "/api/app_data_collections",
@@ -131,7 +132,7 @@ async function requestDrimify(input: DrimifyRequestInput): Promise<unknown> {
     response = await input.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
         "X-AUTH-TOKEN": input.apiKey,
       },
@@ -192,12 +193,4 @@ function readItemsPerPage(value: unknown): number {
 
 function readPositiveInteger(value: unknown, fieldName: string): number | undefined {
   return value === undefined ? undefined : positiveInteger(value, fieldName, providerInputError);
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
-}
-
-function providerResponseError(message: string): ProviderRequestError {
-  return new ProviderRequestError(502, message);
 }

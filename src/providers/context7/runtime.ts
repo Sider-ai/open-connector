@@ -1,11 +1,13 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import {
   createProviderTimeout,
   isAbortSignalError,
+  providerInputError,
   ProviderRequestError,
   providerUserAgent,
   readProviderJsonBody,
@@ -14,8 +16,6 @@ import {
 
 export const context7ApiBaseUrl = "https://context7.com/api";
 export const context7ValidationEndpoint = "/v2/libs/search";
-
-const context7DefaultRequestTimeoutMs = 30_000;
 
 type Context7RequestPhase = "validate" | "execute";
 
@@ -41,7 +41,6 @@ export async function validateContext7Credential(input: {
     profile: {
       displayName: "Context7 API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: context7ApiBaseUrl,
       validationEndpoint: context7ValidationEndpoint,
@@ -57,8 +56,8 @@ export const context7ActionHandlers: ProviderActionHandlers<
     return requestContext7Json({
       path: "/v2/libs/search",
       query: {
-        libraryName: requiredString(input.libraryName, "libraryName", invalidInputError),
-        query: requiredString(input.query, "query", invalidInputError),
+        libraryName: requiredString(input.libraryName, "libraryName", providerInputError),
+        query: requiredString(input.query, "query", providerInputError),
         fast: optionalBooleanString(input.fast),
       },
       apiKey: context.apiKey,
@@ -71,8 +70,8 @@ export const context7ActionHandlers: ProviderActionHandlers<
     return requestContext7Json({
       path: "/v2/context",
       query: {
-        libraryId: requiredString(input.libraryId, "libraryId", invalidInputError),
-        query: requiredString(input.query, "query", invalidInputError),
+        libraryId: requiredString(input.libraryId, "libraryId", providerInputError),
+        query: requiredString(input.query, "query", providerInputError),
         type: "json",
         fast: optionalBooleanString(input.fast),
       },
@@ -96,13 +95,13 @@ async function requestContext7Json(input: {
   setSearchParams(url, input.query);
 
   input.signal?.throwIfAborted();
-  const timeout = createProviderTimeout(input.signal, context7DefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   try {
     const response = await input.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${input.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${input.apiKey}`,
         "user-agent": providerUserAgent,
       },
       signal: timeout.signal,
@@ -176,8 +175,4 @@ function readContext7ErrorMessage(payload: unknown): string | undefined {
 
 function optionalBooleanString(value: unknown): string | undefined {
   return typeof value == "boolean" ? String(value) : undefined;
-}
-
-function invalidInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

@@ -1,16 +1,17 @@
 import type { CredentialValidationResult, TransitFileWriter } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 import type { DokployOperation } from "./operations.ts";
 
 import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { assertPublicHttpUrl, isPrivateNetworkAccessAllowed, readBoundedResponseBytes } from "../../core/request.ts";
+import { mapProviderActionHandlers } from "../provider-executors.ts";
+import { readTransitFileInput } from "../provider-files.ts";
 import {
   createProviderTimeout,
   isAbortLikeError,
-  mapProviderActionHandlers,
+  providerInputError,
   providerUserAgent,
   ProviderRequestError,
-  readTransitFileInput,
 } from "../provider-runtime.ts";
 import { dokployOperations } from "./operations.ts";
 
@@ -59,7 +60,6 @@ export async function validateDokployCredential(
   const host = new URL(context.apiBaseUrl).host;
   return {
     profile: { accountId: `dokploy:${host}`, displayName: `Dokploy ${host}` },
-    grantedScopes: [],
     metadata: { apiBaseUrl: context.apiBaseUrl, validationEndpoint },
   };
 }
@@ -77,13 +77,13 @@ export function normalizeDokployApiBaseUrl(
   value: unknown,
   allowPrivateNetwork: boolean = isPrivateNetworkAccessAllowed(),
 ): string {
-  const instanceUrl = requiredString(value, "baseUrl", credentialError);
+  const instanceUrl = requiredString(value, "baseUrl", providerInputError);
   const url = assertPublicHttpUrl(instanceUrl, {
     fieldName: "baseUrl",
-    createError: credentialError,
+    createError: providerInputError,
     allowPrivateNetwork,
   });
-  if (url.username || url.password) throw credentialError("baseUrl must not include credentials");
+  if (url.username || url.password) throw providerInputError("baseUrl must not include credentials");
   url.hash = "";
   url.search = "";
   const path = url.pathname.replace(/\/+$/u, "");
@@ -124,7 +124,7 @@ async function requestDokployJson(
   const timeout = createProviderTimeout(context.signal, defaultRequestTimeoutMs);
   try {
     const headers: Record<string, string> = {
-      accept: "application/json",
+      "accept": "application/json",
       "user-agent": providerUserAgent,
       "x-api-key": context.apiKey,
     };
@@ -267,8 +267,4 @@ function isSensitiveKey(name: string): boolean {
     normalized === "cookie" ||
     normalized === "setcookie"
   );
-}
-
-function credentialError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

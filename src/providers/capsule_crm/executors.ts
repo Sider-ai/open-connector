@@ -1,19 +1,15 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { createHash } from "node:crypto";
 import { compactObject, optionalInteger, optionalString } from "../../core/cast.ts";
-import {
-  createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  providerUserAgent,
-  ProviderRequestError,
-} from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { createProviderTimeout, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "capsule_crm";
 const capsuleCrmApiBaseUrl = "https://api.capsulecrm.com/api/v2";
-const requestTimeoutMs = 30_000;
 
 type CapsuleCrmActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
@@ -113,6 +109,16 @@ export const capsuleCrmActionHandlers: ProviderActionHandlers<"capsule_crm", Cap
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, capsuleCrmActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: capsuleCrmApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = await requestJson({
@@ -132,7 +138,6 @@ export const credentialValidators: CredentialValidators = {
           : `capsule_crm:token:${createHash("sha256").update(input.apiKey).digest("hex").slice(0, 16)}`,
         displayName: name ?? username ?? "Capsule CRM API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: capsuleCrmApiBaseUrl,
         validationEndpoint: "/users/current",
@@ -214,13 +219,13 @@ async function requestJsonWithHeaders(input: CapsuleCrmRequestInput) {
     if (value !== undefined) url.searchParams.set(key, String(value));
   }
 
-  const timeout = createProviderTimeout(input.signal, requestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   try {
     const response = await input.fetcher(url, {
       method: input.method ?? "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${input.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${input.apiKey}`,
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },

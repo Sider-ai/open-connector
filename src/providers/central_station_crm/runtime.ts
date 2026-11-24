@@ -1,13 +1,8 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
-import {
-  createProviderTimeout,
-  getProviderActionHandler,
-  ProviderRequestError,
-  providerUserAgent,
-} from "../provider-runtime.ts";
+import { ProviderRequestError, providerUserAgent, runProviderRequest } from "../provider-runtime.ts";
 
 export const centralStationCrmCredentialHelpUrl = "https://centralstationcrm.com/api-basics";
 
@@ -15,7 +10,6 @@ const centralStationCrmHostSuffix = ".centralstationcrm.net";
 const centralStationCrmApiPath = "/api";
 const centralStationCrmValidationEndpoint = "/check_connection";
 const centralStationCrmUserEndpoint = "/user";
-const centralStationCrmDefaultRequestTimeoutMs = 30_000;
 
 type CentralStationCrmPhase = "validate" | "execute";
 type CentralStationCrmEntity = "person" | "company" | "deal";
@@ -271,7 +265,6 @@ export async function validateCentralStationCrmCredential(
         userId === undefined ? `central_station_crm:${subdomain}` : `central_station_crm:${subdomain}:user:${userId}`,
       displayName: buildAccountLabel(user, subdomain),
     },
-    grantedScopes: [],
     metadata: compactObject({
       subdomain,
       apiBaseUrl,
@@ -282,18 +275,6 @@ export async function validateCentralStationCrmCredential(
       credentialHelpUrl: centralStationCrmCredentialHelpUrl,
     }),
   };
-}
-
-export async function executeCentralStationCrmAction(
-  input: CentralStationCrmActionInput,
-  fetcher: typeof fetch,
-): Promise<unknown> {
-  const handler = getProviderActionHandler(centralStationCrmActionHandlers, input.actionName);
-  if (!handler) {
-    throw new ProviderRequestError(400, `unknown central_station_crm action: ${input.actionName}`);
-  }
-
-  return handler(input, fetcher);
 }
 
 export function buildCentralStationCrmApiBaseUrl(account: unknown): string {
@@ -407,38 +388,19 @@ async function deleteRecord(input: { input: CentralStationCrmActionInput; fetche
 }
 
 async function requestCentralStationCrmJson(input: CentralStationCrmRequestInput) {
-  const timeoutHandle = createProviderTimeout(input.signal, centralStationCrmDefaultRequestTimeoutMs);
-
-  try {
+  return runProviderRequest({ signal: input.signal, label: "CentralStationCRM" }, async (signal) => {
     const response = await input.fetcher(buildCentralStationCrmUrl(input.apiBaseUrl, input.path, input.query), {
       method: input.method ?? "GET",
       headers: buildCentralStationCrmHeaders(input.apiKey, input.body !== undefined),
       ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }),
-      signal: timeoutHandle.signal,
+      signal,
     });
     const payload = await readCentralStationCrmPayload(response);
     if (!response.ok) {
       throw createCentralStationCrmError(response.status, payload, input.phase);
     }
     return payload;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-
-    if (timeoutHandle.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "CentralStationCRM request timed out");
-    }
-
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error
-        ? `CentralStationCRM request failed: ${error.message}`
-        : "CentralStationCRM request failed",
-    );
-  } finally {
-    timeoutHandle.cleanup();
-  }
+  });
 }
 
 function buildCentralStationCrmUrl(apiBaseUrl: string, path: string, query: Record<string, string | undefined> = {}) {
@@ -454,7 +416,7 @@ function buildCentralStationCrmUrl(apiBaseUrl: string, path: string, query: Reco
 
 function buildCentralStationCrmHeaders(apiKey: string, hasBody: boolean) {
   return compactObject<Record<string, string | undefined>>({
-    accept: "application/json",
+    "accept": "application/json",
     "content-type": hasBody ? "application/json" : undefined,
     "user-agent": providerUserAgent,
     "x-apikey": apiKey,
@@ -719,13 +681,6 @@ function asNullableInteger(value: unknown) {
     return null;
   }
   return optionalInteger(value);
-}
-
-function isAbortLikeError(error: unknown) {
-  return (
-    error instanceof DOMException ||
-    (error instanceof Error && (error.name === "AbortError" || error.message.includes("aborted")))
-  );
 }
 
 function readApiKey(value: unknown): string {

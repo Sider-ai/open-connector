@@ -6,7 +6,9 @@ import type {
 } from "../../core/types.ts";
 import type { PermitIoContext } from "./runtime.ts";
 
-import { defineProviderExecutors, defineProviderProxy, requireApiKeyCredential } from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import { permitIoActionHandlers, permitIoApiBaseUrl, validatePermitIoCredential } from "./runtime.ts";
 
 const service = "permit_io";
@@ -35,9 +37,5 @@ export const proxy: ProviderProxyExecutor = defineProviderProxy({
   service,
   baseUrl: permitIoApiBaseUrl,
   auth: { type: "api_key_authorization", prefix: "Bearer " },
-  customizeRequest({ headers }) {
-    if (!headers.has("accept")) {
-      headers.set("accept", "application/json");
-    }
-  },
+  defaultHeaders: { accept: "application/json" },
 });

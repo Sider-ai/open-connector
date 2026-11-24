@@ -1,12 +1,13 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { optionalRecord, optionalString } from "../../core/cast.ts";
 import { jsonObject } from "../../core/request.ts";
 import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
-const vestaboardCloudApiBaseUrl = "https://cloud.vestaboard.com";
+export const vestaboardCloudApiBaseUrl = "https://cloud.vestaboard.com";
 const vestaboardTransitionPath = "/transition";
 
 type VestaboardRequestPhase = "validate" | "execute";
@@ -103,7 +104,6 @@ export async function validateVestaboardCredential(
       accountId: currentMessage.id,
       displayName: "Vestaboard API Token",
     },
-    grantedScopes: [],
     metadata: {
       validationEndpoint: "/",
       apiBaseUrl: vestaboardCloudApiBaseUrl,
@@ -141,7 +141,7 @@ async function vestaboardFetch(input: VestaboardRequestInput): Promise<Response>
   return input.fetcher(url.toString(), {
     method: input.method,
     headers: {
-      accept: "application/json",
+      "accept": "application/json",
       "content-type": "application/json",
       "user-agent": providerUserAgent,
       "x-vestaboard-token": input.apiKey,

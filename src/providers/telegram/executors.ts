@@ -4,21 +4,26 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { IntegrationDefinition } from "../../triggers/common/integration.ts";
+import type { PollDefinition } from "../../triggers/common/poll.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderRequestContext } from "../provider-runtime.ts";
 
 import { optionalBoolean, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
 import { assertPublicHttpUrl } from "../../core/request.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
+  isAbortLikeError,
   ProviderRequestError,
-  requireApiKeyCredential,
+  providerInputError,
+  defaultProviderRequestTimeoutMs,
 } from "../provider-runtime.ts";
+import { telegramUpdate } from "./trigger-on-update.ts";
 
 const service = "telegram";
 const telegramApiBaseUrl = "https://api.telegram.org";
-const telegramDefaultRequestTimeoutMs = 30_000;
 
 interface TelegramApiEnvelope<T> {
   ok?: boolean;
@@ -587,7 +592,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: String(normalizedProfile.id),
         displayName: normalizedProfile.username ? `@${normalizedProfile.username}` : normalizedProfile.firstName,
       },
-      grantedScopes: [],
       metadata: {
         botId: normalizedProfile.id,
         username: normalizedProfile.username,
@@ -846,7 +850,7 @@ async function telegramRequest<TResult>(input: {
   botToken: string;
   method: string;
   body?: Record<string, unknown>;
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">;
+  context: ProviderRequestContext;
   phase: "validate" | "execute";
 }): Promise<TResult> {
   const controller = new AbortController();
@@ -854,7 +858,7 @@ async function telegramRequest<TResult>(input: {
   const timeoutHandle = setTimeout(() => {
     timedOut = true;
     controller.abort();
-  }, telegramDefaultRequestTimeoutMs);
+  }, defaultProviderRequestTimeoutMs);
   const abortFromContext = (): void => controller.abort();
   input.context.signal?.addEventListener("abort", abortFromContext, { once: true });
 
@@ -870,7 +874,7 @@ async function telegramRequest<TResult>(input: {
     if (timedOut && isAbortLikeError(error)) {
       throw new ProviderRequestError(
         502,
-        `telegram ${input.method} request timed out after ${Math.ceil(telegramDefaultRequestTimeoutMs / 1000)} seconds`,
+        `telegram ${input.method} request timed out after ${Math.ceil(defaultProviderRequestTimeoutMs / 1000)} seconds`,
       );
     }
     const message = error instanceof Error && error.message.trim() !== "" ? error.message : "request failed";
@@ -931,10 +935,10 @@ function buildTelegramError(input: {
     return new ProviderRequestError(429, message);
   }
   if (input.phase === "validate" && status === 401) {
-    return new ProviderRequestError(400, description);
+    return providerInputError(description);
   }
   if (status === 400 || status === 404 || status === 409) {
-    return new ProviderRequestError(400, description);
+    return providerInputError(description);
   }
   return new ProviderRequestError(status || 500, description);
 }
@@ -1333,7 +1337,7 @@ function validateTelegramUrl(value: unknown, fieldName: string): string | undefi
   }
   return assertPublicHttpUrl(text, {
     fieldName,
-    createError: (message) => new ProviderRequestError(400, message),
+    createError: providerInputError,
   }).toString();
 }
 
@@ -1370,6 +1374,4 @@ function assertValidTelegramBotToken(botToken: string): void {
   }
 }
 
-function isAbortLikeError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
-}
+export const triggers: readonly (IntegrationDefinition | PollDefinition)[] = [telegramUpdate];

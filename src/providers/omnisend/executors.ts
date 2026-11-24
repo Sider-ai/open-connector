@@ -1,21 +1,24 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
-import {
-  compactObject,
-  optionalBoolean,
-  optionalNumber,
-  optionalRecord,
-  optionalString,
-  requiredString,
-} from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { compactObject, optionalBoolean, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError, requiredInputString } from "../provider-runtime.ts";
 
 const service = "omnisend";
 const omnisendApiBaseUrl = "https://api.omnisend.com/api";
 const omnisendApiVersion = "2026-03-15";
 const omnisendValidationPath = "/contacts";
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: omnisendApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Omnisend-API-Key " },
+  skipDnsValidation: true,
+  defaultHeaders: { "accept": "application/json", "omnisend-version": omnisendApiVersion },
+});
 
 const contactBodyKeys = [
   "address",
@@ -101,7 +104,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "omnisend",
         displayName: "Omnisend API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: omnisendApiBaseUrl,
         apiVersion: omnisendApiVersion,
@@ -143,7 +145,7 @@ async function listContacts(
 async function getContact(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<OmnisendJsonObject> {
   return requestOmnisendJson({
     apiKey: context.apiKey,
-    path: `/contacts/${encodeURIComponent(requireOmnisendString(input.contactID, "contactID"))}`,
+    path: `/contacts/${encodeURIComponent(requiredInputString(input.contactID, "contactID"))}`,
     fetcher: context.fetcher,
     signal: context.signal,
     mode: "execute",
@@ -172,7 +174,7 @@ async function updateContactById(
   requireAtLeastOneContactBodyField(input);
   return requestOmnisendJson({
     apiKey: context.apiKey,
-    path: `/contacts/${encodeURIComponent(requireOmnisendString(input.contactID, "contactID"))}`,
+    path: `/contacts/${encodeURIComponent(requiredInputString(input.contactID, "contactID"))}`,
     method: "PATCH",
     body: buildContactBody(input),
     fetcher: context.fetcher,
@@ -190,7 +192,7 @@ async function updateContactByEmail(
     apiKey: context.apiKey,
     path: "/contacts",
     query: {
-      email: requireOmnisendString(input.email, "email"),
+      email: requiredInputString(input.email, "email"),
     },
     method: "PATCH",
     body: buildContactBody(input),
@@ -258,7 +260,7 @@ async function listSegments(
 async function getSegment(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<OmnisendJsonObject> {
   return requestOmnisendJson({
     apiKey: context.apiKey,
-    path: `/segments/${encodeURIComponent(requireOmnisendString(input.segmentID, "segmentID"))}`,
+    path: `/segments/${encodeURIComponent(requiredInputString(input.segmentID, "segmentID"))}`,
     fetcher: context.fetcher,
     signal: context.signal,
     mode: "execute",
@@ -340,8 +342,8 @@ async function omnisendFetch(input: OmnisendRequestOptions): Promise<Response> {
 
 function omnisendHeaders(apiKey: string, hasBody: boolean): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
-    authorization: `Omnisend-API-Key ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Omnisend-API-Key ${apiKey}`,
     "omnisend-version": omnisendApiVersion,
     "user-agent": providerUserAgent,
   };
@@ -433,10 +435,6 @@ function extractOmnisendErrorMessage(payload: unknown): string | undefined {
   }
 
   return undefined;
-}
-
-function requireOmnisendString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function validateListContactsInput(input: Record<string, unknown>): void {

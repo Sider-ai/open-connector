@@ -3,7 +3,6 @@ import { jsonObject } from "../../core/request.ts";
 import { createProviderTimeout, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 export const skyvernApiBaseUrl = "https://api.skyvern.com";
-const skyvernRequestTimeoutMs = 30_000;
 type SkyvernRequestPhase = "validate" | "execute";
 
 export async function validateSkyvernCredential(apiKey: string, fetcher: typeof fetch): Promise<void> {
@@ -188,12 +187,12 @@ async function requestSkyvernJson(input: {
   fetcher: typeof fetch;
   phase: SkyvernRequestPhase;
 }) {
-  const timeout = createProviderTimeout(undefined, skyvernRequestTimeoutMs);
+  const timeout = createProviderTimeout(undefined);
   try {
     const response = await input.fetcher(new URL(input.path, skyvernApiBaseUrl), {
       method: input.method,
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
         "x-api-key": input.apiKey,
         "user-agent": providerUserAgent,

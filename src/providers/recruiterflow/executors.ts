@@ -1,10 +1,11 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { optionalBoolean, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { arrayPayload, firstString, objectPayload, requestJson } from "../http-json-runtime.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "recruiterflow";
 const apiBaseUrl = "https://api.recruiterflow.com";
@@ -98,6 +99,17 @@ export const recruiterflowActionHandlers: ProviderActionHandlers<"recruiterflow"
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, recruiterflowActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: apiBaseUrl,
+  auth: { type: "api_key_header", name: "RF-Api-Key" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+    headers.set("content-type", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const raw = objectPayload(
@@ -115,7 +127,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: optionalString(firstUser?.email) ?? optionalString(firstUser?.id),
         displayName: firstString(firstUser, ["name", "email"]) ?? "Recruiterflow API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl,
         validationEndpoint: validationPath,
@@ -127,7 +138,7 @@ export const credentialValidators: CredentialValidators = {
 
 function recruiterflowRequest(
   path: string,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   query: Record<string, string | number | boolean | undefined> = {},
   phase: "validate" | "execute" = "execute",
 ): Promise<unknown> {

@@ -1,18 +1,20 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
-import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
 import {
   createProviderTimeout,
   isAbortLikeError,
   ProviderRequestError,
   providerUserAgent,
   readProviderTextBody,
+  requiredInputString,
   setSearchParams,
+  providerInputError,
+  providerResponseError,
 } from "../provider-runtime.ts";
 
 export const scopusApiBaseUrl = "https://api.elsevier.com/content";
-const scopusRequestTimeoutMs = 30_000;
 
 type ScopusPhase = "validate" | "execute";
 
@@ -63,8 +65,8 @@ export const scopusActionHandlers: ProviderActionHandlers<"scopus", ScopusAction
   },
 
   async get_abstract(input, context) {
-    const identifierType = readRequiredInput(input.identifierType, "identifierType");
-    const identifier = readRequiredInput(input.identifier, "identifier");
+    const identifierType = requiredInputString(input.identifierType, "identifierType");
+    const identifier = requiredInputString(input.identifier, "identifier");
     const response = await requestScopusJson(
       {
         path: `/abstract/${identifierType}/${encodeURIComponent(identifier)}`,
@@ -108,8 +110,8 @@ export const scopusActionHandlers: ProviderActionHandlers<"scopus", ScopusAction
   },
 
   async get_author(input, context) {
-    const identifierType = readRequiredInput(input.identifierType, "identifierType");
-    const identifier = readRequiredInput(input.identifier, "identifier");
+    const identifierType = requiredInputString(input.identifierType, "identifierType");
+    const identifier = requiredInputString(input.identifier, "identifier");
     const response = await requestScopusJson(
       {
         path: `/author/${identifierType}/${encodeURIComponent(identifier)}`,
@@ -153,8 +155,8 @@ export const scopusActionHandlers: ProviderActionHandlers<"scopus", ScopusAction
   },
 
   async get_affiliation(input, context) {
-    const identifierType = readRequiredInput(input.identifierType, "identifierType");
-    const identifier = readRequiredInput(input.identifier, "identifier");
+    const identifierType = requiredInputString(input.identifierType, "identifierType");
+    const identifier = requiredInputString(input.identifier, "identifier");
     const response = await requestScopusJson(
       {
         path: `/affiliation/${identifierType}/${encodeURIComponent(identifier)}`,
@@ -227,9 +229,7 @@ export async function validateScopusCredential(
     profile: {
       accountId: "scopus:api_key",
       displayName: "Scopus API Key",
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: compactObject({
       validationEndpoint: "/search/scopus",
       usesInstitutionToken: normalizedInstitutionToken ? true : undefined,
@@ -247,7 +247,7 @@ interface ScopusRequest {
 }
 
 async function requestScopusJson(input: ScopusRequest, context: ScopusContext): Promise<ScopusResponse> {
-  const timeout = createProviderTimeout(context.signal, scopusRequestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const response = await context.fetcher(buildScopusUrl(input.path, input.query), {
       method: "GET",
@@ -293,9 +293,9 @@ function buildScopusUrl(path: string, query: Record<string, string | undefined>)
   return url;
 }
 
-function buildScopusHeaders(context: Pick<ScopusContext, "apiKey" | "institutionToken">): Record<string, string> {
+function buildScopusHeaders(context: ScopusContext): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     "x-els-apikey": context.apiKey,
   };
@@ -325,7 +325,7 @@ function createScopusError(status: number, payload: unknown, phase: ScopusPhase)
     return new ProviderRequestError(429, message);
   }
   if (phase === "validate" && status >= 400 && status < 500) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (status === 401 || status === 403) {
     return new ProviderRequestError(status, message);
@@ -333,7 +333,7 @@ function createScopusError(status: number, payload: unknown, phase: ScopusPhase)
   if (status >= 400 && status < 500) {
     return new ProviderRequestError(status, message);
   }
-  return new ProviderRequestError(502, message);
+  return providerResponseError(message);
 }
 
 function extractScopusErrorMessage(payload: unknown): string | undefined {
@@ -484,10 +484,6 @@ function readNullableInteger(value: unknown): number | null {
   }
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
-}
-
-function readRequiredInput(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function validateDocumentSearchInput(input: Record<string, unknown>): void {

@@ -1,16 +1,24 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { OAuthProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, OAuthProviderContext } from "../provider-executors.ts";
 
-import { compactObject, optionalInteger, optionalRecord, optionalString, requiredRecord } from "../../core/cast.ts";
-import { googleJsonRequest } from "../google-runtime.ts";
 import {
-  defineOAuthProviderExecutors,
-  defineProviderProxy,
-  providerProxyEndpointPrefixes,
-  ProviderRequestError,
-} from "../provider-runtime.ts";
+  compactObject,
+  looseArray,
+  optionalInteger,
+  optionalRecord,
+  optionalString,
+  requiredRecord,
+} from "../../core/cast.ts";
+import {
+  defineGoogleProviderExecutors,
+  googleBearerProxyAuth,
+  googleServiceAccountValidator,
+} from "../googledrive/runtime-auth.ts";
+import { googleJsonRequest } from "../googledrive/runtime-request.ts";
+import { defineProviderProxy, providerProxyEndpointPrefixes } from "../provider-proxy.ts";
+import { ProviderRequestError } from "../provider-runtime.ts";
 import { googleMeetApiBaseUrl, googleMeetApiOrigin, googleMeetUserInfoUrl } from "./constants.ts";
+import { googleMeetOAuthScopes } from "./scopes.ts";
 
 const service = "googlemeet";
 
@@ -55,11 +63,10 @@ const smartNoteNameRule: ResourceNameRule = {
   expected: "conferenceRecords/{conference_record}/smartNotes/{smart_note}",
 };
 
-type GoogleMeetRuntimeContext = OAuthProviderContext;
-type GoogleMeetActionHandler = (input: Record<string, unknown>, context: GoogleMeetRuntimeContext) => Promise<unknown>;
+type GoogleMeetActionHandler = (input: Record<string, unknown>, context: OAuthProviderContext) => Promise<unknown>;
 
 interface GoogleMeetRequestOptions {
-  context: Pick<GoogleMeetRuntimeContext, "accessToken" | "fetcher" | "signal">;
+  context: OAuthProviderContext;
   method?: string;
   query?: Record<string, string | undefined>;
   body?: unknown;
@@ -151,12 +158,14 @@ export const googleMeetActionHandlers: ProviderActionHandlers<"googlemeet", Goog
   get_smart_note: getSmartNote,
 };
 
-export const executors: ProviderExecutors = defineOAuthProviderExecutors(service, googleMeetActionHandlers);
+export const executors: ProviderExecutors = defineGoogleProviderExecutors(service, googleMeetActionHandlers, {
+  scopes: googleMeetOAuthScopes,
+});
 
 export const proxy: ProviderProxyExecutor = defineProviderProxy({
   service,
   baseUrl: googleMeetApiOrigin,
-  auth: { type: "oauth_bearer" },
+  auth: googleBearerProxyAuth(googleMeetOAuthScopes),
   allowedEndpoint: providerProxyEndpointPrefixes("/v2"),
 });
 
@@ -182,9 +191,10 @@ export const credentialValidators: CredentialValidators = {
       },
     };
   },
+  customCredential: googleServiceAccountValidator(service, googleMeetOAuthScopes),
 };
 
-async function createSpace(input: Record<string, unknown>, context: GoogleMeetRuntimeContext): Promise<unknown> {
+async function createSpace(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
   return googleMeetJsonRequest(`${googleMeetApiBaseUrl}/spaces`, {
     context,
     method: "POST",
@@ -192,11 +202,11 @@ async function createSpace(input: Record<string, unknown>, context: GoogleMeetRu
   });
 }
 
-async function getSpace(input: Record<string, unknown>, context: GoogleMeetRuntimeContext): Promise<unknown> {
+async function getSpace(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
   return getResource(input.name, spaceNameRule, context);
 }
 
-async function updateSpace(input: Record<string, unknown>, context: GoogleMeetRuntimeContext): Promise<unknown> {
+async function updateSpace(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
   const name = resolveCanonicalSpaceName(input.name);
   const space = requiredRecord(input.space, "space", (message) => new ProviderRequestError(400, message));
   return googleMeetJsonRequest(`${googleMeetApiBaseUrl}/${encodeResourceName(name)}`, {
@@ -212,10 +222,7 @@ async function updateSpace(input: Record<string, unknown>, context: GoogleMeetRu
   });
 }
 
-async function endActiveConference(
-  input: Record<string, unknown>,
-  context: GoogleMeetRuntimeContext,
-): Promise<unknown> {
+async function endActiveConference(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
   const name = resolveCanonicalSpaceName(input.name);
   await googleMeetJsonRequest(`${googleMeetApiBaseUrl}/${encodeResourceName(name)}:endActiveConference`, {
     context,
@@ -225,76 +232,70 @@ async function endActiveConference(
   return { success: true };
 }
 
-function listConferenceRecords(input: Record<string, unknown>, context: GoogleMeetRuntimeContext): Promise<unknown> {
+function listConferenceRecords(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
   return listResources(input, context, conferenceRecordsListSpec);
 }
 
-async function getConferenceRecord(
-  input: Record<string, unknown>,
-  context: GoogleMeetRuntimeContext,
-): Promise<unknown> {
+async function getConferenceRecord(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
   return getResource(input.name, conferenceRecordNameRule, context);
 }
 
-function listParticipants(input: Record<string, unknown>, context: GoogleMeetRuntimeContext): Promise<unknown> {
+function listParticipants(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
   return listResources(input, context, participantsListSpec);
 }
 
-async function getParticipant(input: Record<string, unknown>, context: GoogleMeetRuntimeContext): Promise<unknown> {
+async function getParticipant(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
   return getResource(input.name, participantNameRule, context);
 }
 
-function listParticipantSessions(input: Record<string, unknown>, context: GoogleMeetRuntimeContext): Promise<unknown> {
+function listParticipantSessions(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
   return listResources(input, context, participantSessionsListSpec);
 }
 
-async function getParticipantSession(
-  input: Record<string, unknown>,
-  context: GoogleMeetRuntimeContext,
-): Promise<unknown> {
+async function getParticipantSession(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
   return getResource(input.name, participantSessionNameRule, context);
 }
 
-function listRecordings(input: Record<string, unknown>, context: GoogleMeetRuntimeContext): Promise<unknown> {
+function listRecordings(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
   return listResources(input, context, recordingsListSpec);
 }
 
-async function getRecording(input: Record<string, unknown>, context: GoogleMeetRuntimeContext): Promise<unknown> {
+async function getRecording(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
   return getResource(input.name, recordingNameRule, context);
 }
 
-function listTranscripts(input: Record<string, unknown>, context: GoogleMeetRuntimeContext): Promise<unknown> {
+function listTranscripts(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
   return listResources(input, context, transcriptsListSpec);
 }
 
-async function getTranscript(input: Record<string, unknown>, context: GoogleMeetRuntimeContext): Promise<unknown> {
+async function getTranscript(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
   return getResource(input.name, transcriptNameRule, context);
 }
 
-function listTranscriptEntries(input: Record<string, unknown>, context: GoogleMeetRuntimeContext): Promise<unknown> {
+function listTranscriptEntries(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
   return listResources(input, context, transcriptEntriesListSpec);
 }
 
-async function getTranscriptEntry(input: Record<string, unknown>, context: GoogleMeetRuntimeContext): Promise<unknown> {
+async function getTranscriptEntry(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
   return getResource(input.name, transcriptEntryNameRule, context);
 }
 
-function listSmartNotes(input: Record<string, unknown>, context: GoogleMeetRuntimeContext): Promise<unknown> {
+function listSmartNotes(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
   return listResources(input, context, smartNotesListSpec);
 }
 
-async function getSmartNote(input: Record<string, unknown>, context: GoogleMeetRuntimeContext): Promise<unknown> {
+async function getSmartNote(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
   return getResource(input.name, smartNoteNameRule, context);
 }
 
-function getResource(value: unknown, rule: ResourceNameRule, context: GoogleMeetRuntimeContext): Promise<unknown> {
+function getResource(value: unknown, rule: ResourceNameRule, context: OAuthProviderContext): Promise<unknown> {
   const name = resolveResourceName(value, rule);
   return googleMeetJsonRequest(`${googleMeetApiBaseUrl}/${encodeResourceName(name)}`, { context });
 }
 
 async function listResources(
   input: Record<string, unknown>,
-  context: GoogleMeetRuntimeContext,
+  context: OAuthProviderContext,
   spec: GoogleMeetListSpec,
 ): Promise<unknown> {
   const parent = spec.parentRule ? `${encodeResourceName(resolveParent(input.parent, spec.parentRule))}/` : "";
@@ -306,7 +307,7 @@ async function listResources(
     },
   );
   return compactObject({
-    [spec.responseField]: arrayOrEmpty(payload[spec.responseField]),
+    [spec.responseField]: looseArray(payload[spec.responseField]),
     nextPageToken: optionalString(payload.nextPageToken) ?? null,
     totalSize: spec.supportsTotalSize ? optionalInteger(payload.totalSize) : undefined,
   });
@@ -379,8 +380,4 @@ function listQuery(input: Record<string, unknown>, supportsFilter = false): Reco
 function integerQuery(value: unknown): string | undefined {
   const resolved = optionalInteger(value);
   return resolved === undefined ? undefined : String(resolved);
-}
-
-function arrayOrEmpty(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
 }

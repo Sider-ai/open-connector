@@ -1,5 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { createHash } from "node:crypto";
 import { compactObject, optionalBoolean, optionalRecord, optionalString } from "../../core/cast.ts";
@@ -11,7 +11,6 @@ import {
 } from "../provider-runtime.ts";
 
 export const unipileValidationPath = "/api/v1/accounts";
-const unipileRequestTimeoutMs = 30_000;
 
 type UnipileRequestPhase = "validate" | "execute";
 type UnipileActionHandler = (input: Record<string, unknown>, context: UnipileActionContext) => Promise<unknown>;
@@ -131,7 +130,6 @@ export async function validateUnipileCredential(
       accountId: buildUnipileProviderAccountId(dsn, input.apiKey),
       displayName: buildUnipileAccountLabel(dsn),
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: buildUnipileBaseUrl(dsn),
       dsn,
@@ -142,12 +140,12 @@ export async function validateUnipileCredential(
 }
 
 async function requestUnipileJson(input: UnipileRequestInput): Promise<unknown> {
-  const timeout = createProviderTimeout(input.signal, unipileRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   try {
     const response = await input.fetcher(buildUnipileUrl(input.dsn, input.path, input.query), {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
         "X-API-KEY": input.apiKey,
       },

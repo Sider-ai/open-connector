@@ -1,4 +1,4 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, nullableString, optionalInteger, optionalString } from "../../core/cast.ts";
 import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
@@ -50,7 +50,6 @@ export async function validateDockerHubApiKey(
   signal?: AbortSignal,
 ): Promise<{
   profile: { accountId: string; displayName: string };
-  grantedScopes: string[];
   metadata: Record<string, unknown>;
 }> {
   const { credential } = await exchangeDockerHubAccessToken(apiKey, fetcher, "validate", signal);
@@ -59,7 +58,6 @@ export async function validateDockerHubApiKey(
       accountId: credential.identifier,
       displayName: credential.identifier,
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: dockerHubApiBaseUrl,
       credentialFormat: "identifier:secret",
@@ -420,8 +418,8 @@ async function removeDockerHubTeamMember(input: Record<string, unknown>, context
 
 function dockerHubHeaders(bearerToken: string, hasJsonBody: boolean) {
   const headers: Record<string, string> = {
-    accept: "application/json",
-    authorization: `Bearer ${bearerToken}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${bearerToken}`,
     "user-agent": dockerHubUserAgent,
   };
   if (hasJsonBody) {
@@ -452,7 +450,7 @@ async function exchangeDockerHubAccessToken(
     response = await fetcher(buildDockerHubUrl(dockerHubAccessTokenPath), {
       method: "POST",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
         "user-agent": dockerHubUserAgent,
       },

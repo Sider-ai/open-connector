@@ -141,7 +141,12 @@ describe("Miro board organization and diagram actions", () => {
     ["create_items_bulk", { boardId, items: Array(21).fill(notes[0]) }],
     ["create_items_bulk", { boardId, items: [{ type: "connector" }] }],
   ])("rejects invalid %s input", (name, input) => {
-    expect(validateActionInput(miroActions.find((a) => a.name === name)!, input).valid).toBe(false);
+    expect(
+      validateActionInput(
+        miroActions.find((a) => a.name === name)!,
+        input,
+      ).valid,
+    ).toBe(false);
   });
 
   it("rejects self-connections before contacting Miro", async () => {

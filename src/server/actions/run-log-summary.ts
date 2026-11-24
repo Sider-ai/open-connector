@@ -11,7 +11,7 @@ const maxStringLength = 256;
 const maxArrayLength = 20;
 const maxObjectKeys = 50;
 const sensitiveKeyPattern =
-  /access[-_]?key|api[-_]?key|authorization|client[-_]?secret|cookie|credential|password|private[-_]?key|refresh[-_]?token|secret|session|signature|token/i;
+  /access[-_]?key|account[-_]?key|api[-_]?key|authorization|client[-_]?secret|cookie|credential|password|private[-_]?key|refresh[-_]?token|secret|session|signature|token/i;
 const sensitiveContextPattern = /(^|\.)(cookies?|credentials?|headers?|secrets?)(\.|$)/i;
 const credentialValuePattern = /^(?:Basic|Bearer)\s+\S+|^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/i;
 const sensitiveUrlContextPattern = /callback|download|presigned|signed|temporary|webhook/i;
@@ -26,8 +26,18 @@ const safeErrorMessages: Record<string, string> = {
   invalid_input: "The action input was invalid.",
   oauth_refresh_unavailable: "The OAuth credential could not be refreshed.",
   oauth_token_expired: "The OAuth credential has expired.",
+  oauth_token_refresh_failed: "The OAuth credential could not be refreshed.",
   provider_error: "The provider request failed.",
   rate_limited: "The provider rate limit was reached.",
+  execution_cancelled: "Action execution was cancelled; remote side effects may have completed.",
+  scope_missing: "The SaaS account is missing required scopes.",
+  credential_expired: "The SaaS account requires reauthorization.",
+  insufficient_credit: "Execution has insufficient credit.",
+  oauth_source_unavailable: "SaaS execution is unavailable.",
+  oauth_source_unauthorized: "The SaaS project key was rejected.",
+  oauth_source_protocol_error: "SaaS returned an incompatible response.",
+  oauth_source_unsupported: "The SaaS connection does not support this action.",
+  oauth_source_response_too_large: "The SaaS execution response exceeded the size limit.",
 };
 
 interface SummaryState {

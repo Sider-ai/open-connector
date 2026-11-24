@@ -1,16 +1,15 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import {
-  createProviderTimeout,
-  isAbortLikeError,
   ProviderRequestError,
   providerUserAgent,
+  runProviderRequest,
+  providerResponseError,
 } from "../provider-runtime.ts";
 
-const klipfolioApiBaseUrl = "https://api.klipfolio.com/api/1.0";
-const klipfolioDefaultRequestTimeoutMs = 30_000;
+export const klipfolioApiBaseUrl = "https://api.klipfolio.com/api/1.0";
 
 type KlipfolioPhase = "validate" | "execute";
 type KlipfolioAssetKey = "clients" | "dashboards" | "klips" | "datasources";
@@ -69,7 +68,6 @@ export async function validateKlipfolioCredential(
       accountId: "klipfolio",
       displayName: "Klipfolio API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: klipfolioApiBaseUrl,
       validationEndpoint: "/clients?limit=1",
@@ -135,17 +133,15 @@ async function requestKlipfolioJson(input: {
   signal?: AbortSignal;
   phase: KlipfolioPhase;
 }): Promise<unknown> {
-  const timeout = createProviderTimeout(input.signal, klipfolioDefaultRequestTimeoutMs);
-
-  try {
+  return runProviderRequest({ signal: input.signal, label: "Klipfolio" }, async (signal) => {
     const response = await input.fetcher(buildKlipfolioUrl(input.path, input.params ?? {}), {
       method: input.method,
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "kf-api-key": input.apiKey,
         "user-agent": providerUserAgent,
       },
-      signal: timeout.signal,
+      signal,
     });
     const payload = await readKlipfolioPayload(response);
 
@@ -154,21 +150,7 @@ async function requestKlipfolioJson(input: {
     }
 
     return payload ?? {};
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-    if (timeout.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "Klipfolio request timed out");
-    }
-
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Klipfolio request failed: ${error.message}` : "Klipfolio request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+  });
 }
 
 function buildKlipfolioUrl(path: string, params: Record<string, string | undefined>): URL {
@@ -210,7 +192,7 @@ function createKlipfolioError(status: number, payload: unknown, phase: Klipfolio
   if (status >= 400 && status < 500) {
     return new ProviderRequestError(status, message);
   }
-  return new ProviderRequestError(502, message);
+  return providerResponseError(message);
 }
 
 function extractKlipfolioErrorMessage(payload: unknown): string | undefined {
@@ -272,7 +254,7 @@ function normalizeAsset(value: unknown): Record<string, unknown> {
 function requireRecord(value: unknown, message: string): Record<string, unknown> {
   const record = optionalRecord(value);
   if (!record) {
-    throw new ProviderRequestError(502, message);
+    throw providerResponseError(message);
   }
   return record;
 }

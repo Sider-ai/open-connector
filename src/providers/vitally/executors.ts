@@ -1,20 +1,25 @@
-import type { CredentialValidators, ExecutionContext, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type {
+  CredentialValidators,
+  ExecutionContext,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineProviderExecutors,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
-  requireApiKeyCredential,
 } from "../provider-runtime.ts";
 
 const service = "vitally";
 const vitallyEuBaseUrl = "https://rest.vitally-eu.io";
-const vitallyRequestTimeoutMs = 30_000;
 
 type VitallyRegion = "us" | "eu";
 type VitallyRequestPhase = "validate" | "execute";
@@ -70,6 +75,20 @@ export const executors: ProviderExecutors = defineProviderExecutors<VitallyActio
   },
 });
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  async baseUrl(context) {
+    const credential = await requireApiKeyCredential(context, service);
+    const baseUrl = optionalString(credential.metadata.baseUrl);
+    if (!baseUrl) {
+      throw new ProviderRequestError(500, "vitally connection is missing baseUrl metadata");
+    }
+    return baseUrl;
+  },
+  auth: { type: "api_key_basic", suffix: ":" },
+  defaultHeaders: { accept: "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     return validateVitallyCredential(input.apiKey, input.values, fetcher, signal);
@@ -103,7 +122,6 @@ async function validateVitallyCredential(
       accountId: `vitally:${region}:${subdomain ?? "eu"}`,
       displayName: region === "eu" ? "Vitally EU" : `Vitally ${subdomain}`,
     },
-    grantedScopes: [],
     metadata: compactObject({
       baseUrl,
       region,
@@ -189,7 +207,7 @@ async function deleteAccount(input: Record<string, unknown>, context: VitallyAct
 }
 
 async function requestVitally(input: VitallyRequestOptions): Promise<unknown> {
-  const timeout = createProviderTimeout(input.signal, vitallyRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   try {
     const url = new URL(input.path, input.baseUrl);
     if (input.searchParams) {
@@ -199,8 +217,8 @@ async function requestVitally(input: VitallyRequestOptions): Promise<unknown> {
     }
 
     const headers: Record<string, string> = {
-      accept: "application/json",
-      authorization: `Basic ${Buffer.from(`${input.apiKey}:`).toString("base64")}`,
+      "accept": "application/json",
+      "authorization": `Basic ${Buffer.from(`${input.apiKey}:`).toString("base64")}`,
       "user-agent": providerUserAgent,
     };
     if (input.body !== undefined) {

@@ -4,7 +4,7 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
 import {
@@ -16,15 +16,16 @@ import {
   requiredString,
 } from "../../core/cast.ts";
 import { readBoundedResponseBytes } from "../../core/request.ts";
+import { requireCustomCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineProviderExecutors,
-  defineProviderProxy,
   providerFetch,
   providerUserAgent,
   ProviderRequestError,
   readProviderTextBody,
-  requireCustomCredential,
+  providerInputError,
 } from "../provider-runtime.ts";
 
 const service = "ocr_web_service";
@@ -104,7 +105,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: `ocr_web_service:${credential.username}`,
         displayName: `OCR Web Service (${credential.username})`,
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: ocrWebServiceApiBaseUrl,
         validationEndpoint: "/getAccountInformation",
@@ -155,8 +155,8 @@ async function requestOcrWebService(
     const response = await context.fetcher(url, {
       method: input.method ?? "GET",
       headers: {
-        accept: "application/json",
-        authorization: buildBasicAuthorizationHeader(context),
+        "accept": "application/json",
+        "authorization": buildBasicAuthorizationHeader(context),
         "user-agent": providerUserAgent,
       },
       body: input.body,
@@ -188,7 +188,7 @@ async function requestOcrWebService(
 }
 
 async function downloadFileUrl(value: unknown, signal?: AbortSignal): Promise<Uint8Array> {
-  const fileUrl = requiredString(value, "fileUrl", providerInputError);
+  const fileUrl = requiredString(value, "fileUrl", ocrWebServiceInputError);
   const timeout = createProviderTimeout(signal, ocrWebServiceRequestTimeoutMs);
   try {
     const response = await providerFetch(fileUrl, { signal: timeout.signal });
@@ -198,7 +198,7 @@ async function downloadFileUrl(value: unknown, signal?: AbortSignal): Promise<Ui
     return await readBoundedResponseBytes(response, {
       maxBytes: ocrWebServiceMaxInputBytes,
       fieldName: "fileUrl payload",
-      createError: (message) => new ProviderRequestError(400, message),
+      createError: providerInputError,
     });
   } catch (error) {
     if (error instanceof ProviderRequestError) {
@@ -235,7 +235,9 @@ function buildProcessDocumentQuery(input: Record<string, unknown>): Record<strin
 }
 
 function readOptionalStringList(value: unknown): string[] | undefined {
-  return Array.isArray(value) ? value.map((item) => requiredString(item, "list item", providerInputError)) : undefined;
+  return Array.isArray(value)
+    ? value.map((item) => requiredString(item, "list item", ocrWebServiceInputError))
+    : undefined;
 }
 
 function readOptionalZones(value: unknown): string | undefined {
@@ -249,10 +251,10 @@ function readOptionalZones(value: unknown): string | undefined {
         throw new ProviderRequestError(400, "zone item must be an object");
       }
       return [
-        integer(record.top, "zone.top", providerInputError),
-        integer(record.left, "zone.left", providerInputError),
-        integer(record.height, "zone.height", providerInputError),
-        integer(record.width, "zone.width", providerInputError),
+        integer(record.top, "zone.top", ocrWebServiceInputError),
+        integer(record.left, "zone.left", ocrWebServiceInputError),
+        integer(record.height, "zone.height", ocrWebServiceInputError),
+        integer(record.width, "zone.width", ocrWebServiceInputError),
       ].join(":");
     })
     .join(",");
@@ -328,13 +330,13 @@ function mapOcrWebServiceHttpError(
     return new ProviderRequestError(429, message);
   }
   if (phase === "validate" && [400, 401, 402].includes(status)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (phase === "execute" && (status === 401 || status === 402)) {
     return new ProviderRequestError(401, message);
   }
   if (phase === "execute" && status === 400) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   return new ProviderRequestError(status >= 500 ? 502 : status || 502, message);
 }
@@ -348,6 +350,6 @@ function extractOcrWebServiceErrorMessage(payload: unknown): string | null {
   );
 }
 
-function providerInputError(message: string): ProviderRequestError {
+function ocrWebServiceInputError(message: string): ProviderRequestError {
   return new ProviderRequestError(400, message.endsWith(".") ? message.slice(0, -1) : message);
 }

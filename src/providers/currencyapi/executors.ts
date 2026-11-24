@@ -1,9 +1,10 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalString, requiredRecord, stringArray } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "currencyapi";
 const currencyapiApiBaseUrl = "https://api.currencyapi.com";
@@ -31,6 +32,16 @@ export const currencyapiActionHandlers: ProviderActionHandlers<"currencyapi", Cu
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, currencyapiActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: currencyapiApiBaseUrl,
+  auth: { type: "api_key_header", name: "apikey" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = await currencyapiRequest({ path: "/v3/status" }, { apiKey: input.apiKey, fetcher, signal });
@@ -41,7 +52,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: String(accountId),
         displayName: "currencyapi API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: currencyapiApiBaseUrl,
         validationEndpoint: "/v3/status",
@@ -133,7 +143,7 @@ async function executeConvertCurrency(
 
 async function currencyapiRequest(
   input: { path: string; query?: Record<string, QueryValue> },
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
   let response: Response;
   let payload: unknown;
@@ -141,8 +151,8 @@ async function currencyapiRequest(
     response = await context.fetcher(buildCurrencyapiUrl(input), {
       method: "GET",
       headers: {
-        accept: "application/json",
-        apikey: context.apiKey,
+        "accept": "application/json",
+        "apikey": context.apiKey,
         "user-agent": providerUserAgent,
       },
       signal: context.signal,

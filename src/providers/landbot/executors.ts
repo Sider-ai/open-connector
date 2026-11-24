@@ -1,9 +1,15 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerInputError, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "landbot";
 const landbotApiBaseUrl = "https://api.landbot.io/v1/";
@@ -48,7 +54,7 @@ export const landbotActionHandlers: ProviderActionHandlers<"landbot", LandbotAct
       method: "POST",
       context,
       body: {
-        message: requiredString(input.message, "message", inputError),
+        message: requiredString(input.message, "message", providerInputError),
       },
     });
   },
@@ -56,7 +62,7 @@ export const landbotActionHandlers: ProviderActionHandlers<"landbot", LandbotAct
     validateFieldValue(input.type, input.value);
     return landbotRequest({
       path: `customers/${readCustomerId(input)}/fields/${encodeURIComponent(
-        requiredString(input.field_name, "field_name", inputError),
+        requiredString(input.field_name, "field_name", providerInputError),
       )}/`,
       method: "POST",
       context,
@@ -71,6 +77,14 @@ export const landbotActionHandlers: ProviderActionHandlers<"landbot", LandbotAct
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, landbotActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: landbotApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Token " },
+  skipDnsValidation: true,
+  defaultHeaders: { "accept": "application/json", "content-type": "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     return validateLandbotCredential({
@@ -81,9 +95,7 @@ export const credentialValidators: CredentialValidators = {
   },
 };
 
-async function validateLandbotCredential(
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
-): Promise<CredentialValidationResult> {
+async function validateLandbotCredential(context: ApiKeyProviderContext): Promise<CredentialValidationResult> {
   await landbotRequest({
     path: "channels/",
     query: { limit: 1 },
@@ -96,7 +108,6 @@ async function validateLandbotCredential(
       accountId: "landbot",
       displayName: "Landbot",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: landbotApiBaseUrl,
       validationEndpoint: "channels/",
@@ -107,7 +118,7 @@ async function validateLandbotCredential(
 async function landbotRequest(input: {
   path: string;
   method?: string;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   query?: Record<string, LandbotQueryValue>;
   body?: Record<string, unknown>;
   phase?: LandbotPhase;
@@ -124,8 +135,8 @@ async function landbotRequest(input: {
     response = await input.context.fetcher(url.toString(), {
       method: input.method ?? "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Token ${input.context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Token ${input.context.apiKey}`,
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },
@@ -247,8 +258,4 @@ function readCustomerId(input: Record<string, unknown>): string {
     throw new ProviderRequestError(400, "customer_id is required");
   }
   return encodeURIComponent(String(customerId));
-}
-
-function inputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

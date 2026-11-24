@@ -1,5 +1,5 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -10,10 +10,11 @@ import {
   optionalStringArray,
   requiredString,
 } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
+  providerInputError,
   providerUserAgent,
   ProviderRequestError,
   readProviderTextBody,
@@ -22,7 +23,6 @@ import {
 const service = "mixmax";
 const mixmaxApiBaseUrl = "https://api.mixmax.com";
 const mixmaxValidationPath = "/v1/users/me";
-const mixmaxRequestTimeoutMs = 30_000;
 const mixmaxMaxResponseBytes = 10 * 1024 * 1024;
 
 interface MixmaxContext {
@@ -156,7 +156,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: `mixmax:user:${userId}`,
         displayName: "Mixmax API Token",
       },
-      grantedScopes: [],
       metadata: {
         validationEndpoint: mixmaxValidationPath,
         userId,
@@ -177,12 +176,12 @@ async function requestMixmaxJson(input: MixmaxRequestOptions, context: MixmaxCon
     }
   }
   const method = input.method ?? "GET";
-  const timeout = createProviderTimeout(context.signal, mixmaxRequestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const response = await context.fetcher(url, {
       method,
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "x-api-token": context.apiKey,
         ...(input.body !== undefined ? { "content-type": "application/json" } : {}),
         "user-agent": providerUserAgent,
@@ -262,8 +261,4 @@ function validateRecipients(value: unknown): void {
       );
     }
   }
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

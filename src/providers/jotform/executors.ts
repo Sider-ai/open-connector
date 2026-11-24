@@ -1,38 +1,29 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
-import {
-  compactObject,
-  optionalIntegerLike,
-  optionalRecord,
-  optionalString,
-  requiredRecord,
-  requiredString,
-} from "../../core/cast.ts";
+import { compactObject, optionalIntegerLike, optionalRecord, optionalString, requiredRecord } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 const service = "jotform";
 const jotformApiBaseUrl = "https://api.jotform.com";
-const jotformRequestTimeoutMs = 30_000;
 
 type JotformRequestPhase = "validate" | "execute";
 type JotformQueryValue = string | number | undefined;
-type JotformActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type JotformActionHandler = (input: Record<string, unknown>, context: JotformActionContext) => Promise<unknown>;
+type JotformActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 interface JotformEnvelope {
-  responseCode?: unknown;
-  message?: unknown;
-  content?: unknown;
-  resultSet?: unknown;
+  "responseCode"?: unknown;
+  "message"?: unknown;
+  "content"?: unknown;
+  "resultSet"?: unknown;
   "limit-left"?: unknown;
 }
 
@@ -115,7 +106,7 @@ export const jotformActionHandlers: ProviderActionHandlers<"jotform", JotformAct
     });
   },
   async get_form(input, context) {
-    const formId = readRequiredString(input.formId, "formId");
+    const formId = requiredInputString(input.formId, "formId");
     const envelope = await requestJotformEnvelope({
       ...context,
       path: `/form/${encodeURIComponent(formId)}`,
@@ -127,7 +118,7 @@ export const jotformActionHandlers: ProviderActionHandlers<"jotform", JotformAct
     };
   },
   async list_form_questions(input, context) {
-    const formId = readRequiredString(input.formId, "formId");
+    const formId = requiredInputString(input.formId, "formId");
     const envelope = await requestJotformEnvelope({
       ...context,
       path: `/form/${encodeURIComponent(formId)}/questions`,
@@ -139,7 +130,7 @@ export const jotformActionHandlers: ProviderActionHandlers<"jotform", JotformAct
     };
   },
   async list_form_submissions(input, context) {
-    const formId = readRequiredString(input.formId, "formId");
+    const formId = requiredInputString(input.formId, "formId");
     const envelope = await requestJotformEnvelope({
       ...context,
       path: `/form/${encodeURIComponent(formId)}/submissions`,
@@ -155,7 +146,7 @@ export const jotformActionHandlers: ProviderActionHandlers<"jotform", JotformAct
     };
   },
   async get_submission(input, context) {
-    const submissionId = readRequiredString(input.submissionId, "submissionId");
+    const submissionId = requiredInputString(input.submissionId, "submissionId");
     const envelope = await requestJotformEnvelope({
       ...context,
       path: `/submission/${encodeURIComponent(submissionId)}`,
@@ -167,7 +158,7 @@ export const jotformActionHandlers: ProviderActionHandlers<"jotform", JotformAct
     };
   },
   async create_submission(input, context) {
-    const formId = readRequiredString(input.formId, "formId");
+    const formId = requiredInputString(input.formId, "formId");
     const answers = requiredRecord(input.answers, "answers");
     if (Object.keys(answers).length === 0) {
       throw new ProviderRequestError(400, "At least one answer is required.");
@@ -233,7 +224,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: user.email ?? user.username,
         displayName: user.name ?? user.email ?? user.username,
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: jotformApiBaseUrl,
         validationEndpoint: "/user",
@@ -255,15 +245,15 @@ async function requestJotformEnvelope(input: JotformRequestInput): Promise<Jotfo
   }
 
   const headers = new Headers({
-    accept: "application/json",
-    APIKEY: input.apiKey,
+    "accept": "application/json",
+    "APIKEY": input.apiKey,
     "user-agent": providerUserAgent,
   });
   if (input.body) {
     headers.set("content-type", "application/x-www-form-urlencoded;charset=UTF-8");
   }
 
-  const timeout = createProviderTimeout(input.signal, jotformRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   let response: Response;
   try {
     response = await input.fetcher(url, {
@@ -615,10 +605,6 @@ function readOptionalNonNegativeInteger(value: unknown, fieldName: string): numb
     throw new ProviderRequestError(400, `${fieldName} must be a non-negative integer`);
   }
   return parsed;
-}
-
-function readRequiredString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function appendSubmissionAnswer(body: URLSearchParams, questionId: string, value: unknown): void {

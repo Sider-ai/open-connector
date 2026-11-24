@@ -1,10 +1,10 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { providerInputError, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
-const ambientWeatherApiBaseUrl = "https://rt.ambientweather.net";
+export const ambientWeatherApiBaseUrl = "https://rt.ambientweather.net";
 
 type AmbientWeatherPhase = "validate" | "execute";
 
@@ -56,7 +56,6 @@ export async function validateAmbientWeatherCredential(
       accountId: firstDevice?.macAddress ?? "ambient_weather",
       displayName: "Ambient Weather API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       applicationKey: context.applicationKey,
       validationEndpoint: "/v1/devices",
@@ -160,7 +159,7 @@ async function requestAmbientWeatherJson(
   try {
     response = await context.fetcher(url, {
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
       signal: context.signal,
@@ -179,7 +178,7 @@ async function requestAmbientWeatherJson(
 
 function buildAmbientWeatherUrl(
   path: string,
-  context: Pick<AmbientWeatherContext, "apiKey" | "applicationKey">,
+  context: AmbientWeatherContext,
   query?: Record<string, string | number | undefined>,
 ) {
   const url = new URL(path, ambientWeatherApiBaseUrl);
@@ -340,8 +339,4 @@ function normalizeAmbientWeatherEndDate(value: unknown) {
   }
 
   return timestamp;
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

@@ -1,11 +1,15 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
-import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { createProviderTimeout, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
+import {
+  createProviderTimeout,
+  providerUserAgent,
+  ProviderRequestError,
+  requiredInputString,
+} from "../provider-runtime.ts";
 
 export const confluentApiBaseUrl = "https://api.confluent.cloud";
-const timeoutMs = 30_000;
 
 export interface ConfluentContext {
   apiKeyId: string;
@@ -30,7 +34,7 @@ export const confluentActionHandlers: ProviderActionHandlers<
   async get_organization(input, context) {
     return getResource(
       context,
-      `/org/v2/organizations/${encodeURIComponent(readInputString(input.organizationId, "organizationId"))}`,
+      `/org/v2/organizations/${encodeURIComponent(requiredInputString(input.organizationId, "organizationId"))}`,
       "organization",
     );
   },
@@ -38,7 +42,7 @@ export const confluentActionHandlers: ProviderActionHandlers<
   async get_environment(input, context) {
     return getResource(
       context,
-      `/org/v2/environments/${encodeURIComponent(readInputString(input.environmentId, "environmentId"))}`,
+      `/org/v2/environments/${encodeURIComponent(requiredInputString(input.environmentId, "environmentId"))}`,
       "environment",
     );
   },
@@ -48,14 +52,14 @@ export const confluentActionHandlers: ProviderActionHandlers<
       method: "POST",
       mode: "execute",
       body: compactObject({
-        display_name: readInputString(input.displayName, "displayName"),
+        display_name: requiredInputString(input.displayName, "displayName"),
         stream_governance_config: governanceConfig(input.governancePackage),
       }),
     });
     return { environment: requireRecord(payload, "Confluent environment response") };
   },
   async update_environment(input, context) {
-    const environmentId = readInputString(input.environmentId, "environmentId");
+    const environmentId = requiredInputString(input.environmentId, "environmentId");
     const displayName = optionalInputString(input.displayName, "displayName");
     const governancePackage = optionalInputString(input.governancePackage, "governancePackage");
     if (!displayName && !governancePackage)
@@ -70,7 +74,7 @@ export const confluentActionHandlers: ProviderActionHandlers<
   },
   async delete_environment(input, context) {
     await requestConfluentJson(context, {
-      path: `/org/v2/environments/${encodeURIComponent(readInputString(input.environmentId, "environmentId"))}`,
+      path: `/org/v2/environments/${encodeURIComponent(requiredInputString(input.environmentId, "environmentId"))}`,
       method: "DELETE",
       mode: "execute",
     });
@@ -78,22 +82,21 @@ export const confluentActionHandlers: ProviderActionHandlers<
   },
   async list_kafka_clusters(input, context) {
     return listResources(input, context, "/cmk/v2/clusters", "clusters", {
-      environment: readInputString(input.environmentId, "environmentId"),
+      environment: requiredInputString(input.environmentId, "environmentId"),
     });
   },
   async get_kafka_cluster(input, context) {
     return getResource(
       context,
-      `/cmk/v2/clusters/${encodeURIComponent(readInputString(input.clusterId, "clusterId"))}`,
+      `/cmk/v2/clusters/${encodeURIComponent(requiredInputString(input.clusterId, "clusterId"))}`,
       "cluster",
-      { environment: readInputString(input.environmentId, "environmentId") },
+      { environment: requiredInputString(input.environmentId, "environmentId") },
     );
   },
 };
 
 export async function validateConfluentCredential(context: ConfluentContext): Promise<{
   profile: { accountId: string; displayName: string };
-  grantedScopes: string[];
   metadata: Record<string, unknown>;
 }> {
   const payload = requireRecord(
@@ -107,7 +110,6 @@ export async function validateConfluentCredential(context: ConfluentContext): Pr
       accountId: organizationId ?? context.apiKeyId,
       displayName: optionalTrimmedString(organization?.display_name) ?? `Confluent Cloud ${context.apiKeyId}`,
     },
-    grantedScopes: [],
     metadata: compactObject({ apiBaseUrl: confluentApiBaseUrl, apiKeyId: context.apiKeyId, organizationId }),
   };
 }
@@ -158,13 +160,13 @@ export async function requestConfluentJson(context: ConfluentContext, input: Req
   const url = new URL(input.path, `${confluentApiBaseUrl}/`);
   for (const [key, value] of Object.entries(input.query ?? {}))
     if (value !== undefined) url.searchParams.set(key, value);
-  const timeout = createProviderTimeout(context.signal, timeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const response = await context.fetcher(url, {
       method: input.method ?? "GET",
       headers: compactObject({
-        accept: "application/json",
-        authorization: buildConfluentAuthorizationHeader(context.apiKeyId, context.apiSecret),
+        "accept": "application/json",
+        "authorization": buildConfluentAuthorizationHeader(context.apiKeyId, context.apiSecret),
         "content-type": input.body ? "application/json" : undefined,
         "user-agent": providerUserAgent,
       }) as Record<string, string>,
@@ -193,9 +195,6 @@ export function buildConfluentAuthorizationHeader(apiKeyId: string, apiSecret: s
   return `Basic ${Buffer.from(`${apiKeyId}:${apiSecret}`, "utf8").toString("base64")}`;
 }
 
-function readInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
-}
 function optionalInputString(value: unknown, fieldName: string): string | undefined {
   if (value === undefined) return undefined;
   const result = optionalString(value)?.trim();

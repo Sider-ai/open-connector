@@ -1,11 +1,10 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
-import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { ProviderRequestError, providerUserAgent, providerInputError } from "../provider-runtime.ts";
 
-const mindbodyApiBaseUrl = "https://api.mindbodyonline.com";
+export const mindbodyApiBaseUrl = "https://api.mindbodyonline.com";
 const mindbodyBusinessDirectoryPath = "/partnergateway/consumer/activity/v1/businesses";
 
 interface MindbodyBusinessPayload extends Record<string, unknown> {
@@ -39,7 +38,6 @@ export async function validateMindbodyCredential(
       accountId: "mindbody:api-key",
       displayName: "Mindbody API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: mindbodyApiBaseUrl,
       validationEndpoint: mindbodyBusinessDirectoryPath,
@@ -51,7 +49,7 @@ export async function validateMindbodyCredential(
 
 async function executeListBusinesses(
   input: Record<string, unknown>,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: MindbodyRequestPhase,
 ): Promise<MindbodyListBusinessesOutput> {
   const payload = await mindbodyGetJson({
@@ -66,7 +64,7 @@ async function executeListBusinesses(
 async function mindbodyGetJson(input: {
   path: string;
   query: Record<string, unknown>;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   phase: MindbodyRequestPhase;
 }): Promise<unknown> {
   const url = new URL(input.path, mindbodyApiBaseUrl);
@@ -78,7 +76,7 @@ async function mindbodyGetJson(input: {
     response = await input.context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "api-key": input.context.apiKey,
         "user-agent": providerUserAgent,
       },
@@ -146,15 +144,15 @@ function createMindbodyError(response: Response, payload: unknown, phase: Mindbo
   }
 
   if (phase === "validate" && (response.status === 401 || response.status === 403)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   if (phase === "execute" && (response.status === 401 || response.status === 403)) {
-    return new ProviderRequestError(409, message);
+    return new ProviderRequestError(401, message);
   }
 
   if (phase === "execute" && [400, 404, 422].includes(response.status)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   return new ProviderRequestError(response.status || 500, message);

@@ -1,11 +1,10 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
-import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { booleanString, compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
+import { providerUserAgent, ProviderRequestError, defaultProviderRequestTimeoutMs } from "../provider-runtime.ts";
 
 export const agilityApiBaseUrl = "https://api.aglty.io";
-const agilityDefaultRequestTimeoutMs = 30_000;
 
 type AgilityPhase = "validate" | "execute";
 
@@ -52,7 +51,7 @@ export const agilityActionHandlers: ProviderActionHandlers<"agility", AgilityAct
       apiKey: context.apiKey,
       params: compactObject({
         ContentLinkDepth: readOptionalIntegerString(input.contentLinkDepth),
-        ExpandAllContentLinks: readOptionalBooleanString(input.expandAllContentLinks),
+        ExpandAllContentLinks: booleanString(input.expandAllContentLinks),
         Fields: optionalString(input.fields),
         Take: readOptionalIntegerString(input.take),
         Skip: readOptionalIntegerString(input.skip),
@@ -83,7 +82,7 @@ export const agilityActionHandlers: ProviderActionHandlers<"agility", AgilityAct
       apiKey: context.apiKey,
       params: compactObject({
         contentLinkDepth: readOptionalIntegerString(input.contentLinkDepth),
-        expandAllContentLinks: readOptionalBooleanString(input.expandAllContentLinks),
+        expandAllContentLinks: booleanString(input.expandAllContentLinks),
       }),
       fetcher: context.fetcher,
       signal: context.signal,
@@ -108,7 +107,7 @@ export const agilityActionHandlers: ProviderActionHandlers<"agility", AgilityAct
       apiKey: context.apiKey,
       params: compactObject({
         contentLinkDepth: readOptionalIntegerString(input.contentLinkDepth),
-        expandAllContentLinks: readOptionalBooleanString(input.expandAllContentLinks),
+        expandAllContentLinks: booleanString(input.expandAllContentLinks),
       }),
       fetcher: context.fetcher,
       signal: context.signal,
@@ -190,7 +189,6 @@ export async function validateAgilityCredential(
         accountId: "agility_api_key",
         displayName: "Agility CMS API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: agilityApiBaseUrl,
         validationSkipped: true,
@@ -215,7 +213,6 @@ export async function validateAgilityCredential(
       accountId: guid,
       displayName: "Agility CMS API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: agilityApiBaseUrl,
       validationEndpoint: `/${guid}/fetch/contentmodels`,
@@ -233,15 +230,15 @@ async function requestAgilityJson(input: {
   signal?: AbortSignal;
   phase: AgilityPhase;
 }): Promise<unknown> {
-  const timeoutSignal = AbortSignal.timeout(agilityDefaultRequestTimeoutMs);
+  const timeoutSignal = AbortSignal.timeout(defaultProviderRequestTimeoutMs);
   const signal = input.signal ? AbortSignal.any([input.signal, timeoutSignal]) : timeoutSignal;
 
   try {
     const response = await input.fetcher(buildAgilityUrl(input.path, input.params), {
       method: "GET",
       headers: {
-        accept: "application/json",
-        APIKey: input.apiKey,
+        "accept": "application/json",
+        "APIKey": input.apiKey,
         "user-agent": providerUserAgent,
       },
       signal,
@@ -356,8 +353,4 @@ function readRequiredIntegerString(value: unknown, fieldName: string): string {
 function readOptionalIntegerString(value: unknown): string | undefined {
   const integer = optionalInteger(value);
   return integer === undefined ? undefined : String(integer);
-}
-
-function readOptionalBooleanString(value: unknown): string | undefined {
-  return typeof value === "boolean" ? String(value) : undefined;
 }

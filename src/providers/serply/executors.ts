@@ -1,19 +1,24 @@
-import type { CredentialValidators, ExecutionContext, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type {
+  CredentialValidators,
+  ExecutionContext,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
-import { optionalNumber, optionalRecord, optionalString, requiredRecord } from "../../core/cast.ts";
+import { optionalNumber, optionalRawString, optionalRecord, optionalString, requiredRecord } from "../../core/cast.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineProviderExecutors,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
-  requireApiKeyCredential,
 } from "../provider-runtime.ts";
 
 const service = "serply";
 const serplyBaseUrl = "https://api.serply.io";
-const serplyDefaultRequestTimeoutMs = 30_000;
 
 type SerplyPhase = "validate" | "execute";
 
@@ -89,6 +94,16 @@ export const executors: ProviderExecutors = defineProviderExecutors<SerplyAction
   },
 });
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: serplyBaseUrl,
+  auth: { type: "api_key_header", name: "x-api-key" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const context: SerplyActionContext = { apiKey: input.apiKey, fetcher, signal };
@@ -104,7 +119,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "serply",
         displayName: "Serply API Key",
       },
-      grantedScopes: [],
       metadata: compactDefined({
         validationEndpoint: "/v1/search/{query}",
         validationQuery: "q=serply",
@@ -125,13 +139,13 @@ async function requestSerplyJson(
 ): Promise<unknown> {
   let response: Response;
   let payload: unknown;
-  const timeout = createProviderTimeout(context.signal, serplyDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
 
   try {
     response = await context.fetcher(buildSerplyUrl(path, query), {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
         "x-api-key": context.apiKey,
         ...headerOverrides,
@@ -257,10 +271,6 @@ function readRequiredNumber(value: unknown, fieldName: string): number {
     throw new ProviderRequestError(502, `Serply response missing ${fieldName}`);
   }
   return value;
-}
-
-function optionalRawString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
 }
 
 function asArrayOfObjects(value: unknown): Array<Record<string, unknown>> {

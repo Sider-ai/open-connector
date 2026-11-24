@@ -4,16 +4,13 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
-  ProviderRequestError,
-  providerUserAgent,
-} from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "scrape_graph_ai";
 const scrapeGraphAiApiBaseUrl = "https://v2-api.scrapegraphai.com";
@@ -123,7 +120,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "scrapegraphai-api-key",
         displayName: "ScrapeGraphAI API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: scrapeGraphAiApiBaseUrl,
         validationEndpoint: "/api/credits",
@@ -169,7 +165,7 @@ async function requestScrapeGraphAiJson(input: ScrapeGraphAiRequestInput): Promi
 
 function buildScrapeGraphAiHeaders(input: ScrapeGraphAiRequestInput): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     "SGAI-APIKEY": input.apiKey,
   };

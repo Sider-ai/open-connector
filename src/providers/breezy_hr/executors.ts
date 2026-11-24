@@ -1,12 +1,12 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
   providerUserAgent,
   ProviderRequestError,
   readProviderTextBody,
@@ -14,7 +14,6 @@ import {
 
 const service = "breezy_hr";
 const breezyHrApiBaseUrl = "https://api.breezy.hr/v3";
-const breezyHrRequestTimeoutMs = 30_000;
 const breezyHrMaxResponseBytes = 10 * 1024 * 1024;
 
 type BreezyHrPhase = "validate" | "execute";
@@ -189,7 +188,6 @@ export const credentialValidators: CredentialValidators = {
         accountId,
         displayName: accountLabel,
       },
-      grantedScopes: [],
       metadata: compactObject({
         userId: optionalString(user._id),
         emailAddress: optionalString(user.email_address),
@@ -209,13 +207,13 @@ async function requestBreezyHrJson(input: BreezyHrRequestInput) {
     }
   }
 
-  const timeout = createProviderTimeout(input.signal, breezyHrRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   try {
     const response = await input.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: input.apiKey,
+        "accept": "application/json",
+        "authorization": input.apiKey,
         "user-agent": providerUserAgent,
       },
       signal: timeout.signal,

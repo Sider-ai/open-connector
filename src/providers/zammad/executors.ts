@@ -1,15 +1,11 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { assertPublicHttpUrl, isPrivateNetworkAccessAllowed } from "../../core/request.ts";
-import {
-  createProviderFetch,
-  defineProviderExecutors,
-  defineProviderProxy,
-  ProviderRequestError,
-  providerUserAgent,
-  requireApiKeyCredential,
-} from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { createProviderFetch, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 interface Context {
   baseUrl: string;
   apiKey: string;
@@ -41,8 +37,8 @@ async function request(
   const response = await context.fetcher(url, {
     method,
     headers: {
-      accept: "application/json",
-      authorization: `Token token=${context.apiKey}`,
+      "accept": "application/json",
+      "authorization": `Token token=${context.apiKey}`,
       "content-type": "application/json",
       "user-agent": providerUserAgent,
     },
@@ -187,7 +183,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: userId === undefined ? `zammad:${new URL(resolvedBaseUrl).host}` : `zammad:user:${userId}`,
         displayName,
       },
-      grantedScopes: [],
       metadata: {
         baseUrl: resolvedBaseUrl,
         apiBaseUrl: resolvedBaseUrl,
@@ -205,8 +200,5 @@ export const proxy: ProviderProxyExecutor = defineProviderProxy({
   },
   auth: { type: "api_key_authorization", prefix: "Token token=" },
   allowPrivateNetwork: isPrivateNetworkAccessAllowed,
-  customizeRequest({ headers }) {
-    if (!headers.has("accept")) headers.set("accept", "application/json");
-    if (!headers.has("user-agent")) headers.set("user-agent", providerUserAgent);
-  },
+  defaultHeaders: { "accept": "application/json", "user-agent": providerUserAgent },
 });

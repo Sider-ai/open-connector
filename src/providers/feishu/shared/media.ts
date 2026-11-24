@@ -49,7 +49,6 @@ export async function readFeishuSourceBytes(
   return requireInMemoryFeishuSource(source).slice(start, end);
 }
 
-const requestTimeoutMs = 30_000;
 const defaultMaxBytes = 30 * 1024 * 1024;
 const maximumBufferedSourceBytes = 100 * 1024 * 1024;
 
@@ -65,6 +64,7 @@ export async function uploadFeishuMedia(
       body.set("image_type", "message");
       body.set("image", new Blob([bytes.slice().buffer], { type: source.mimeType }), source.fileName);
       const data = await requestFeishuMultipart({
+        openBaseUrl: context.openBaseUrl,
         accessToken: context.accessToken,
         fetcher: context.fetcher,
         signal: context.signal,
@@ -81,6 +81,7 @@ export async function uploadFeishuMedia(
       body.set("file_name", input.fileName ?? source.fileName);
       body.set("file", new Blob([bytes.slice().buffer], { type: source.mimeType }), source.fileName);
       const data = await requestFeishuMultipart({
+        openBaseUrl: context.openBaseUrl,
         accessToken: context.accessToken,
         fetcher: context.fetcher,
         signal: context.signal,
@@ -106,7 +107,7 @@ export async function downloadFeishuSource(
   const canonicalUrl = input.sourceUrl;
   const guardedFetcher = createProviderFetch({ fetch: fetcher });
   const maxBytes = Math.min(input.maxBytes ?? defaultMaxBytes, maximumBufferedSourceBytes);
-  const timeout = createProviderTimeout(signal, requestTimeoutMs);
+  const timeout = createProviderTimeout(signal);
   try {
     const response = await guardedFetcher(canonicalUrl, {
       headers: { "user-agent": providerUserAgent },

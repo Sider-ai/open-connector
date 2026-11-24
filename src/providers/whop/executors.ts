@@ -1,9 +1,10 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalBoolean, optionalNumber, optionalRawString, optionalRecord } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "whop";
 
@@ -14,8 +15,7 @@ const whopValidationPath = "/companies";
 
 type WhopQueryValue = boolean | number | readonly string[] | string | undefined;
 type WhopRequestMode = "validate" | "execute";
-type WhopActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type WhopActionHandler = (input: Record<string, unknown>, context: WhopActionContext) => Promise<unknown>;
+type WhopActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 interface WhopRequestOptions {
   apiKey: string;
@@ -152,6 +152,14 @@ export const whopActionHandlers: ProviderActionHandlers<"whop", WhopActionHandle
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, whopActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: whopApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  defaultHeaders: { "accept": "application/json", "api-version-date": whopApiVersion },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = await requestWhopJson({
@@ -174,7 +182,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: firstCompanyId ? `whop:${firstCompanyId}` : "whop-api-key",
         displayName: firstCompanyTitle ?? "Whop API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: whopApiBaseUrl,
         apiVersion: whopApiVersion,
@@ -230,8 +237,8 @@ async function whopFetch(input: WhopRequestOptions): Promise<Response> {
 
 function whopHeaders(apiKey: string): Record<string, string> {
   return {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "api-version-date": whopApiVersion,
     "user-agent": providerUserAgent,
   };

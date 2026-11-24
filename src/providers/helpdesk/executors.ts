@@ -4,14 +4,12 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
-import {
-  defineProviderExecutors,
-  defineProviderProxy,
-  ProviderRequestError,
-  requireApiKeyCredential,
-} from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { basicAuthorizationHeader, ProviderRequestError } from "../provider-runtime.ts";
 import { executeHelpdeskAction, helpdeskApiBaseUrl, validateHelpdeskCredential } from "./runtime.ts";
 
 const service = "helpdesk";
@@ -151,7 +149,7 @@ export const proxy: ProviderProxyExecutor = defineProviderProxy({
       throw new ProviderRequestError(401, "Configure HelpDesk account ID and API key credentials first.");
     }
     headers.delete("x-connector-api-key");
-    headers.set("authorization", `Basic ${btoa(`${credential.values.accountId}:${credential.apiKey}`)}`);
+    headers.set("authorization", basicAuthorizationHeader(`${credential.values.accountId}:${credential.apiKey}`));
   },
 });
 

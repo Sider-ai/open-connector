@@ -1,9 +1,19 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { IntegrationDefinition } from "../../triggers/common/integration.ts";
+import type { PollDefinition } from "../../triggers/common/poll.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
-import { compactObject, optionalRecord, optionalString, requiredRecord } from "../../core/cast.ts";
-import { ProviderRequestError, defineApiKeyProviderExecutors, providerUserAgent } from "../provider-runtime.ts";
+import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import {
+  ProviderRequestError,
+  providerUserAgent,
+  requiredResponseRecord,
+  providerInputError,
+} from "../provider-runtime.ts";
+import { stripeEvent } from "./trigger-on-event.ts";
 
 type StripeActionContext = ApiKeyProviderContext;
 
@@ -112,6 +122,14 @@ export const stripeActionHandlers: ProviderActionHandlers<"stripe", StripeAction
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, stripeActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: stripeApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  defaultHeaders: { "stripe-version": stripeApiVersion },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher }) {
     const profile = await validateStripeCredential(input.apiKey, fetcher);
@@ -127,10 +145,9 @@ async function validateStripeCredential(
     accountId?: string;
     displayName: string;
   };
-  grantedScopes: string[];
   metadata: Record<string, unknown>;
 }> {
-  const payload = readObject(
+  const payload = requiredResponseRecord(
     await stripeRequest(stripeAccountPath, {
       apiKey,
       fetcher,
@@ -148,7 +165,6 @@ async function validateStripeCredential(
       accountId,
       displayName: email ?? accountId ?? "Stripe API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: stripeApiBaseUrl,
       apiVersion: stripeApiVersion,
@@ -162,7 +178,7 @@ async function validateStripeCredential(
 }
 
 async function executeIdentifyAccount(context: StripeActionContext) {
-  const payload = readObject(
+  const payload = requiredResponseRecord(
     await stripeRequest(stripeAccountPath, {
       apiKey: context.apiKey,
       fetcher: context.fetcher,
@@ -249,11 +265,11 @@ async function executeStripeList(
     method: "GET",
     query: input,
   });
-  return { [outputKey]: readObject(payload, "stripe list response") };
+  return { [outputKey]: requiredResponseRecord(payload, "stripe list response") };
 }
 
 async function executeStripeDelete(path: string, context: StripeActionContext) {
-  const payload = readObject(
+  const payload = requiredResponseRecord(
     await stripeRequest(path, {
       apiKey: context.apiKey,
       fetcher: context.fetcher,
@@ -274,7 +290,7 @@ async function stripeRequest(path: string, input: StripeRequestInput): Promise<u
   appendStripeParams(url.searchParams, input.query);
 
   const headers: Record<string, string> = {
-    authorization: `Bearer ${input.apiKey}`,
+    "authorization": `Bearer ${input.apiKey}`,
     "stripe-version": stripeApiVersion,
     "user-agent": providerUserAgent,
   };
@@ -364,7 +380,7 @@ function mapStripeError(status: number, message: string): ProviderRequestError {
   }
 
   if (status === 400 || status === 404) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   if (status === 429) {
@@ -374,6 +390,4 @@ function mapStripeError(status: number, message: string): ProviderRequestError {
   return new ProviderRequestError(502, message, status);
 }
 
-function readObject(value: unknown, context: string): Record<string, unknown> {
-  return requiredRecord(value, context, (message) => new ProviderRequestError(502, message));
-}
+export const triggers: readonly (IntegrationDefinition | PollDefinition)[] = [stripeEvent];

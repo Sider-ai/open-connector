@@ -5,29 +5,32 @@ import type {
   ProviderProxyExecutor,
   ProxyExecutionResult,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { optionalInteger, optionalRawString, optionalRecord, optionalString } from "../../core/cast.ts";
+import { requireCustomCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
 import {
-  createProviderFetch,
   createProviderProxyUrl,
-  providerUserAgent,
-  createProviderTimeout,
-  defineProviderExecutors,
   normalizeProviderProxyHeaders,
-  ProviderRequestError,
   readProviderProxyErrorMessage,
   readProviderProxyResponse,
-  readProviderTextBody,
-  requireCustomCredential,
   toProviderProxyError,
+} from "../provider-proxy.ts";
+import {
+  createProviderFetch,
+  providerUserAgent,
+  createProviderTimeout,
+  ProviderRequestError,
+  readProviderTextBody,
+  providerInputError,
+  providerResponseError,
 } from "../provider-runtime.ts";
 
 const service = "gagelist";
 const gagelistApiBaseUrl = "https://gagelist.net/GageList/api";
 const gagelistTokenUrl = "https://gagelist.net/api/token";
 
-const gagelistRequestTimeoutMs = 30_000;
 const gagelistMaxResponseBytes = 10 * 1024 * 1024;
 const gagelistFetch = createProviderFetch({ skipDnsValidation: true });
 
@@ -418,7 +421,7 @@ async function exchangeGagelistAccessToken(
     init: {
       method: "POST",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/x-www-form-urlencoded",
         "user-agent": providerUserAgent,
       },
@@ -455,8 +458,8 @@ async function requestGagelistJson(input: GagelistRequestInput & { phase?: Gagel
   }
 
   const headers = new Headers({
-    accept: "application/json",
-    authorization: `Bearer ${input.accessToken}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${input.accessToken}`,
     "user-agent": providerUserAgent,
   });
   if (input.body != null) {
@@ -488,7 +491,7 @@ async function fetchGagelistResponse(input: {
   readonly operation: string;
   readonly signal?: AbortSignal;
 }) {
-  const timeout = createProviderTimeout(input.signal, gagelistRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   try {
     return await input.fetcher(input.url, { ...input.init, signal: timeout.signal });
   } catch (error) {
@@ -621,7 +624,7 @@ function listQuery(input: Record<string, unknown>) {
 function requireObject(value: unknown, message: string) {
   const object = optionalRecord(value);
   if (!object) {
-    throw new ProviderRequestError(502, message);
+    throw providerResponseError(message);
   }
   return object;
 }
@@ -654,7 +657,7 @@ function createGagelistError(status: number, payload: unknown, phase: GagelistPh
     optionalRawString(body?.message) ??
     `GageList ${operation} failed with HTTP ${status}`;
   if (phase == "validate" && (status == 400 || status == 401 || status == 403)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (status == 401 || status == 403) {
     return new ProviderRequestError(status, message);

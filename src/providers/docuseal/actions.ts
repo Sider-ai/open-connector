@@ -3,7 +3,7 @@ import type { ActionDefinition } from "../../core/types.ts";
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
 
-const service = "docuseal" as const;
+const service = "docuseal";
 
 const idSchema = s.positiveInteger("The DocuSeal numeric identifier.");
 const nullableStringSchema = s.nullable(s.string("The string value returned by DocuSeal."));
@@ -195,6 +195,7 @@ export type DocusealActionName = "list_templates" | "get_template" | "create_sub
 export const docusealActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "list_templates",
+    operationType: "read",
     description: "List DocuSeal document templates with optional filters and ID-based pagination.",
     requiredScopes: [],
     inputSchema: s.object(
@@ -224,6 +225,7 @@ export const docusealActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_template",
+    operationType: "read",
     description: "Retrieve one DocuSeal template by ID and return compact metadata with the raw template payload.",
     requiredScopes: [],
     inputSchema: s.object("The input for retrieving a DocuSeal template.", {
@@ -233,6 +235,7 @@ export const docusealActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_submission",
+    operationType: "write",
     description: "Create a DocuSeal signature request from an existing template and return the created submitters.",
     requiredScopes: [],
     inputSchema: s.object(

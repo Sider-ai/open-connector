@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderRequestContext } from "../provider-runtime.ts";
 
 import {
   compactObject,
@@ -12,7 +12,12 @@ import {
   stringArray,
 } from "../../core/cast.ts";
 import { encodePathSegment } from "../../core/request.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import {
+  providerInputError,
+  providerResponseError,
+  providerUserAgent,
+  ProviderRequestError,
+} from "../provider-runtime.ts";
 
 export const leadfeederApiBaseUrl = "https://api.leadfeeder.com";
 const validationPath = "/v1/users/me";
@@ -117,9 +122,9 @@ export async function validateLeadfeederCredential(
     context: { fetcher, signal },
   });
   const data = requiredRecord(
-    requiredRecord(payload, "Leadfeeder response", providerError).data,
+    requiredRecord(payload, "Leadfeeder response", providerResponseError).data,
     "Leadfeeder current user",
-    providerError,
+    providerResponseError,
   );
   const attributes = optionalRecord(data.attributes) ?? {};
   const email = optionalString(attributes.email);
@@ -132,7 +137,6 @@ export async function validateLeadfeederCredential(
       accountId: optionalString(data.id),
       displayName: email ?? fullName ?? "Leadfeeder API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: leadfeederApiBaseUrl,
       validationEndpoint: validationPath,
@@ -147,7 +151,7 @@ async function requestLeadfeederJson(input: {
   apiKey: string;
   path: string;
   phase: LeadfeederPhase;
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">;
+  context: ProviderRequestContext;
   method?: "GET" | "POST";
   query?: URLSearchParams;
   body?: Record<string, unknown>;
@@ -162,7 +166,7 @@ async function requestLeadfeederJson(input: {
     response = await input.context.fetcher(url, {
       method: input.method ?? "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
         "X-Api-Key": input.apiKey,
         ...(input.body === undefined ? {} : { "content-type": "application/json" }),
@@ -342,12 +346,4 @@ function readErrorMessage(payload: unknown, status: number): string {
     optionalString(objectPayload.message) ??
     `Leadfeeder request failed with ${status}`
   );
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
-}
-
-function providerError(message: string): ProviderRequestError {
-  return new ProviderRequestError(502, message);
 }

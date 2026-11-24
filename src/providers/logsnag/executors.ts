@@ -1,9 +1,11 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "logsnag";
 const logsnagApiBaseUrl = "https://api.logsnag.com/v1";
@@ -27,6 +29,14 @@ export const logsnagActionHandlers: ProviderActionHandlers<"logsnag", LogsnagAct
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, logsnagActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: logsnagApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input) {
     const apiKey = input.apiKey.trim();
@@ -38,7 +48,6 @@ export const credentialValidators: CredentialValidators = {
       profile: {
         displayName: "LogSnag API Token",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: logsnagApiBaseUrl,
         validationMode: "format_only",
@@ -56,8 +65,8 @@ async function requestLogsnag(
   const response = await context.fetcher(new URL(path, `${logsnagApiBaseUrl}/`), {
     method,
     headers: {
-      accept: "application/json",
-      authorization: `Bearer ${context.apiKey}`,
+      "accept": "application/json",
+      "authorization": `Bearer ${context.apiKey}`,
       "content-type": "application/json",
       "user-agent": providerUserAgent,
     },

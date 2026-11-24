@@ -1,17 +1,17 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalBoolean, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "genderapi_io";
 const genderapiIoApiBaseUrl = "https://api.genderapi.io";
 const genderapiIoValidationName = "Alice";
 
 type GenderapiIoPhase = "validate" | "execute";
-type GenderapiIoActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type GenderapiIoActionHandler = (input: Record<string, unknown>, context: GenderapiIoActionContext) => Promise<unknown>;
+type GenderapiIoActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 interface GenderapiIoNormalizedPrediction {
   status: true;
@@ -76,6 +76,16 @@ export const genderapiIoActionHandlers: ProviderActionHandlers<"genderapi_io", G
   },
 };
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: genderapiIoApiBaseUrl,
+  auth: { type: "api_key_query", name: "key" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, genderapiIoActionHandlers);
 
 export const credentialValidators: CredentialValidators = {
@@ -97,7 +107,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "genderapi-io-api-key",
         displayName: "GenderAPI.io API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: genderapiIoApiBaseUrl,
         validationEndpoint: "/api",
@@ -116,7 +125,7 @@ export const credentialValidators: CredentialValidators = {
 async function requestGenderapiIo(
   path: string,
   query: Record<string, string | boolean | undefined>,
-  context: GenderapiIoActionContext,
+  context: ApiKeyProviderContext,
   phase: GenderapiIoPhase,
 ): Promise<unknown> {
   let response: Response;
@@ -125,7 +134,7 @@ async function requestGenderapiIo(
     response = await context.fetcher(buildGenderapiIoUrl(path, query, context.apiKey), {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
       signal: context.signal,

@@ -1,13 +1,14 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
-import { compactObject, optionalRecord, optionalString, stringArray } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { compactObject, optionalRecord, optionalString, recordOrEmpty, stringArray } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError, defaultProviderRequestTimeoutMs } from "../provider-runtime.ts";
 
 const service = "feathery";
 const featheryApiBaseUrl = "https://api.feathery.io";
 const featheryValidationPath = "/api/account/";
-const featheryRequestTimeoutMs = 30_000;
 
 type FeatheryRequestMode = "validate" | "execute";
 type FeatheryRequestMethod = "GET" | "POST" | "PATCH" | "DELETE";
@@ -33,7 +34,7 @@ type FeatheryActionHandler = (input: Record<string, unknown>, context: FeatheryA
 export const featheryActionHandlers: ProviderActionHandlers<"feathery", FeatheryActionHandler> = {
   async get_account_info(_input, context) {
     return {
-      account: normalizeObjectPayload(
+      account: recordOrEmpty(
         await requestFeatheryJson(
           {
             path: "/api/account/",
@@ -66,7 +67,7 @@ export const featheryActionHandlers: ProviderActionHandlers<"feathery", Feathery
   },
   async get_form_schema(input, context) {
     return {
-      schema: normalizeObjectPayload(
+      schema: recordOrEmpty(
         await requestFeatheryJson(
           {
             path: `/api/form/${encodeURIComponent(readRequiredTrimmedString(input.form_id, "form_id"))}/schema/`,
@@ -82,7 +83,7 @@ export const featheryActionHandlers: ProviderActionHandlers<"feathery", Feathery
   },
   async create_or_update_form_submissions(input, context) {
     return {
-      result: normalizeObjectPayload(
+      result: recordOrEmpty(
         await requestFeatheryJson(
           {
             path: `/api/form/${encodeURIComponent(readRequiredTrimmedString(input.form_id, "form_id"))}/submission/`,
@@ -117,7 +118,7 @@ export const featheryActionHandlers: ProviderActionHandlers<"feathery", Feathery
   },
   async create_hidden_field(input, context) {
     return {
-      hiddenField: normalizeObjectPayload(
+      hiddenField: recordOrEmpty(
         await requestFeatheryJson(
           {
             path: "/api/field/hidden/",
@@ -136,7 +137,7 @@ export const featheryActionHandlers: ProviderActionHandlers<"feathery", Feathery
   },
   async edit_hidden_field(input, context) {
     return {
-      hiddenField: normalizeObjectPayload(
+      hiddenField: recordOrEmpty(
         await requestFeatheryJson(
           {
             path: `/api/field/hidden/${encodeURIComponent(readRequiredTrimmedString(input.field_id, "field_id"))}/`,
@@ -182,10 +183,10 @@ export const featheryActionHandlers: ProviderActionHandlers<"feathery", Feathery
             method: "GET",
             mode: "execute",
             query: compactObject({
-              created_after: readOptionalTrimmedString(input.created_after),
-              created_before: readOptionalTrimmedString(input.created_before),
-              filter_field_id: readOptionalTrimmedString(input.filter_field_id),
-              filter_field_value: readOptionalTrimmedString(input.filter_field_value),
+              created_after: optionalString(input.created_after),
+              created_before: optionalString(input.created_before),
+              filter_field_id: optionalString(input.filter_field_id),
+              filter_field_value: optionalString(input.filter_field_value),
             }),
             signal: context.signal,
           },
@@ -204,7 +205,7 @@ export const featheryActionHandlers: ProviderActionHandlers<"feathery", Feathery
             method: "GET",
             mode: "execute",
             query: compactObject({
-              id: readOptionalTrimmedString(input.id),
+              id: optionalString(input.id),
             }),
             signal: context.signal,
           },
@@ -215,7 +216,7 @@ export const featheryActionHandlers: ProviderActionHandlers<"feathery", Feathery
   },
   async get_user_session(input, context) {
     return {
-      session: normalizeObjectPayload(
+      session: recordOrEmpty(
         await requestFeatheryJson(
           {
             path: `/api/user/${encodeURIComponent(readRequiredTrimmedString(input.user_id, "user_id"))}/session/`,
@@ -231,7 +232,7 @@ export const featheryActionHandlers: ProviderActionHandlers<"feathery", Feathery
   },
   async create_or_fetch_user(input, context) {
     return {
-      user: normalizeObjectPayload(
+      user: recordOrEmpty(
         await requestFeatheryJson(
           {
             path: "/api/user/",
@@ -270,9 +271,17 @@ export const featheryActionHandlers: ProviderActionHandlers<"feathery", Feathery
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, featheryActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: featheryApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Token " },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
-    const account = normalizeObjectPayload(
+    const account = recordOrEmpty(
       await requestFeatheryJson(
         {
           path: featheryValidationPath,
@@ -285,13 +294,12 @@ export const credentialValidators: CredentialValidators = {
       ),
     );
 
-    const team = readOptionalTrimmedString(account.team);
+    const team = optionalString(account.team);
     return {
       profile: {
         accountId: team ? `team:${team}` : "api_key",
         displayName: team ? `Feathery ${team}` : "Feathery API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: featheryApiBaseUrl,
         validationEndpoint: featheryValidationPath,
@@ -316,7 +324,7 @@ async function requestFeatheryJson(input: FeatheryRequestInput, fetcher: typeof 
     }
   }
 
-  const timeoutSignal = AbortSignal.timeout(featheryRequestTimeoutMs);
+  const timeoutSignal = AbortSignal.timeout(defaultProviderRequestTimeoutMs);
   const signal = input.signal ? AbortSignal.any([input.signal, timeoutSignal]) : timeoutSignal;
   try {
     const response = await fetcher(url.toString(), {
@@ -342,8 +350,8 @@ async function requestFeatheryJson(input: FeatheryRequestInput, fetcher: typeof 
 
 function featheryHeaders(apiKey: string, bodyType?: "json"): Record<string, string> {
   return {
-    accept: "application/json",
-    authorization: `Token ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Token ${apiKey}`,
     "user-agent": providerUserAgent,
     ...(bodyType === "json" ? { "content-type": "application/json" } : {}),
   };
@@ -428,10 +436,6 @@ function normalizeArrayPayload(payload: unknown): Array<Record<string, unknown>>
   return [];
 }
 
-function normalizeObjectPayload(payload: unknown): Record<string, unknown> {
-  return optionalRecord(payload) ?? {};
-}
-
 function buildTagsQuery(value: unknown): Record<string, string[]> | undefined {
   if (!Array.isArray(value)) {
     return undefined;
@@ -444,17 +448,13 @@ function buildTagsQuery(value: unknown): Record<string, string[]> | undefined {
 }
 
 function validateListUsersInput(input: Record<string, unknown>): void {
-  if (readOptionalTrimmedString(input.filter_field_id) && !readOptionalTrimmedString(input.filter_field_value)) {
+  if (optionalString(input.filter_field_id) && !optionalString(input.filter_field_value)) {
     throw new ProviderRequestError(400, "filter_field_value is required when filter_field_id is provided");
   }
 }
 
-function readOptionalTrimmedString(value: unknown): string | undefined {
-  return optionalString(value);
-}
-
 function readRequiredTrimmedString(value: unknown, field: string): string {
-  const trimmed = readOptionalTrimmedString(value);
+  const trimmed = optionalString(value);
   if (!trimmed) {
     throw new ProviderRequestError(400, `${field} is required`);
   }

@@ -3,9 +3,10 @@ import type {
   CredentialValidators,
   ExecutionContext,
   ProviderExecutors,
+  ProviderProxyExecutor,
   ResolvedCredential,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import {
   base64Bytes,
@@ -16,12 +17,13 @@ import {
   optionalString,
   requiredString,
 } from "../../core/cast.ts";
-import { defineProviderExecutors, ProviderRequestError } from "../provider-runtime.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerInputError, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "crowdin";
 const crowdinUserUrl = "https://api.crowdin.com/api/v2/user";
 const crowdinPublicApiBaseUrl = "https://api.crowdin.com/api/v2";
-const crowdinGrantedScopes = ["crowdin.projects.read", "crowdin.source.read", "crowdin.source.write"];
 
 interface CrowdinActionContext {
   accessToken: string;
@@ -76,12 +78,21 @@ export const executors: ProviderExecutors = defineProviderExecutors<CrowdinActio
   },
 });
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  async baseUrl(context) {
+    const credential = await context.getCredential(service);
+    return resolveCrowdinApiBaseUrl(credential && "metadata" in credential ? credential.metadata : undefined);
+  },
+  auth: { type: "bearer" },
+  defaultHeaders: { accept: "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const profile = await fetchCrowdinCurrentAccount(input.apiKey, fetcher, signal);
     return {
       ...profile,
-      grantedScopes: [...crowdinGrantedScopes],
     };
   },
   async oauth2(input, { fetcher, signal }) {
@@ -465,8 +476,4 @@ function extractOrganizationDomainFromToken(accessToken: string | undefined): st
   } catch {
     return undefined;
   }
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

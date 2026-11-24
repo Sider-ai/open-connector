@@ -1,20 +1,21 @@
 import type { CredentialValidators, ExecutionContext, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
 import {
   createProviderTimeout,
-  defineProviderExecutors,
   providerUserAgent,
   ProviderRequestError,
   readProviderJsonBody,
-  requireApiKeyCredential,
+  providerInputError,
+  providerResponseError,
 } from "../provider-runtime.ts";
 
 const service = "simplybook_me";
 const simplybookMeApiBaseUrl = "https://user-api.simplybook.me";
 const simplybookMeLoginUrl = `${simplybookMeApiBaseUrl}/login`;
-const simplybookMeDefaultRequestTimeoutMs = 30_000;
 
 interface SimplybookMeContext {
   companyLogin: string;
@@ -110,7 +111,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: companyLogin,
         displayName: readCompanyLabel(companyRecord, companyLogin),
       },
-      grantedScopes: [],
       metadata: {
         companyLogin,
         apiBaseUrl: simplybookMeApiBaseUrl,
@@ -152,7 +152,7 @@ function callPublicMethod(context: SimplybookMeContext, method: string, params: 
 }
 
 async function callJsonRpc(input: JsonRpcRequestInput): Promise<unknown> {
-  const timeout = createProviderTimeout(input.signal, simplybookMeDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   try {
     const response = await input.fetcher(input.url, {
       method: "POST",
@@ -201,7 +201,7 @@ async function callJsonRpc(input: JsonRpcRequestInput): Promise<unknown> {
 
 function buildJsonRpcHeaders(companyLogin: string | undefined, token: string | undefined): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
+    "accept": "application/json",
     "content-type": "application/json",
     "user-agent": providerUserAgent,
   };
@@ -220,9 +220,9 @@ function mapJsonRpcError(error: JsonRpcErrorPayload): ProviderRequestError {
     return new ProviderRequestError(401, message);
   }
   if (code === -32602 || code === -32080 || code === -32085 || code === -32001) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
-  return new ProviderRequestError(502, message);
+  return providerResponseError(message);
 }
 
 function mapHttpError(status: number, message: string): ProviderRequestError {
@@ -250,7 +250,7 @@ function requireCompanyLogin(value: unknown): string {
 function requireObjectPayload(value: unknown, message: string): Record<string, unknown> {
   const record = optionalRecord(value);
   if (!record) {
-    throw new ProviderRequestError(502, message);
+    throw providerResponseError(message);
   }
   return record;
 }
@@ -264,12 +264,12 @@ function normalizeObjectList(value: unknown, message: string): Array<Record<stri
 
 function normalizeIntegerList(value: unknown, message: string): number[] {
   if (!Array.isArray(value)) {
-    throw new ProviderRequestError(502, message);
+    throw providerResponseError(message);
   }
   return value.map((item) => {
     const parsed = Number(item);
     if (!Number.isInteger(parsed)) {
-      throw new ProviderRequestError(502, message);
+      throw providerResponseError(message);
     }
     return parsed;
   });

@@ -1,8 +1,10 @@
-import type { ExecutionContext, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ExecutionContext, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { optionalInteger, optionalString, requiredString } from "../../core/cast.ts";
-import { defineProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 import { parseBadgeFeed, parsePostFeed, parseTopicFeed } from "./rss.ts";
 
 const service = "linux_do";
@@ -82,6 +84,16 @@ export const executors: ProviderExecutors = defineProviderExecutors<LinuxDoActio
   fallbackMessage: "linux_do request failed",
 });
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: linuxDoForumBaseUrl,
+  auth: { type: "none" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/rss+xml, application/xml;q=0.9");
+  },
+});
+
 async function topicFeed(
   path: string,
   query: Record<string, string | undefined>,
@@ -123,7 +135,7 @@ async function requestLinuxDoRss(
   try {
     response = await context.fetcher(url, {
       headers: {
-        accept: "application/rss+xml, application/xml;q=0.9",
+        "accept": "application/rss+xml, application/xml;q=0.9",
         "user-agent": providerUserAgent,
       },
       signal: context.signal,

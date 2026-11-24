@@ -1,9 +1,15 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "langbase";
 const langbaseApiBaseUrl = "https://api.langbase.com";
@@ -30,6 +36,16 @@ export const langbaseActionHandlers: ProviderActionHandlers<"langbase", Langbase
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, langbaseActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: langbaseApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     return validateLangbaseCredential({
@@ -40,9 +56,7 @@ export const credentialValidators: CredentialValidators = {
   },
 };
 
-async function validateLangbaseCredential(
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
-): Promise<CredentialValidationResult> {
+async function validateLangbaseCredential(context: ApiKeyProviderContext): Promise<CredentialValidationResult> {
   const payload = await requestLangbaseJson({
     path: langbaseMemoryPath,
     context,
@@ -55,7 +69,6 @@ async function validateLangbaseCredential(
       accountId: "api_key",
       displayName: "Langbase API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: langbaseApiBaseUrl,
       validationEndpoint: langbaseMemoryPath,
@@ -137,7 +150,7 @@ async function retrieveLangbaseMemory(
 
 async function requestLangbaseJson(input: {
   path: string;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   phase: LangbaseRequestPhase;
   method?: "GET" | "POST" | "DELETE";
   body?: Record<string, unknown>;
@@ -168,8 +181,8 @@ async function requestLangbaseJson(input: {
 
 function langbaseHeaders(apiKey: string, hasBody: boolean): Record<string, string> {
   const headers: Record<string, string> = {
-    authorization: `Bearer ${apiKey}`,
-    accept: "application/json",
+    "authorization": `Bearer ${apiKey}`,
+    "accept": "application/json",
     "user-agent": providerUserAgent,
   };
   if (hasBody) {

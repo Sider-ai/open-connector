@@ -1,5 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { createHash } from "node:crypto";
@@ -25,8 +25,6 @@ export interface PretixActionContext extends PretixCredential {
 }
 
 type PretixActionHandler = (input: Record<string, unknown>, context: PretixActionContext) => Promise<unknown>;
-
-const requestTimeoutMs = 30_000;
 
 export const pretixActionHandlers: ProviderActionHandlers<"pretix", PretixActionHandler> = {
   async list_organizers(input, context) {
@@ -120,7 +118,6 @@ export async function validatePretixCredential(
     profile: {
       accountId: `pretix:${host}:${instanceHash.slice(0, 12)}:${tokenHash.slice(0, 16)}`,
       displayName: `pretix ${host}${instanceUrl.pathname.replace(/\/$/, "")}`,
-      grantedScopes: [],
     },
     metadata: { baseUrl: context.baseUrl },
   };
@@ -151,12 +148,12 @@ async function requestPretix(
 ): Promise<unknown> {
   const url = new URL(`${context.baseUrl}${path}`);
   setSearchParams(url, query);
-  const timeout = createProviderTimeout(context.signal, requestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const response = await context.fetcher(url, {
       headers: {
-        accept: "application/json",
-        authorization: `Token ${context.token}`,
+        "accept": "application/json",
+        "authorization": `Token ${context.token}`,
         "user-agent": providerUserAgent,
       },
       signal: timeout.signal,

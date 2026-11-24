@@ -7,7 +7,7 @@ import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { posix } from "node:path";
 import { compactObject, optionalInteger, optionalString } from "../../core/cast.ts";
 import { withMcpClient } from "../mcp-client.ts";
-import { ProviderRequestError } from "../provider-runtime.ts";
+import { ProviderRequestError, defaultProviderRequestTimeoutMs } from "../provider-runtime.ts";
 import {
   baiduNetdiskFileCategories,
   baiduNetdiskListTypes,
@@ -17,7 +17,6 @@ import {
 import { normalizeBaiduNetdiskError, parseBaiduNetdiskJson } from "./runtime.ts";
 
 const baiduNetdiskMcpEndpoint = new URL("https://mcp-pan.baidu.com/sse");
-const requestTimeoutMs = 30_000;
 type BaiduNetdiskListType = (typeof baiduNetdiskListTypes)[number];
 const baiduNetdiskListToolByType = {
   all: "file_list",
@@ -60,7 +59,7 @@ export type BaiduNetdiskMcpContext = {
 
 export async function verifyBaiduNetdiskMcpConnection(accessToken: string, fetcher: ProviderFetch): Promise<void> {
   await withBaiduNetdiskMcpClient(accessToken, fetcher, async (client) => {
-    const result = await client.listTools({}, { timeout: requestTimeoutMs });
+    const result = await client.listTools({}, { timeout: defaultProviderRequestTimeoutMs });
     const toolsByName = new Map(result.tools.map((tool) => [tool.name, tool]));
     for (const toolName of requiredToolNames) {
       const tool = toolsByName.get(toolName);
@@ -246,11 +245,20 @@ async function callBaiduNetdiskMcpTool(
   context: BaiduNetdiskMcpContext,
 ) {
   return withBaiduNetdiskMcpClient(context.accessToken, context.fetcher, async (client) => {
-    const result = await client.callTool({ name, arguments: args }, { timeout: requestTimeoutMs });
-    const payload =
-      result.structuredContent && !hasUnsafeBaiduId(result.structuredContent)
-        ? requireObject(result.structuredContent)
-        : parseMcpTextResult(result.content);
+    const result = await client.callTool({ name, arguments: args }, { timeout: defaultProviderRequestTimeoutMs });
+    let payload: Record<string, unknown>;
+    try {
+      payload =
+        result.structuredContent && !hasUnsafeBaiduId(result.structuredContent)
+          ? requireObject(result.structuredContent)
+          : parseMcpTextResult(result.content);
+    } catch (error) {
+      if (!result.isError && isManagementTool(name)) {
+        const rawResponse = readMcpTextResult(result.content);
+        if (rawResponse != null) return { rawResponse };
+      }
+      throw error;
+    }
     const errno = readOptionalInteger(payload.errno ?? payload.error_no ?? payload.error_code);
     if (errno != null && errno !== 0) {
       throw normalizeBaiduNetdiskError(errno, 200, payload.request_id, phase);
@@ -262,11 +270,13 @@ async function callBaiduNetdiskMcpTool(
   });
 }
 
+function isManagementTool(name: string): boolean {
+  return name === "file_copy" || name === "file_move" || name === "file_rename";
+}
+
 function parseMcpTextResult(content: Array<{ type: string; [key: string]: unknown }>) {
-  const text = content.find(
-    (item): item is { type: "text"; text: string } => item.type === "text" && typeof item.text === "string",
-  )?.text;
-  if (!text) {
+  const text = readMcpTextResult(content);
+  if (text == null) {
     throw new ProviderRequestError(502, "baidu_netdisk MCP returned no JSON result");
   }
   const trimmedText = text.trim();
@@ -275,6 +285,12 @@ function parseMcpTextResult(content: Array<{ type: string; [key: string]: unknow
   } catch (error) {
     return parseEmbeddedMcpError(trimmedText, error);
   }
+}
+
+function readMcpTextResult(content: Array<{ type: string; [key: string]: unknown }>): string | undefined {
+  return content.find(
+    (item): item is { type: "text"; text: string } => item.type === "text" && typeof item.text === "string",
+  )?.text;
 }
 
 function parseEmbeddedMcpError(text: string, originalError: unknown): Record<string, unknown> {
@@ -397,6 +413,7 @@ function normalizeManagementResult(payload: Record<string, unknown>, sourcePath:
   return {
     sourcePath,
     path: item.path == null ? null : normalizeMcpPath(item.path),
+    rawResponse: optionalString(payload.rawResponse) ?? null,
   };
 }
 

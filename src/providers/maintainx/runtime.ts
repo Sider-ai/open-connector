@@ -1,6 +1,7 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { compactObject, optionalBoolean, optionalInteger, optionalString } from "../../core/cast.ts";
 import {
@@ -11,8 +12,6 @@ import {
 } from "../provider-runtime.ts";
 
 export const maintainxApiBaseUrl = "https://api.getmaintainx.com/v1";
-
-const maintainxDefaultTimeoutMs = 30_000;
 
 type MaintainxRequestPhase = "validate" | "execute";
 type QueryValue = string | number | boolean | readonly (string | number | boolean)[] | undefined;
@@ -246,7 +245,6 @@ export async function validateMaintainxCredential(
       accountId: "api_key",
       displayName: "MaintainX API key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: maintainxApiBaseUrl,
       validationEndpoint: "/locations",
@@ -255,13 +253,13 @@ export async function validateMaintainxCredential(
 }
 
 async function requestMaintainxJson(options: MaintainxRequestOptions): Promise<unknown> {
-  const timeout = createProviderTimeout(options.signal, maintainxDefaultTimeoutMs);
+  const timeout = createProviderTimeout(options.signal);
   const url = new URL(`${maintainxApiBaseUrl}${options.path}`);
   appendQuery(url, options.query);
 
   const headers = compactObject({
-    accept: "application/json",
-    authorization: `Bearer ${options.apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${options.apiKey}`,
     "user-agent": providerUserAgent,
     ...options.headers,
     ...(options.body === undefined ? {} : { "content-type": "application/json" }),

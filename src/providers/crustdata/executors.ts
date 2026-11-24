@@ -1,6 +1,6 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -13,7 +13,14 @@ import {
   requiredString,
   stringArray,
 } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import {
+  providerInputError,
+  providerResponseError,
+  providerUserAgent,
+  ProviderRequestError,
+} from "../provider-runtime.ts";
 import { crustdataApiVersion } from "./actions.ts";
 
 const service = "crustdata";
@@ -38,7 +45,7 @@ export const crustdataActionHandlers: ProviderActionHandlers<"crustdata", Crustd
       body: compactObject({
         filters: optionalRecord(input.filters),
         fields: optionalStringArray(input.fields),
-        sorts: Array.isArray(input.sorts) ? objectArray(input.sorts, "sort", providerError) : undefined,
+        sorts: Array.isArray(input.sorts) ? objectArray(input.sorts, "sort", providerResponseError) : undefined,
         limit: optionalInteger(input.limit),
         cursor: optionalString(input.cursor),
       }),
@@ -63,6 +70,16 @@ export const crustdataActionHandlers: ProviderActionHandlers<"crustdata", Crustd
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, crustdataActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: crustdataApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("x-api-version", crustdataApiVersion);
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const context: ApiKeyProviderContext = { apiKey: input.apiKey, fetcher, signal };
@@ -85,7 +102,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: matchedCompanyId === undefined ? "crustdata" : String(matchedCompanyId),
         displayName: optionalString(basicInfo?.name) ?? "Crustdata API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: crustdataApiBaseUrl,
         validationEndpoint: validatePath,
@@ -138,7 +154,7 @@ async function requestCrustdataJson(input: {
     response = await input.context.fetcher(new URL(input.path, crustdataApiBaseUrl), {
       method: "POST",
       headers: {
-        authorization: `Bearer ${input.context.apiKey}`,
+        "authorization": `Bearer ${input.context.apiKey}`,
         "content-type": "application/json",
         "user-agent": providerUserAgent,
         "x-api-version": crustdataApiVersion,
@@ -202,7 +218,7 @@ function normalizeCompanyResults(
     }
     return {
       matchedOn: normalizeMatchedOn(result.matched_on),
-      matchType: requiredString(result.match_type, "match_type", providerError),
+      matchType: requiredString(result.match_type, "match_type", providerResponseError),
       matches: result.matches.map((match) => normalizeMatch(match)),
     };
   });
@@ -235,7 +251,7 @@ function normalizeAutocompleteResponse(payload: unknown): unknown {
   return {
     suggestions: response.suggestions.map((suggestion) => {
       const entry = requireProviderObject(suggestion, "suggestion");
-      return { value: requiredString(entry.value, "value", providerError) };
+      return { value: requiredString(entry.value, "value", providerResponseError) };
     }),
   };
 }
@@ -245,7 +261,7 @@ function requireProviderObject(value: unknown, label: string): Record<string, un
 }
 
 function optionalStringArray(value: unknown): string[] | undefined {
-  return Array.isArray(value) ? stringArray(value, "array item", providerError) : undefined;
+  return Array.isArray(value) ? stringArray(value, "array item", providerResponseError) : undefined;
 }
 
 function optionalIntegerArray(value: unknown): number[] | undefined {
@@ -278,12 +294,4 @@ function normalizeMatchedOn(value: unknown): string {
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   throw new ProviderRequestError(502, "matched_on must be a string-compatible value");
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
-}
-
-function providerError(message: string): ProviderRequestError {
-  return new ProviderRequestError(502, message);
 }

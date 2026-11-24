@@ -1,5 +1,5 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderRequestContext } from "../provider-runtime.ts";
 
 import {
   compactObject,
@@ -682,7 +682,7 @@ function contextPage(input: Record<string, unknown>): Record<string, string | nu
 async function launchDarklyRequest<T = unknown>(
   apiKey: string,
   input: LaunchDarklyRequestInput,
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">,
+  context: ProviderRequestContext,
   phase: LaunchDarklyRequestPhase = "execute",
 ): Promise<T> {
   const url = new URL(`${launchDarklyApiBaseUrl}${input.path}`);
@@ -723,8 +723,8 @@ async function launchDarklyRequest<T = unknown>(
 
 function headers(apiKey: string, contentType?: string): Record<string, string> {
   return compactObject({
-    authorization: apiKey,
-    accept: "application/json",
+    "authorization": apiKey,
+    "accept": "application/json",
     "ld-api-version": launchDarklyApiVersion,
     "content-type": contentType,
   }) as Record<string, string>;

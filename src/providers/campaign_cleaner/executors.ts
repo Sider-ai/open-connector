@@ -1,15 +1,13 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderTransitFile } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderTransitFile } from "../provider-files.ts";
 
-import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { readBoundedResponseBytes } from "../../core/request.ts";
-import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
-  ProviderRequestError,
-  providerUserAgent,
-} from "../provider-runtime.ts";
+import { compactObject, optionalBoolean, optionalRecord, optionalString } from "../../core/cast.ts";
+import { storeResponseInTransit } from "../../core/request.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent, requiredInputString } from "../provider-runtime.ts";
 
 const service = "campaign_cleaner";
 const campaignCleanerApiBaseUrl = "https://api.campaigncleaner.com";
@@ -58,7 +56,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: service,
         displayName: "Campaign Cleaner API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: campaignCleanerApiBaseUrl,
         validationEndpoint: campaignCleanerCreditsPath,
@@ -77,8 +74,8 @@ async function sendCampaign(input: Record<string, unknown>, context: ApiKeyProvi
     method: "POST",
     body: {
       send_campaign: compactObject({
-        campaign_html: requiredProviderString(input.campaign_html, "campaign_html"),
-        campaign_name: requiredProviderString(input.campaign_name, "campaign_name"),
+        campaign_html: requiredInputString(input.campaign_html, "campaign_html"),
+        campaign_name: requiredInputString(input.campaign_name, "campaign_name"),
         adjust_font_colors: optionalBoolean(input.adjust_font_colors),
         adjust_font_size: optionalBoolean(input.adjust_font_size),
         convert_h_to_p_tags: optionalBoolean(input.convert_h_to_p_tags),
@@ -170,12 +167,13 @@ async function getCampaignPdfAnalysis(input: Record<string, unknown>, context: A
     sanitizeFilename(
       readContentDispositionFilename(response.headers.get("content-disposition")) ?? `campaign-cleaner-${id}.pdf`,
     ) ?? `campaign-cleaner-${id}.pdf`;
-  const bytes = await readBoundedResponseBytes(response, {
-    maxBytes: context.transitFiles.maxBytes,
+  const upload = await storeResponseInTransit(response, context.transitFiles, {
+    name,
+    mimeType,
     fieldName: name,
     createError: (message) => new ProviderRequestError(413, message),
+    signal: context.signal,
   });
-  const upload = await context.transitFiles.create(new File([Uint8Array.from(bytes)], name, { type: mimeType }));
   const content: ProviderTransitFile = {
     fileId: upload.fileId,
     downloadUrl: upload.downloadUrl,
@@ -270,7 +268,7 @@ function campaignIdBody(input: Record<string, unknown>) {
 }
 
 function campaignId(input: Record<string, unknown>) {
-  return requiredProviderString(input.campaign_id, "campaign_id");
+  return requiredInputString(input.campaign_id, "campaign_id");
 }
 
 function parseCampaignReference(payload: unknown) {
@@ -357,16 +355,8 @@ function requiredStringRecord(value: unknown, fieldName: string) {
   return record;
 }
 
-function requiredProviderString(value: unknown, fieldName: string) {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
-}
-
 function optionalInteger(value: unknown) {
   return typeof value === "number" && Number.isInteger(value) ? value : undefined;
-}
-
-function optionalBoolean(value: unknown) {
-  return typeof value === "boolean" ? value : undefined;
 }
 
 function optionalSurroundingDiv(value: unknown) {

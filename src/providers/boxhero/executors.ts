@@ -1,9 +1,11 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderRequestContext } from "../provider-runtime.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "boxhero";
 const boxheroApiBaseUrl = "https://rest.boxhero-app.com";
@@ -53,6 +55,16 @@ export const boxheroActionHandlers: ProviderActionHandlers<"boxhero", BoxheroAct
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, boxheroActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: boxheroApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = await requestBoxheroJson({
@@ -79,7 +91,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: String(teamId),
         displayName: teamName,
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: boxheroApiBaseUrl,
         validationEndpoint: boxheroValidationPath,
@@ -94,7 +105,7 @@ async function requestBoxheroJson(input: {
   apiKey: string;
   path: string;
   query?: Record<string, unknown>;
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">;
+  context: ProviderRequestContext;
   phase: BoxheroRequestPhase;
 }): Promise<unknown> {
   let response: Response;
@@ -134,8 +145,8 @@ async function requestBoxheroJson(input: {
 
 function buildBoxheroHeaders(apiKey: string): Record<string, string> {
   return {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "user-agent": providerUserAgent,
   };
 }

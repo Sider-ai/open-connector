@@ -1,6 +1,7 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import {
   compactObject,
@@ -13,13 +14,12 @@ import {
 import {
   createProviderTimeout,
   isAbortLikeError,
+  providerInputError,
   providerUserAgent,
   ProviderRequestError,
 } from "../provider-runtime.ts";
 
 export const northbeamApiBaseUrl = "https://api.northbeam.io/v1";
-
-const northbeamRequestTimeoutMs = 30_000;
 
 type NorthbeamPhase = "validate" | "execute";
 type NorthbeamActionHandler = ProviderRuntimeHandler<NorthbeamContext>;
@@ -105,7 +105,6 @@ export async function validateNorthbeamCredential(
       accountId: context.clientId,
       displayName: `Northbeam ${context.clientId}`,
     },
-    grantedScopes: [],
     metadata: compactObject({
       clientId: context.clientId,
       metricCount: metrics.length,
@@ -133,15 +132,15 @@ async function listSpend(input: Record<string, unknown>, context: NorthbeamConte
 }
 
 async function requestNorthbeamJson(options: NorthbeamRequestOptions): Promise<Record<string, unknown>> {
-  const timeout = createProviderTimeout(options.context.signal, northbeamRequestTimeoutMs);
+  const timeout = createProviderTimeout(options.context.signal);
   try {
     let response: Response;
     try {
       response = await options.context.fetcher(buildNorthbeamUrl(options.path, options.params), {
         method: "GET",
         headers: {
-          accept: "application/json",
-          authorization: options.context.apiKey,
+          "accept": "application/json",
+          "authorization": options.context.apiKey,
           "data-client-id": options.context.clientId,
           "user-agent": providerUserAgent,
         },
@@ -205,7 +204,7 @@ function mapNorthbeamError(status: number, payload: unknown, phase: NorthbeamPha
   }
 
   if (phase === "validate" && status >= 400 && status < 500) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   if (phase === "execute" && (status === 401 || status === 403)) {
@@ -260,8 +259,4 @@ function readRequiredInteger(value: unknown, field: string): number {
     return result;
   }
   throw new ProviderRequestError(502, `Northbeam returned an invalid ${field}`);
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

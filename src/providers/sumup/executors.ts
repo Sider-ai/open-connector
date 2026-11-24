@@ -1,12 +1,9 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ApiKeyProviderContext, ProviderActionHandlers, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ApiKeyProviderContext, ProviderActionHandlers, ProviderRuntimeHandler } from "../provider-executors.ts";
 
-import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
-  ProviderRequestError,
-  providerUserAgent,
-} from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 type Context = Parameters<Parameters<typeof defineApiKeyProviderExecutors>[1][string]>[1];
 async function request(
   path: string,
@@ -20,8 +17,8 @@ async function request(
   const response = await context.fetcher(url, {
     method,
     headers: {
-      accept: "application/json",
-      authorization: `Bearer ${context.apiKey}`,
+      "accept": "application/json",
+      "authorization": `Bearer ${context.apiKey}`,
       "content-type": "application/json",
       "user-agent": providerUserAgent,
     },
@@ -109,8 +106,8 @@ export const credentialValidators: CredentialValidators = {
     url.searchParams.set("checkout_reference", "open-connector-credential-validation");
     const response = await fetcher(url, {
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${input.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${input.apiKey}`,
         "user-agent": providerUserAgent,
       },
       signal,
@@ -124,7 +121,6 @@ export const credentialValidators: CredentialValidators = {
     }
     return {
       profile: { accountId: "api_key", displayName: "SumUp API Key" },
-      grantedScopes: [],
       metadata: { apiBaseUrl: "https://api.sumup.com", validationEndpoint },
     };
   },

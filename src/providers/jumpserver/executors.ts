@@ -3,21 +3,21 @@ import type {
   CredentialValidators,
   ExecutionContext,
   ProviderExecutors,
+  ProviderProxyExecutor,
 } from "../../core/types.ts";
+import type * as RuntimeModule from "./runtime.ts";
 import type { JumpServerMcpContext } from "./runtime.ts";
 
 import { isPrivateNetworkAccessAllowed } from "../../core/request.ts";
-import {
-  createProviderFetch,
-  defineProviderExecutors,
-  mapProviderActionNames,
-  requireCustomCredential,
-} from "../provider-runtime.ts";
+import { requireCustomCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors, mapProviderActionNames } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { createProviderFetch } from "../provider-runtime.ts";
 import { jumpServerMcpToolNames } from "./actions.ts";
 
 const service = "jumpserver";
 
-type JumpServerRuntime = typeof import("./runtime.ts");
+type JumpServerRuntime = typeof RuntimeModule;
 type JumpServerActionHandler = (input: Record<string, unknown>, context: JumpServerMcpContext) => Promise<unknown>;
 
 let runtimeModule: Promise<JumpServerRuntime> | undefined;
@@ -44,6 +44,22 @@ export const executors: ProviderExecutors = defineProviderExecutors<JumpServerMc
   },
   fallbackMessage: "JumpServer MCP request failed",
   allowPrivateNetwork: isPrivateNetworkAccessAllowed,
+});
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  async baseUrl(context) {
+    const credential = await requireCustomCredential(context, service);
+    return (await loadJumpServerRuntime()).normalizeJumpServerMcpEndpoint(credential.metadata.mcpEndpoint).toString();
+  },
+  auth: {
+    type: "custom_credential_header",
+    field: "token",
+    name: "authorization",
+    prefix: "Bearer ",
+  },
+  allowPrivateNetwork: isPrivateNetworkAccessAllowed,
+  defaultHeaders: { accept: "application/json, text/event-stream" },
 });
 
 export const credentialValidators: CredentialValidators = {

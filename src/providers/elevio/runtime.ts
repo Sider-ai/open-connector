@@ -1,9 +1,11 @@
 import type { CredentialValidationResult, ExecutionContext } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError, requireApiKeyCredential } from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 export const elevioApiBaseUrl = "https://api.elev.io/v1";
 
@@ -68,7 +70,6 @@ export async function validateElevioCredential(
     profile: {
       displayName: "Elevio API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: elevioApiBaseUrl,
       validationEndpoint: "/categories",
@@ -99,13 +100,13 @@ async function listArticles(input: Record<string, unknown>, context: ElevioConte
     "articles",
     {
       query: compactObject({
-        page: input.page,
-        page_size: input.pageSize,
-        status: input.status,
-        from_created_at: input.fromCreatedAt,
-        to_created_at: input.toCreatedAt,
-        from_published_at: input.fromPublishedAt,
-        to_published_at: input.toPublishedAt,
+        "page": input.page,
+        "page_size": input.pageSize,
+        "status": input.status,
+        "from_created_at": input.fromCreatedAt,
+        "to_created_at": input.toCreatedAt,
+        "from_published_at": input.fromPublishedAt,
+        "to_published_at": input.toPublishedAt,
         "tag[]": input.tags,
       }),
     },
@@ -141,14 +142,14 @@ async function searchArticles(input: Record<string, unknown>, context: ElevioCon
     `search/${encodeURIComponent(languageCode)}`,
     {
       query: compactObject({
-        query: input.query,
-        page: input.page,
-        rows: input.rows,
+        "query": input.query,
+        "page": input.page,
+        "rows": input.rows,
         "tag[]": input.tags,
-        user_email: input.userEmail,
-        group: input.groups,
-        hash: input.hash,
-        url: input.url,
+        "user_email": input.userEmail,
+        "group": input.groups,
+        "hash": input.hash,
+        "url": input.url,
       }),
     },
     context,
@@ -173,8 +174,8 @@ async function requestElevio(
     response = await context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${context.jwt}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${context.jwt}`,
         "user-agent": providerUserAgent,
         "x-api-key": context.apiKey,
       },

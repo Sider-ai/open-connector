@@ -1,26 +1,25 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
   providerUserAgent,
   ProviderRequestError,
   readProviderTextBody,
+  providerInputError,
+  providerResponseError,
 } from "../provider-runtime.ts";
 
 const service = "nozbe_teams";
 const nozbeTeamsApiBaseUrl = "https://api4.nozbe.com/v1/api";
 const nozbeTeamsValidationPath = "/teams";
-const nozbeTeamsRequestTimeoutMs = 30_000;
 const nozbeTeamsMaxResponseBytes = 10 * 1024 * 1024;
 
 type NozbeRequestPhase = "validate" | "execute";
-type NozbeContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type NozbeActionHandler = (input: Record<string, unknown>, context: NozbeContext) => Promise<unknown>;
+type NozbeActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 interface NozbeRequestInput {
   method: "GET" | "POST" | "PUT" | "DELETE";
@@ -130,7 +129,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: teamId ?? "api_key",
         displayName: teamName ?? "Nozbe API Token",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: nozbeTeamsApiBaseUrl,
         validationEndpoint: nozbeTeamsValidationPath,
@@ -143,7 +141,7 @@ export const credentialValidators: CredentialValidators = {
 
 async function requestNozbeArray(
   input: NozbeRequestInput,
-  context: NozbeContext,
+  context: ApiKeyProviderContext,
   phase: NozbeRequestPhase,
 ): Promise<unknown[]> {
   const payload = await requestNozbeJson(input, context, phase);
@@ -155,7 +153,7 @@ async function requestNozbeArray(
 
 async function requestNozbeObject(
   input: NozbeRequestInput,
-  context: NozbeContext,
+  context: ApiKeyProviderContext,
   phase: NozbeRequestPhase,
 ): Promise<Record<string, unknown>> {
   const payload = await requestNozbeJson(input, context, phase);
@@ -168,7 +166,7 @@ async function requestNozbeObject(
 
 async function requestNozbeJson(
   input: NozbeRequestInput,
-  context: NozbeContext,
+  context: ApiKeyProviderContext,
   phase: NozbeRequestPhase,
 ): Promise<unknown> {
   const url = new URL(`${nozbeTeamsApiBaseUrl}${input.path}`);
@@ -178,13 +176,13 @@ async function requestNozbeJson(
     }
   }
 
-  const timeout = createProviderTimeout(context.signal, nozbeTeamsRequestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const response = await context.fetcher(url, {
       method: input.method,
       headers: {
-        accept: "application/json",
-        authorization: `apikey ${context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `apikey ${context.apiKey}`,
         ...(input.body === undefined ? {} : { "content-type": "application/json" }),
         "user-agent": providerUserAgent,
       },
@@ -226,12 +224,12 @@ function buildNozbeError(response: Response, text: string, phase: NozbeRequestPh
     return new ProviderRequestError(phase === "validate" ? 400 : 401, message);
   }
   if ([400, 404, 409, 422].includes(response.status)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (response.status === 429) {
     return new ProviderRequestError(429, message);
   }
-  return new ProviderRequestError(502, message);
+  return providerResponseError(message);
 }
 
 function readNozbeErrorMessage(status: number, text: string): string {
@@ -254,7 +252,7 @@ function resourcePath(resource: string, id: unknown): string {
 }
 
 function requireResourceId(value: unknown): string {
-  return requiredString(value, "Nozbe resource ID", (message) => new ProviderRequestError(400, message));
+  return requiredString(value, "Nozbe resource ID", providerInputError);
 }
 
 function validateUpdateBody(body: Record<string, unknown>, resource: string): void {

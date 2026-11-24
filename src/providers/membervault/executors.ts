@@ -4,22 +4,22 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, integer, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { assertPublicHttpUrl } from "../../core/request.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineProviderExecutors,
-  defineProviderProxy,
+  providerInputError,
   providerUserAgent,
   ProviderRequestError,
   readProviderTextBody,
-  requireApiKeyCredential,
 } from "../provider-runtime.ts";
 
 const service = "membervault";
-const membervaultDefaultTimeoutMs = 30_000;
 const membervaultMaxResponseBytes = 10 * 1024 * 1024;
 const defaultRootDomain = "mvsite.app";
 const legacyRootDomain = "vipmembervault.com";
@@ -120,7 +120,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: `membervault:${credential.account}`,
         displayName: `MemberVault ${credential.account}`,
       },
-      grantedScopes: [],
       metadata: compactObject({
         account: credential.account,
         apiBaseUrl: credential.apiBaseUrl,
@@ -157,10 +156,10 @@ async function requestMembervaultJson(
       url.searchParams.set(key, String(value));
     }
   }
-  const timeout = createProviderTimeout(context.signal, membervaultDefaultTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const response = await context.fetcher(url, {
-      headers: { accept: "application/json", "user-agent": providerUserAgent },
+      headers: { "accept": "application/json", "user-agent": providerUserAgent },
       signal: timeout.signal,
     });
     const payload = parseMembervaultPayload(
@@ -327,10 +326,6 @@ function readPayloadValue(payload: unknown, ...keys: string[]): unknown {
     if (object[key] !== undefined && object[key] !== null) return object[key];
   }
   return optionalRecord(object.data) ? readPayloadValue(object.data, ...keys) : undefined;
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }
 
 function stringifyOptional(value: unknown): string | undefined {

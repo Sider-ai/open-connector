@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { compactObject, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
 import {
@@ -15,7 +15,6 @@ const bigpictureIpApiBaseUrl = "https://ip.bigpicture.io";
 const bigpictureCompanyFindPath = "/v1/companies/find";
 const bigpictureIpLookupPath = "/v2/companies/ip";
 const bigpictureValidationIp = "204.4.143.118";
-const bigpictureRequestTimeoutMs = 30_000;
 
 type BigpictureRequestPhase = "validate" | "execute";
 type BigpictureActionHandler = ProviderRuntimeHandler<ApiKeyProviderContext>;
@@ -79,7 +78,6 @@ export async function validateBigpictureIoCredential(
       accountId: "bigpicture_io-api-key",
       displayName: "BigPicture.io API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       companyApiBaseUrl: bigpictureCompanyApiBaseUrl,
       ipApiBaseUrl: bigpictureIpApiBaseUrl,
@@ -92,14 +90,14 @@ export async function validateBigpictureIoCredential(
 }
 
 async function requestBigpictureJson(input: {
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   baseUrl: string;
   path: string;
   query: Record<string, string>;
   phase: BigpictureRequestPhase;
   allowAccepted: boolean;
 }): Promise<unknown> {
-  const timeout = createProviderTimeout(input.context.signal, bigpictureRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
 
   let response: Response;
   let payload: unknown;
@@ -107,15 +105,15 @@ async function requestBigpictureJson(input: {
     response = await input.context.fetcher(buildBigpictureUrl(input.baseUrl, input.path, input.query), {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: input.context.apiKey,
+        "accept": "application/json",
+        "authorization": input.context.apiKey,
         "user-agent": providerUserAgent,
       },
       signal: timeout.signal,
     });
     payload = await readBigpicturePayload(response);
   } catch (error) {
-    if (timeout.didTimeout() || isAbortLikeError(error) || isTimeoutLikeError(error)) {
+    if (timeout.didTimeout() || isAbortLikeError(error)) {
       throw new ProviderRequestError(504, "BigPicture.io request timed out");
     }
 
@@ -224,8 +222,4 @@ function readRequiredString(value: unknown, fieldName: string): string {
     throw new ProviderRequestError(400, `${fieldName} is required`);
   }
   return value.trim();
-}
-
-function isTimeoutLikeError(error: unknown): boolean {
-  return error instanceof Error && error.name === "TimeoutError";
 }

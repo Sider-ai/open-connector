@@ -1,20 +1,20 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
   providerUserAgent,
   ProviderRequestError,
   readProviderJsonBody,
+  providerInputError,
+  providerResponseError,
 } from "../provider-runtime.ts";
 
 const service = "serveravatar";
 const serverAvatarApiBaseUrl = "https://api.serveravatar.com";
-const serverAvatarRequestTimeoutMs = 30_000;
 
 type ServerAvatarRequestPhase = "validate" | "execute";
 type QueryValue = string | number | undefined;
@@ -26,7 +26,7 @@ type ServerAvatarActionHandler = (
 
 interface ServerAvatarRequestInput {
   path: string;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   phase: ServerAvatarRequestPhase;
   query?: Record<string, QueryValue>;
 }
@@ -115,7 +115,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: organizationId === undefined ? "api_key" : `organization:${organizationId}`,
         displayName: organizationName ? `ServerAvatar ${organizationName}` : "ServerAvatar API Token",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: serverAvatarApiBaseUrl,
         validationEndpoint: "/organizations",
@@ -127,7 +126,7 @@ export const credentialValidators: CredentialValidators = {
 };
 
 async function requestServerAvatarJson(input: ServerAvatarRequestInput): Promise<Record<string, unknown>> {
-  const timeout = createProviderTimeout(input.context.signal, serverAvatarRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   const url = new URL(input.path, serverAvatarApiBaseUrl);
   appendQuery(url, input.query);
 
@@ -135,8 +134,8 @@ async function requestServerAvatarJson(input: ServerAvatarRequestInput): Promise
     const response = await input.context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${input.context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${input.context.apiKey}`,
         "user-agent": providerUserAgent,
       },
       signal: timeout.signal,
@@ -177,12 +176,12 @@ function mapServerAvatarError(status: number, payload: unknown, phase: ServerAva
     return new ProviderRequestError(401, message);
   }
   if (status === 400 || status === 404 || status === 422) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (status === 429) {
     return new ProviderRequestError(429, message);
   }
-  return new ProviderRequestError(502, message);
+  return providerResponseError(message);
 }
 
 function extractServerAvatarErrorMessage(payload: unknown): string | undefined {

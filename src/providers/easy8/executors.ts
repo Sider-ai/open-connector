@@ -2,13 +2,14 @@ import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } f
 
 import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { assertPublicHttpUrl, isPrivateNetworkAccessAllowed } from "../../core/request.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderFetch,
-  defineProviderExecutors,
-  defineProviderProxy,
+  providerInputError,
   ProviderRequestError,
   providerUserAgent,
-  requireApiKeyCredential,
 } from "../provider-runtime.ts";
 
 const service = "easy8";
@@ -18,23 +19,22 @@ interface Context {
   fetcher: typeof fetch;
   signal?: AbortSignal;
 }
-const inputError = (message: string) => new ProviderRequestError(400, message);
 export function normalizeBaseUrl(value: unknown): string {
-  const text = requiredString(value, "baseUrl", inputError);
+  const text = requiredString(value, "baseUrl", providerInputError);
   let url: URL;
   try {
     url = new URL(text);
   } catch {
-    throw inputError("baseUrl must be a valid http(s) URL");
+    throw providerInputError("baseUrl must be a valid http(s) URL");
   }
   if (!["http:", "https:"].includes(url.protocol) || url.pathname !== "/")
-    throw inputError("baseUrl must be the Easy8 instance root URL without a path");
+    throw providerInputError("baseUrl must be the Easy8 instance root URL without a path");
   assertPublicHttpUrl(url.toString(), {
     fieldName: "baseUrl",
-    createError: inputError,
+    createError: providerInputError,
     allowPrivateNetwork: isPrivateNetworkAccessAllowed(),
   });
-  if (url.username || url.password) throw inputError("baseUrl must not include credentials");
+  if (url.username || url.password) throw providerInputError("baseUrl must not include credentials");
   url.search = "";
   url.hash = "";
   const normalized = url.toString();
@@ -51,7 +51,7 @@ async function request(
   const response = await context.fetcher(url, {
     method: options.method ?? "GET",
     headers: {
-      accept: "application/json",
+      "accept": "application/json",
       "x-redmine-api-key": context.apiKey,
       "user-agent": providerUserAgent,
       ...(options.body === undefined ? {} : { "content-type": "application/json" }),
@@ -145,11 +145,11 @@ function issueBody(input: Record<string, unknown>): Record<string, unknown> {
 }
 function id(input: Record<string, unknown>, key: string): number {
   const value = optionalInteger(input[key]);
-  if (!value || value < 1) throw inputError(`${key} must be a positive integer`);
+  if (!value || value < 1) throw providerInputError(`${key} must be a positive integer`);
   return value;
 }
 function requireUpdate(body: Record<string, unknown>, action: string): void {
-  if (!Object.keys(body).length) throw inputError(`${action} requires a field to update`);
+  if (!Object.keys(body).length) throw providerInputError(`${action} requires a field to update`);
 }
 const handlers = {
   async list_projects(input: Record<string, unknown>, context: Context) {
@@ -242,7 +242,6 @@ export const credentialValidators: CredentialValidators = {
     const host = new URL(baseUrl).host;
     return {
       profile: { accountId: `easy8:${host}`, displayName: `Easy8 ${host}` },
-      grantedScopes: [],
       metadata: { baseUrl, apiBaseUrl: baseUrl, validationEndpoint: "/projects.json" },
     };
   },

@@ -1,19 +1,20 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalNumber, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
   isAbortLikeError,
+  providerInputError,
   ProviderRequestError,
+  providerResponseError,
   providerUserAgent,
 } from "../provider-runtime.ts";
 
 const service = "linkly";
 const linklyApiBaseUrl = "https://api.linklyhq.com";
-const linklyRequestTimeoutMs = 30_000;
 const linklyApiPrefix = "/api/v1";
 const filterKeys = ["domain", "slug", "utm_campaign", "utm_content", "utm_medium", "utm_source", "utm_term"] as const;
 const linkMutationFields = [
@@ -63,7 +64,7 @@ export const linklyActionHandlers: ProviderActionHandlers<"linkly", LinklyAction
     };
   },
   async list_links(input, context) {
-    const workspaceId = requiredString(input.workspace_id, "workspace_id", invalidInputError);
+    const workspaceId = requiredString(input.workspace_id, "workspace_id", providerInputError);
     const query: LinklyQuery = {
       search: optionalString(input.search),
       page: optionalNumber(input.page),
@@ -106,7 +107,7 @@ export const linklyActionHandlers: ProviderActionHandlers<"linkly", LinklyAction
     };
   },
   async create_link(input, context) {
-    const workspaceId = requiredString(input.workspace_id, "workspace_id", invalidInputError);
+    const workspaceId = requiredString(input.workspace_id, "workspace_id", providerInputError);
     const payload = await requestLinklyJson({
       context,
       path: `${linklyApiPrefix}/workspace/${encodeURIComponent(workspaceId)}/links`,
@@ -120,7 +121,7 @@ export const linklyActionHandlers: ProviderActionHandlers<"linkly", LinklyAction
     };
   },
   async update_link(input, context) {
-    const workspaceId = requiredString(input.workspace_id, "workspace_id", invalidInputError);
+    const workspaceId = requiredString(input.workspace_id, "workspace_id", providerInputError);
     const payload = await requestLinklyJson({
       context,
       path: `${linklyApiPrefix}/workspace/${encodeURIComponent(workspaceId)}/links`,
@@ -134,7 +135,7 @@ export const linklyActionHandlers: ProviderActionHandlers<"linkly", LinklyAction
     };
   },
   async delete_link(input, context) {
-    const workspaceId = requiredString(input.workspace_id, "workspace_id", invalidInputError);
+    const workspaceId = requiredString(input.workspace_id, "workspace_id", providerInputError);
     const id = readRequiredNumber(input.id, "id");
     const payload = await requestLinklyJson({
       context,
@@ -151,6 +152,14 @@ export const linklyActionHandlers: ProviderActionHandlers<"linkly", LinklyAction
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, linklyActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: linklyApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const apiKey = input.apiKey.trim();
@@ -166,7 +175,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: firstWorkspace ? String(firstWorkspace.id) : undefined,
         displayName: firstWorkspace?.name || "Linkly API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: linklyApiBaseUrl,
         validationEndpoint: `${linklyApiPrefix}/workspaces`,
@@ -179,7 +187,7 @@ export const credentialValidators: CredentialValidators = {
 };
 
 async function fetchWorkspaces(
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: LinklyPhase,
 ): Promise<Array<{ id: number; name: string }>> {
   const payload = await requestLinklyJson({
@@ -192,14 +200,14 @@ async function fetchWorkspaces(
 }
 
 async function requestLinklyJson(input: {
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   path: string;
   phase: LinklyPhase;
   method?: LinklyMethod;
   query?: LinklyQuery;
   body?: Record<string, unknown>;
 }): Promise<unknown> {
-  const timeout = createProviderTimeout(input.context.signal, linklyRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
 
   try {
     const response = await input.context.fetcher(buildLinklyUrl(input.path, input.query), {
@@ -243,8 +251,8 @@ function buildLinklyUrl(path: string, query: LinklyQuery = {}): URL {
 
 function buildLinklyHeaders(apiKey: string, hasBody: boolean): Record<string, string> {
   return compactObject({
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "content-type": hasBody ? "application/json" : undefined,
     "user-agent": providerUserAgent,
   }) as Record<string, string>;
@@ -362,12 +370,4 @@ function readRequiredNumber(value: unknown, fieldName: string): number {
     throw new ProviderRequestError(502, `${fieldName} must be a number.`, value);
   }
   return numberValue;
-}
-
-function invalidInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
-}
-
-function providerResponseError(message: string): ProviderRequestError {
-  return new ProviderRequestError(502, message);
 }

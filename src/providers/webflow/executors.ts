@@ -1,6 +1,11 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { BearerProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { BearerProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -9,9 +14,10 @@ import {
   optionalRecord,
   optionalString,
   optionalStringArray,
-  requiredString,
 } from "../../core/cast.ts";
-import { defineBearerProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineBearerProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent, requiredInputString } from "../provider-runtime.ts";
 
 const service = "webflow";
 const webflowApiBaseUrl = "https://api.webflow.com/v2";
@@ -57,6 +63,14 @@ const webflowActionHandlers: ProviderActionHandlers<"webflow", WebflowActionHand
 
 export const executors: ProviderExecutors = defineBearerProviderExecutors(service, webflowActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: webflowApiBaseUrl,
+  auth: { type: "bearer" },
+  skipDnsValidation: true,
+  defaultHeaders: { "accept": "application/json", "content-type": "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }): Promise<CredentialValidationResult> {
     return validateWebflowApiKeyCredential(input.apiKey, fetcher, signal);
@@ -82,7 +96,6 @@ async function validateWebflowApiKeyCredential(
       accountId: userId ?? "webflow:credential",
       displayName: (userEmail ?? userName) || "Webflow credential",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: webflowApiBaseUrl,
       validationEndpoint: "/token/authorized_by",
@@ -136,7 +149,7 @@ async function executeGetSite(
   input: Record<string, unknown>,
   context: BearerProviderContext,
 ): Promise<Record<string, unknown>> {
-  const siteId = readRequiredInputString(input.siteId, "siteId");
+  const siteId = requiredInputString(input.siteId, "siteId");
   const payload = await webflowGetJson(
     `/sites/${encodeURIComponent(siteId)}`,
     context.accessToken,
@@ -153,7 +166,7 @@ async function executePublishSite(
   input: Record<string, unknown>,
   context: BearerProviderContext,
 ): Promise<Record<string, unknown>> {
-  const siteId = readRequiredInputString(input.siteId, "siteId");
+  const siteId = requiredInputString(input.siteId, "siteId");
   const body = compactObject({
     customDomains: input.customDomains,
     publishToWebflowSubdomain: input.publishToWebflowSubdomain,
@@ -175,7 +188,7 @@ async function executeListCollections(
   input: Record<string, unknown>,
   context: BearerProviderContext,
 ): Promise<Record<string, unknown>> {
-  const siteId = readRequiredInputString(input.siteId, "siteId");
+  const siteId = requiredInputString(input.siteId, "siteId");
   const payload = await webflowGetJson(
     `/sites/${encodeURIComponent(siteId)}/collections`,
     context.accessToken,
@@ -192,7 +205,7 @@ async function executeGetCollection(
   input: Record<string, unknown>,
   context: BearerProviderContext,
 ): Promise<Record<string, unknown>> {
-  const collectionId = readRequiredInputString(input.collectionId, "collectionId");
+  const collectionId = requiredInputString(input.collectionId, "collectionId");
   const payload = await webflowGetJson(
     `/collections/${encodeURIComponent(collectionId)}`,
     context.accessToken,
@@ -211,7 +224,7 @@ async function executeListCollectionItems(
   input: Record<string, unknown>,
   context: BearerProviderContext,
 ): Promise<Record<string, unknown>> {
-  const collectionId = readRequiredInputString(input.collectionId, "collectionId");
+  const collectionId = requiredInputString(input.collectionId, "collectionId");
   const url = new URL(`/v2/collections/${encodeURIComponent(collectionId)}/items`, webflowApiBaseUrl);
   setOptionalSearchParam(url, "limit", input.limit);
   setOptionalSearchParam(url, "offset", input.offset);
@@ -234,8 +247,8 @@ async function executeGetCollectionItem(
   input: Record<string, unknown>,
   context: BearerProviderContext,
 ): Promise<Record<string, unknown>> {
-  const collectionId = readRequiredInputString(input.collectionId, "collectionId");
-  const itemId = readRequiredInputString(input.itemId, "itemId");
+  const collectionId = requiredInputString(input.collectionId, "collectionId");
+  const itemId = requiredInputString(input.itemId, "itemId");
   const url = new URL(
     `/v2/collections/${encodeURIComponent(collectionId)}/items/${encodeURIComponent(itemId)}`,
     webflowApiBaseUrl,
@@ -253,7 +266,7 @@ async function executeCreateCollectionItem(
   input: Record<string, unknown>,
   context: BearerProviderContext,
 ): Promise<Record<string, unknown>> {
-  const collectionId = readRequiredInputString(input.collectionId, "collectionId");
+  const collectionId = requiredInputString(input.collectionId, "collectionId");
   const live = optionalBoolean(input.live) === true;
   const payload = await webflowPostJson(
     `/collections/${encodeURIComponent(collectionId)}/items${live ? "/live" : ""}`,
@@ -271,8 +284,8 @@ async function executeUpdateCollectionItem(
   input: Record<string, unknown>,
   context: BearerProviderContext,
 ): Promise<Record<string, unknown>> {
-  const collectionId = readRequiredInputString(input.collectionId, "collectionId");
-  const itemId = readRequiredInputString(input.itemId, "itemId");
+  const collectionId = requiredInputString(input.collectionId, "collectionId");
+  const itemId = requiredInputString(input.itemId, "itemId");
   const live = optionalBoolean(input.live) === true;
   const payload = await webflowPatchJson(
     `/collections/${encodeURIComponent(collectionId)}/items/${encodeURIComponent(itemId)}${live ? "/live" : ""}`,
@@ -290,8 +303,8 @@ async function executeDeleteCollectionItem(
   input: Record<string, unknown>,
   context: BearerProviderContext,
 ): Promise<Record<string, unknown>> {
-  const collectionId = readRequiredInputString(input.collectionId, "collectionId");
-  const itemId = readRequiredInputString(input.itemId, "itemId");
+  const collectionId = requiredInputString(input.collectionId, "collectionId");
+  const itemId = requiredInputString(input.itemId, "itemId");
   await webflowFetchJson(
     `/collections/${encodeURIComponent(collectionId)}/items/${encodeURIComponent(itemId)}`,
     context.accessToken,
@@ -310,7 +323,7 @@ async function executePublishCollectionItems(
   input: Record<string, unknown>,
   context: BearerProviderContext,
 ): Promise<Record<string, unknown>> {
-  const collectionId = readRequiredInputString(input.collectionId, "collectionId");
+  const collectionId = requiredInputString(input.collectionId, "collectionId");
   const payload = await webflowPostJson(
     `/collections/${encodeURIComponent(collectionId)}/items/publish`,
     {
@@ -406,8 +419,8 @@ async function webflowFetchJson(
 
 function webflowHeaders(accessToken: string, contentType?: string): Record<string, string> {
   return compactObject({
-    accept: "application/json",
-    authorization: `Bearer ${accessToken}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${accessToken}`,
     "content-type": contentType,
     "user-agent": providerUserAgent,
   }) as Record<string, string>;
@@ -550,10 +563,6 @@ function normalizeCollectionItem(payload: unknown): Record<string, unknown> {
 
 function readRecordId(record: Record<string, unknown>): string {
   return optionalString(record.id) ?? optionalString(record._id) ?? "";
-}
-
-function readRequiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function setOptionalSearchParam(url: URL, name: string, value: unknown): void {

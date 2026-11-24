@@ -9,16 +9,15 @@ import type {
 import type { ActionContext } from "./runtime.ts";
 
 import { optionalString } from "../../core/cast.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
 import {
-  createProviderFetch,
   createProviderProxyUrl,
-  defineProviderExecutors,
   normalizeProviderProxyHeaders,
-  ProviderRequestError,
   readProviderProxyErrorMessage,
   readProviderProxyResponse,
   toProviderProxyError,
-} from "../provider-runtime.ts";
+} from "../provider-proxy.ts";
+import { createProviderFetch, ProviderRequestError } from "../provider-runtime.ts";
 import {
   alpacaActionHandlers,
   alpacaCredentialHeaders,
@@ -32,12 +31,11 @@ const service = "alpaca";
 const paperTradingBaseUrl = "https://paper-api.alpaca.markets";
 const liveTradingBaseUrl = "https://api.alpaca.markets";
 const dataBaseUrl = "https://data.alpaca.markets";
-const alpacaFetch = createProviderFetch({ skipDnsValidation: true });
+const alpacaFetch = createProviderFetch();
 
 export const executors: ProviderExecutors = defineProviderExecutors({
   service,
   handlers: alpacaActionHandlers,
-  skipDnsValidation: true,
   async createContext(context: ExecutionContext, fetcher: typeof fetch) {
     return resolveAlpacaActionContext(context, fetcher);
   },

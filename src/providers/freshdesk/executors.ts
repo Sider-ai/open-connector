@@ -4,22 +4,23 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
 import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
-  defineProviderProxy,
-  defineProviderExecutors,
+  isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
-  requireApiKeyCredential,
+  defaultProviderRequestTimeoutMs,
 } from "../provider-runtime.ts";
 
 const service = "freshdesk";
 const freshdeskValidationPath = "/api/v2/account";
 const defaultFreshdeskPageSize = 30;
-const freshdeskDefaultRequestTimeoutMs = 30_000;
 
 interface FreshdeskActionContext {
   apiKey: string;
@@ -170,7 +171,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: accountId === undefined ? `freshdesk:${domain}` : String(accountId),
         displayName: accountName ?? `Freshdesk ${domain}`,
       },
-      grantedScopes: [],
       metadata: compactObject({
         domain,
         baseUrl,
@@ -218,7 +218,7 @@ function resolveFreshdeskBaseUrl(values: Record<string, string>, metadata: Recor
 }
 
 async function requestFreshdeskJson(input: FreshdeskActionContext & FreshdeskRequestInput): Promise<unknown> {
-  const timeoutSignal = AbortSignal.timeout(freshdeskDefaultRequestTimeoutMs);
+  const timeoutSignal = AbortSignal.timeout(defaultProviderRequestTimeoutMs);
   const signal = input.signal ? AbortSignal.any([input.signal, timeoutSignal]) : timeoutSignal;
 
   let response: Response;
@@ -227,9 +227,9 @@ async function requestFreshdeskJson(input: FreshdeskActionContext & FreshdeskReq
     response = await input.fetcher(buildFreshdeskUrl(input.baseUrl, input.path, input.query), {
       method: "GET",
       headers: {
-        authorization: buildFreshdeskAuthorizationHeader(input.apiKey),
+        "authorization": buildFreshdeskAuthorizationHeader(input.apiKey),
         "user-agent": providerUserAgent,
-        accept: "application/json",
+        "accept": "application/json",
       },
       signal,
     });
@@ -241,7 +241,7 @@ async function requestFreshdeskJson(input: FreshdeskActionContext & FreshdeskReq
     if (timeoutSignal.aborted && !input.signal?.aborted && isAbortLikeError(error)) {
       throw new ProviderRequestError(
         504,
-        `Freshdesk request timed out after ${Math.max(1, Math.ceil(freshdeskDefaultRequestTimeoutMs / 1000))} seconds`,
+        `Freshdesk request timed out after ${Math.max(1, Math.ceil(defaultProviderRequestTimeoutMs / 1000))} seconds`,
       );
     }
     throw new ProviderRequestError(
@@ -370,10 +370,6 @@ function isFreshdeskSubdomain(value: string): boolean {
 
 function buildFreshdeskAuthorizationHeader(apiKey: string): string {
   return `Basic ${Buffer.from(`${apiKey}:X`).toString("base64")}`;
-}
-
-function isAbortLikeError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "name" in error && error.name === "AbortError";
 }
 
 function trimTrailingSlash(value: string): string {

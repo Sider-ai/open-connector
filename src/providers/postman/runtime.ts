@@ -3,7 +3,7 @@ import type { PostmanActionName } from "./actions.ts";
 import { compactObject, optionalScalarString, optionalString, requiredRecord } from "../../core/cast.ts";
 import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
-const postmanApiBaseUrl = "https://api.getpostman.com";
+export const postmanApiBaseUrl = "https://api.getpostman.com";
 const postmanDefaultAccept = "application/json";
 const postmanV10Accept = "application/vnd.api.v10+json";
 
@@ -28,7 +28,6 @@ export interface PostmanCredentialValidationResult {
     accountId: string;
     displayName: string;
   };
-  grantedScopes: string[];
   metadata: Record<string, unknown>;
 }
 
@@ -64,7 +63,6 @@ export async function validatePostmanCredential(
       accountId: id,
       displayName: fullName ?? username ?? email ?? id,
     },
-    grantedScopes: [],
     metadata: compactObject({
       validationEndpoint: "/me",
       userId: id,
@@ -1128,7 +1126,7 @@ async function requestPostmanResponse(
     response = await fetcher(url.toString(), {
       method: input.method,
       headers: {
-        accept: input.headers?.accept ?? postmanDefaultAccept,
+        "accept": input.headers?.accept ?? postmanDefaultAccept,
         "user-agent": providerUserAgent,
         "x-api-key": input.apiKey,
         ...(input.body === undefined ? {} : { "content-type": "application/json" }),

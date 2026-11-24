@@ -1,6 +1,6 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -10,13 +10,18 @@ import {
   optionalString,
   requiredString,
 } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { isAbortLikeError, isAbortSignalError, runProviderRequest } from "../provider-runtime.ts";
+import { providerInputError, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "apify";
+
 const apifyApiBaseUrl = "https://api.apify.com";
 const apifyValidationPath = "/v2/users/me";
 
 type ApifyQueryValue = number | string | undefined;
+
 type ApifyRequestPhase = "validate" | "execute";
 
 type ApifyActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
@@ -41,6 +46,16 @@ export const apifyActionHandlers: ProviderActionHandlers<"apify", ApifyActionHan
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, apifyActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: apifyApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = await requestApifyJson({
@@ -61,7 +76,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: userId,
         displayName: username ?? email ?? "Apify API Token",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: apifyApiBaseUrl,
         validationEndpoint: apifyValidationPath,
@@ -88,7 +102,7 @@ async function getCurrentUser(context: ApiKeyProviderContext): Promise<unknown> 
 }
 
 async function getActor(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
-  const actorId = requiredString(input.actorId, "actorId", invalidInputError);
+  const actorId = requiredString(input.actorId, "actorId", providerInputError);
   const payload = await requestApifyJson({
     apiKey: context.apiKey,
     path: `/v2/acts/${encodeURIComponent(actorId)}`,
@@ -104,7 +118,7 @@ async function getActor(input: Record<string, unknown>, context: ApiKeyProviderC
 }
 
 async function runActor(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
-  const actorId = requiredString(input.actorId, "actorId", invalidInputError);
+  const actorId = requiredString(input.actorId, "actorId", providerInputError);
   const body = readOptionalInputObject(input.input);
   const payload = await requestApifyJson({
     apiKey: context.apiKey,
@@ -128,10 +142,11 @@ async function runActor(input: Record<string, unknown>, context: ApiKeyProviderC
 }
 
 async function getRun(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
-  const runId = requiredString(input.runId, "runId", invalidInputError);
+  const runId = requiredString(input.runId, "runId", providerInputError);
   const payload = await requestApifyJson({
     apiKey: context.apiKey,
     path: `/v2/actor-runs/${encodeURIComponent(runId)}`,
+    timeoutMs: input.waitForFinishSeconds ? 70_000 : undefined,
     query: compactObject({
       waitForFinish: readOptionalInteger(input.waitForFinishSeconds, "waitForFinishSeconds"),
     }),
@@ -147,7 +162,7 @@ async function getRun(input: Record<string, unknown>, context: ApiKeyProviderCon
 }
 
 async function getDatasetItems(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
-  const datasetId = requiredString(input.datasetId, "datasetId", invalidInputError);
+  const datasetId = requiredString(input.datasetId, "datasetId", providerInputError);
   const payload = await requestApifyJson({
     apiKey: context.apiKey,
     path: `/v2/datasets/${encodeURIComponent(datasetId)}/items`,
@@ -182,38 +197,28 @@ async function requestApifyJson(input: {
   signal?: AbortSignal;
   phase: ApifyRequestPhase;
   notFoundAsInvalidInput?: boolean;
+  timeoutMs?: number;
 }): Promise<unknown> {
-  let response: Response;
-  let payload: unknown;
-  try {
+  return runProviderRequest({ label: "Apify", timeoutMs: input.timeoutMs, signal: input.signal }, async (signal) => {
     const headers: Record<string, string> = {
-      accept: "application/json",
-      authorization: `Bearer ${input.apiKey}`,
+      "accept": "application/json",
+      "authorization": `Bearer ${input.apiKey}`,
       "user-agent": providerUserAgent,
     };
     if (input.body) {
       headers["content-type"] = "application/json";
     }
 
-    response = await input.fetcher(buildApifyUrl(input.path, input.query), {
+    const response = await input.fetcher(buildApifyUrl(input.path, input.query), {
       method: input.method ?? "GET",
       headers,
       body: input.body ? JSON.stringify(input.body) : undefined,
-      signal: input.signal,
+      signal,
     });
-    payload = await readApifyPayload(response);
-  } catch (error) {
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Apify request failed: ${error.message}` : "Apify request failed",
-    );
-  }
-
-  if (!response.ok) {
-    throw createApifyError(response, payload, input.phase, input.notFoundAsInvalidInput);
-  }
-
-  return payload;
+    const payload = await readApifyPayload(response, signal);
+    if (!response.ok) throw createApifyError(response, payload, input.phase, input.notFoundAsInvalidInput);
+    return payload;
+  });
 }
 
 function buildApifyUrl(path: string, query: Record<string, ApifyQueryValue> = {}): URL {
@@ -226,8 +231,11 @@ function buildApifyUrl(path: string, query: Record<string, ApifyQueryValue> = {}
   return url;
 }
 
-async function readApifyPayload(response: Response): Promise<unknown> {
-  const text = await response.text().catch(() => "");
+async function readApifyPayload(response: Response, signal: AbortSignal): Promise<unknown> {
+  const text = await response.text().catch((error: unknown) => {
+    if (isAbortLikeError(error) || isAbortSignalError(signal, error)) throw error;
+    return "";
+  });
   if (!text) {
     return null;
   }
@@ -344,8 +352,4 @@ function isJsonCompatibleObject(value: object, stack: WeakSet<object>): boolean 
     return false;
   }
   return Object.values(value).every((item) => isJsonCompatibleValueInner(item, stack));
-}
-
-function invalidInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

@@ -4,8 +4,8 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -15,23 +15,24 @@ import {
   optionalString,
   requiredString,
 } from "../../core/cast.ts";
-import { assertPublicHttpUrl, readBoundedResponseBytes } from "../../core/request.ts";
+import { assertPublicHttpUrl, storeResponseInTransit } from "../../core/request.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
-  defineProviderExecutors,
-  defineProviderProxy,
   providerFetch,
   providerUserAgent,
   ProviderRequestError,
   readProviderErrorTextBody,
   readProviderTextBody,
-  requireApiKeyCredential,
+  requiredInputString,
+  defaultProviderRequestTimeoutMs,
 } from "../provider-runtime.ts";
 
 const service = "files_com";
 const filesComApiHostSuffix = ".files.com";
 const filesComApiPathPrefix = "/api/rest/v1";
 const filesComValidationEndpoint = "/users/me.json";
-const filesComDefaultRequestTimeoutMs = 30_000;
 
 interface FilesComActionContext extends ApiKeyProviderContext {
   subdomain: string;
@@ -59,7 +60,7 @@ export const filesComActionHandlers: ProviderActionHandlers<"files_com", FilesCo
     return requestAndWrapFilesComList(
       {
         context,
-        path: `/folders/${encodeRemotePath(readInputString(input.path, "path"))}.json`,
+        path: `/folders/${encodeRemotePath(requiredInputString(input.path, "path"))}.json`,
         query: compactObject({
           page: page === undefined ? undefined : String(page),
           per_page: perPage === undefined ? undefined : String(perPage),
@@ -72,7 +73,7 @@ export const filesComActionHandlers: ProviderActionHandlers<"files_com", FilesCo
   get_file(input, context) {
     return requestAndWrapFilesComJson({
       context,
-      path: `/files/${encodeRemotePath(readInputString(input.path, "path"))}.json`,
+      path: `/files/${encodeRemotePath(requiredInputString(input.path, "path"))}.json`,
       wrapper: "file",
     });
   },
@@ -82,7 +83,7 @@ export const filesComActionHandlers: ProviderActionHandlers<"files_com", FilesCo
   create_folder(input, context) {
     return requestAndWrapFilesComJson({
       context,
-      path: `/folders/${encodeRemotePath(readInputString(input.path, "path"))}.json`,
+      path: `/folders/${encodeRemotePath(requiredInputString(input.path, "path"))}.json`,
       method: "POST",
       body: compactObject({
         mkdir_parents: input.mkdirParents,
@@ -93,7 +94,7 @@ export const filesComActionHandlers: ProviderActionHandlers<"files_com", FilesCo
   update_metadata(input, context) {
     return requestAndWrapFilesComJson({
       context,
-      path: `/files/${encodeRemotePath(readInputString(input.path, "path"))}.json`,
+      path: `/files/${encodeRemotePath(requiredInputString(input.path, "path"))}.json`,
       method: "PATCH",
       body: {
         custom_metadata: optionalRecord(input.customMetadata) ?? {},
@@ -102,7 +103,7 @@ export const filesComActionHandlers: ProviderActionHandlers<"files_com", FilesCo
     });
   },
   async delete_file(input, context) {
-    const path = readInputString(input.path, "path");
+    const path = requiredInputString(input.path, "path");
     const raw = await requestFilesComJson({
       subdomain: context.subdomain,
       apiKey: context.apiKey,
@@ -158,7 +159,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: subdomain,
         displayName: pickAccountLabel(payload) ?? `${subdomain}.files.com`,
       },
-      grantedScopes: [],
       metadata: {
         subdomain,
         apiBaseUrl: buildFilesComApiBaseUrl(subdomain),
@@ -176,7 +176,7 @@ async function downloadFilesComFile(
     throw new ProviderRequestError(400, "files_com download_file requires local transit file storage");
   }
 
-  const requestedPath = readInputString(input.path, "path");
+  const requestedPath = requiredInputString(input.path, "path");
   const payload = optionalRecord(
     await requestFilesComJson({
       subdomain: context.subdomain,
@@ -208,12 +208,11 @@ async function downloadFilesComFile(
     requiredString(payload.download_uri, "download_uri", (message) => new ProviderRequestError(502, message)),
   );
   const downloadSignal = composeFilesComRequestSignal(context.signal);
-  let response: Response;
-  let bytes: Uint8Array;
+  const transitName = optionalString(input.fileName) ?? remoteName;
   try {
-    response = await providerFetch(downloadUrl, {
+    const response = await providerFetch(downloadUrl, {
       headers: {
-        accept: "*/*",
+        "accept": "*/*",
         "user-agent": providerUserAgent,
       },
       signal: downloadSignal,
@@ -225,11 +224,26 @@ async function downloadFilesComFile(
         text || `files_com download failed with HTTP ${response.status}`,
       );
     }
-    bytes = await readBoundedResponseBytes(response, {
-      maxBytes: context.transitFiles.maxBytes,
+
+    const mimeType =
+      optionalString(response.headers.get("content-type")) ??
+      optionalString(payload.mime_type) ??
+      "application/octet-stream";
+    const file = await storeResponseInTransit(response, context.transitFiles, {
+      name: transitName,
+      mimeType,
       fieldName: "Files.com download",
       createError: (message) => new ProviderRequestError(413, message),
+      signal: downloadSignal,
     });
+
+    return {
+      fileId: remotePath,
+      name: remoteName,
+      mimeType,
+      sizeBytes: file.sizeBytes,
+      file,
+    };
   } catch (error) {
     if (error instanceof ProviderRequestError) {
       throw error;
@@ -239,21 +253,6 @@ async function downloadFilesComFile(
     }
     throw error;
   }
-
-  const mimeType =
-    optionalString(response.headers.get("content-type")) ??
-    optionalString(payload.mime_type) ??
-    "application/octet-stream";
-  const transitName = optionalString(input.fileName) ?? remoteName;
-  const file = await context.transitFiles.create(new File([Uint8Array.from(bytes)], transitName, { type: mimeType }));
-
-  return {
-    fileId: remotePath,
-    name: remoteName,
-    mimeType,
-    sizeBytes: file.sizeBytes,
-    file,
-  };
 }
 
 async function requestAndWrapFilesComJson(input: {
@@ -318,7 +317,7 @@ async function requestFilesComJson(input: FilesComRequestInput): Promise<unknown
     const response = await input.fetcher(url, {
       method: input.method ?? "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
         "user-agent": providerUserAgent,
         "x-filesapi-key": input.apiKey,
@@ -359,10 +358,6 @@ function requireFilesComSubdomain(value: unknown): string {
     throw new ProviderRequestError(400, "subdomain must be a Files.com site subdomain");
   }
   return trimmed;
-}
-
-function readInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function encodeRemotePath(path: string): string {
@@ -457,7 +452,7 @@ function pickAccountLabel(payload: unknown): string | undefined {
 }
 
 function composeFilesComRequestSignal(parent?: AbortSignal): AbortSignal {
-  const timeout = AbortSignal.timeout(filesComDefaultRequestTimeoutMs);
+  const timeout = AbortSignal.timeout(defaultProviderRequestTimeoutMs);
   return parent ? AbortSignal.any([parent, timeout]) : timeout;
 }
 

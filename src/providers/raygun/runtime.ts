@@ -1,6 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { RaygunActionName } from "./actions.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalString } from "../../core/cast.ts";
 import { encodePathSegment } from "../../core/request.ts";
@@ -181,7 +180,6 @@ export async function validateRaygunCredential(
     profile: {
       accountId: "raygun",
       displayName: firstApplicationName ? `Raygun PAT ()` : "Raygun Personal Access Token",
-      grantedScopes: [],
     },
     metadata: {
       apiBaseUrl: raygunApiBaseUrl,
@@ -191,32 +189,14 @@ export async function validateRaygunCredential(
   };
 }
 
-export async function executeRaygunAction(
-  input: { apiKey: string; actionName: RaygunActionName; input: Record<string, unknown> } & {
-    actionName: RaygunActionName;
-    input: Record<string, unknown>;
-  },
-  fetcher: typeof fetch,
-): Promise<unknown> {
-  const handler = raygunActionHandlers[input.actionName];
-  if (!handler) {
-    throw new ProviderRequestError(400, `unknown Raygun action: ${input.actionName}`);
-  }
-
-  return handler(input.input, {
-    apiKey: input.apiKey,
-    fetcher,
-  });
-}
-
 async function raygunRequest(input: RaygunRequestInput, context: RaygunContext) {
   let response: Response;
   let payload: unknown;
 
   try {
     const headers: Record<string, string> = {
-      accept: "application/json",
-      authorization: `Bearer ${context.apiKey}`,
+      "accept": "application/json",
+      "authorization": `Bearer ${context.apiKey}`,
       "user-agent": providerUserAgent,
     };
     if (input.body) {

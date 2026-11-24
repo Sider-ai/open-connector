@@ -1,6 +1,7 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { optionalBoolean, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { assertPublicHttpUrl, isPrivateNetworkAccessAllowed, queryParams } from "../../core/request.ts";
@@ -19,7 +20,7 @@ export interface SnipeItContext extends ApiKeyProviderContext {
 }
 
 interface SnipeItRequestOptions {
-  context: Pick<SnipeItContext, "apiKey" | "apiBaseUrl" | "fetcher" | "signal">;
+  context: SnipeItContext;
   path: string;
   mode: SnipeItRequestMode;
   query?: Record<string, QueryValue>;
@@ -128,7 +129,6 @@ export async function validateSnipeItCredential(
       accountId: `snipe_it:${context.instanceUrl}`,
       displayName: buildAccountLabel(user, context.instanceUrl),
     },
-    grantedScopes: [],
     metadata: {
       instanceUrl: context.instanceUrl,
       apiBaseUrl: context.apiBaseUrl,
@@ -152,8 +152,8 @@ async function requestSnipeItJson(options: SnipeItRequestOptions): Promise<unkno
     response = await options.context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${options.context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${options.context.apiKey}`,
         "user-agent": providerUserAgent,
       },
       signal: options.context.signal,

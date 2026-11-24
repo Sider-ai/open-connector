@@ -1,6 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
 import {
@@ -9,9 +8,9 @@ import {
   optionalNumber,
   optionalRecord,
   optionalString,
-  requiredString,
+  recordOrEmpty,
 } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { providerUserAgent, ProviderRequestError, requiredInputString } from "../provider-runtime.ts";
 
 export const mailosaurApiBaseUrl = "https://mailosaur.com";
 
@@ -76,7 +75,6 @@ export async function validateMailosaurCredential(
       accountId: firstServer?.id ? `mailosaur:server:${firstServer.id}` : "mailosaur-api-key",
       displayName: firstServer?.name ? `Mailosaur: ${firstServer.name}` : "Mailosaur API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: mailosaurApiBaseUrl,
       validationEndpoint: "/api/servers",
@@ -194,7 +192,7 @@ async function deleteAllMessages(input: Record<string, unknown>, context: ApiKey
 
 async function getUsageLimits(context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await mailosaurRequest("/api/usage/limits", { method: "GET" }, context, "execute");
-  return { limits: normalizeObject(payload) };
+  return { limits: recordOrEmpty(payload) };
 }
 
 async function listUsageTransactions(context: ApiKeyProviderContext): Promise<unknown> {
@@ -209,7 +207,7 @@ async function mailosaurRequest(
     query?: Record<string, string | number | undefined>;
     body?: Record<string, unknown>;
   },
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: MailosaurRequestPhase,
 ): Promise<unknown> {
   const url = new URL(path, mailosaurApiBaseUrl);
@@ -220,8 +218,8 @@ async function mailosaurRequest(
   }
 
   const headers: Record<string, string> = {
-    accept: "application/json",
-    authorization: buildMailosaurAuthorization(context.apiKey),
+    "accept": "application/json",
+    "authorization": buildMailosaurAuthorization(context.apiKey),
     "user-agent": providerUserAgent,
   };
   const init: RequestInit = {
@@ -266,23 +264,23 @@ function normalizeArrayPayload(payload: unknown): unknown[] {
   if (Array.isArray(payload)) {
     return payload;
   }
-  const object = normalizeObject(payload);
+  const object = recordOrEmpty(payload);
   return Array.isArray(object.items) ? object.items : [];
 }
 
 function normalizeServer(value: unknown): Record<string, unknown> {
-  const object = normalizeObject(value);
+  const object = recordOrEmpty(value);
   return {
     id: String(object.id ?? ""),
     name: String(object.name ?? ""),
-    users: Array.isArray(object.users) ? object.users.map(normalizeObject) : [],
+    users: Array.isArray(object.users) ? object.users.map(recordOrEmpty) : [],
     messages: normalizeNonNegativeInteger(object.messages),
     raw: object,
   };
 }
 
 function normalizeMessageSummary(value: unknown): Record<string, unknown> {
-  const object = normalizeObject(value);
+  const object = recordOrEmpty(value);
   return {
     id: String(object.id ?? ""),
     received: readNullableString(object.received),
@@ -297,7 +295,7 @@ function normalizeMessageSummary(value: unknown): Record<string, unknown> {
 }
 
 function normalizeMessage(value: unknown): Record<string, unknown> {
-  const object = normalizeObject(value);
+  const object = recordOrEmpty(value);
   return {
     ...normalizeMessageSummary(object),
     html: normalizeBody(object.html),
@@ -313,7 +311,7 @@ function normalizeContacts(value: unknown): Array<Record<string, unknown>> {
     return [];
   }
   return value.map((item) => {
-    const object = normalizeObject(item);
+    const object = recordOrEmpty(item);
     return {
       ...object,
       name: readNullableString(object.name),
@@ -326,7 +324,7 @@ function normalizeBody(value: unknown): Record<string, unknown> | null {
   if (value == null) {
     return null;
   }
-  const object = normalizeObject(value);
+  const object = recordOrEmpty(value);
   return {
     ...object,
     body: readNullableString(object.body),
@@ -335,7 +333,7 @@ function normalizeBody(value: unknown): Record<string, unknown> | null {
 }
 
 function normalizeLink(value: unknown): Record<string, unknown> {
-  const object = normalizeObject(value);
+  const object = recordOrEmpty(value);
   return {
     ...object,
     href: String(object.href ?? ""),
@@ -344,7 +342,7 @@ function normalizeLink(value: unknown): Record<string, unknown> {
 }
 
 function normalizeAttachment(value: unknown): Record<string, unknown> {
-  const object = normalizeObject(value);
+  const object = recordOrEmpty(value);
   return {
     ...object,
     id: String(object.id ?? ""),
@@ -355,7 +353,7 @@ function normalizeAttachment(value: unknown): Record<string, unknown> {
 }
 
 function normalizeUsageTransaction(value: unknown): Record<string, unknown> {
-  const object = normalizeObject(value);
+  const object = recordOrEmpty(value);
   return {
     ...object,
     timestamp: String(object.timestamp ?? ""),
@@ -408,10 +406,6 @@ function buildMailosaurAuthorization(apiKey: string): string {
   return `Basic ${Buffer.from(`api:${apiKey}`).toString("base64")}`;
 }
 
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
-}
-
 function readNullableString(value: unknown): string | null {
   return optionalString(value) ?? null;
 }
@@ -423,8 +417,4 @@ function readNullableNumber(value: unknown): number | null {
 function normalizeNonNegativeInteger(value: unknown): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
-}
-
-function normalizeObject(value: unknown): Record<string, unknown> {
-  return optionalRecord(value) ?? {};
 }

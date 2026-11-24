@@ -4,17 +4,13 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
-import {
-  credentialProviderProxyBaseUrl,
-  defineProviderExecutors,
-  defineProviderProxy,
-  ProviderRequestError,
-  providerUserAgent,
-  requireApiKeyCredential,
-} from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { credentialProviderProxyBaseUrl, defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const activecampaignValidationPath = "/api/3/users/me";
 const service = "activecampaign";
@@ -120,7 +116,6 @@ export async function validateActivecampaignCredential(
       accountId: buildActivecampaignProviderAccountId(apiUrl, userId),
       displayName: buildUserLabel({ email, username, firstName, lastName }) ?? "ActiveCampaign API Token",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiUrl,
       validationEndpoint: buildValidationEndpoint(apiUrl, activecampaignValidationPath),
@@ -267,8 +262,8 @@ async function listLists(input: Record<string, unknown>, context: Activecampaign
     apiUrl: context.apiUrl,
     path: "/api/3/lists",
     query: compactObject({
-      limit: optionalInteger(input.limit),
-      offset: optionalInteger(input.offset),
+      "limit": optionalInteger(input.limit),
+      "offset": optionalInteger(input.offset),
       "filters[name]": optionalString(input.name),
     }),
     fetcher: context.fetcher,
@@ -306,15 +301,15 @@ function buildContactListQuery(input: Record<string, unknown>) {
   const sortDirection = normalizeSortDirection(input.sortDirection);
 
   return compactObject({
-    limit: optionalInteger(input.limit),
-    offset: optionalInteger(input.offset),
-    search: optionalString(input.search),
-    email_like: optionalString(input.emailLike),
-    listid: optionalString(input.listId),
-    tagid: optionalInteger(input.tagId),
-    segmentid: optionalInteger(input.segmentId),
-    id_greater: optionalInteger(input.idGreater),
-    id_less: optionalInteger(input.idLess),
+    "limit": optionalInteger(input.limit),
+    "offset": optionalInteger(input.offset),
+    "search": optionalString(input.search),
+    "email_like": optionalString(input.emailLike),
+    "listid": optionalString(input.listId),
+    "tagid": optionalInteger(input.tagId),
+    "segmentid": optionalInteger(input.segmentId),
+    "id_greater": optionalInteger(input.idGreater),
+    "id_less": optionalInteger(input.idLess),
     "filters[created_after]": optionalString(input.createdAfter),
     "filters[created_before]": optionalString(input.createdBefore),
     "filters[updated_after]": optionalString(input.updatedAfter),
@@ -361,7 +356,7 @@ async function activecampaignFetch(input: ActivecampaignRequestOptions) {
   }
 
   const headers = new Headers({
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     "Api-Token": input.apiKey,
   });

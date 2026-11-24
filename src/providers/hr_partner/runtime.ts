@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { objectArray, optionalRawString, optionalRecord, positiveInteger, requiredString } from "../../core/cast.ts";
 import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
@@ -51,7 +51,6 @@ export async function validateHrPartnerCredential(
   return {
     profile: {
       displayName,
-      grantedScopes: [],
     },
     metadata: {
       apiBaseUrl: hrPartnerApiBaseUrl,
@@ -219,7 +218,7 @@ async function requestHrPartnerJson(options: HrPartnerRequestOptions): Promise<u
     response = await options.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
         "x-api-key": options.apiKey,
       },

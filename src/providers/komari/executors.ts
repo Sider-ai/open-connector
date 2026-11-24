@@ -3,12 +3,21 @@ import type {
   CredentialValidators,
   ExecutionContext,
   ProviderExecutors,
+  ProviderProxyExecutor,
 } from "../../core/types.ts";
 import type { KomariActionContext } from "./runtime.ts";
 
 import { isPrivateNetworkAccessAllowed } from "../../core/request.ts";
-import { createProviderFetch, defineProviderExecutors, requireApiKeyCredential } from "../provider-runtime.ts";
-import { createKomariContext, komariActionHandlers, validateKomariCredential } from "./runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { createProviderFetch } from "../provider-runtime.ts";
+import {
+  createKomariContext,
+  komariActionHandlers,
+  normalizeKomariBaseUrl,
+  validateKomariCredential,
+} from "./runtime.ts";
 
 const service = "komari";
 
@@ -27,6 +36,17 @@ export const executors: ProviderExecutors = defineProviderExecutors<KomariAction
   },
   fallbackMessage: "Komari request failed",
   allowPrivateNetwork: isPrivateNetworkAccessAllowed,
+});
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  async baseUrl(context) {
+    const credential = await requireApiKeyCredential(context, service);
+    return normalizeKomariBaseUrl(credential.values.baseUrl, isPrivateNetworkAccessAllowed());
+  },
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  allowPrivateNetwork: isPrivateNetworkAccessAllowed,
+  defaultHeaders: { accept: "application/json" },
 });
 
 export const credentialValidators: CredentialValidators = {

@@ -1,9 +1,10 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "orcarouter";
 const orcarouterApiBaseUrl = "https://api.orcarouter.ai/v1";
@@ -65,6 +66,13 @@ export const orcarouterActionHandlers: ProviderActionHandlers<"orcarouter", Orca
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, orcarouterActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: orcarouterApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = (await orcarouterRequest(
@@ -86,7 +94,6 @@ export const credentialValidators: CredentialValidators = {
       profile: {
         displayName: "OrcaRouter API Key",
       },
-      grantedScopes: [],
       metadata: {
         validationEndpoint: "/models",
         availableModels: (payload.data ?? [])
@@ -100,7 +107,7 @@ export const credentialValidators: CredentialValidators = {
 async function orcarouterRequest(
   apiKey: string,
   input: OrcarouterRequestInput,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
 ): Promise<unknown> {
   const url = buildOrcarouterUrl(input.path, input.query ?? {});
   let response: Response;
@@ -124,7 +131,7 @@ async function orcarouterRequest(
 
 function buildOrcarouterHeaders(apiKey: string, includeJsonContentType: boolean, anthropicVersion?: string): Headers {
   const headers = new Headers({
-    authorization: `Bearer ${apiKey}`,
+    "authorization": `Bearer ${apiKey}`,
     "user-agent": providerUserAgent,
   });
 

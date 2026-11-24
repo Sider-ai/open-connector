@@ -1,14 +1,21 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
-import { createProviderTimeout, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { optionalBoolean, optionalNumber } from "../../core/cast.ts";
+import {
+  createProviderTimeout,
+  providerUserAgent,
+  ProviderRequestError,
+  requiredResponseRecord,
+  providerInputError,
+  defaultProviderRequestTimeoutMs,
+} from "../provider-runtime.ts";
 
-const clinicalTrialsGovApiBaseUrl = "https://clinicaltrials.gov/api/v2";
+export const clinicalTrialsGovApiBaseUrl = "https://clinicaltrials.gov/api/v2";
 
-const requestTimeoutMs = 30_000;
-const maxResponseBytes = 16 * 1024 * 1024;
+export const maxResponseBytes: number = 16 * 1024 * 1024;
 const maxBatchIdsPerRequest = 100;
 const maxRequestUrlBytes = 7_000;
-const maxRedirects = 3;
+export const maxRedirects = 3;
 const studySummaryFields = [
   "NCTId",
   "BriefTitle",
@@ -131,10 +138,13 @@ async function searchStudies(input: Record<string, unknown>, fetcher: typeof fet
     query.set("pageSize", String(input.pageSize));
   }
 
-  const payload = requireRecord(await requestJson("/studies", query, fetcher), "ClinicalTrials.gov studies response");
+  const payload = requiredResponseRecord(
+    await requestJson("/studies", query, fetcher),
+    "ClinicalTrials.gov studies response",
+  );
   const rawStudies = requireArray(payload.studies, "ClinicalTrials.gov studies response studies");
   const studies = rawStudies.map((study, index) =>
-    normalizeStudy(requireRecord(study, `ClinicalTrials.gov studies response studies[${index}]`)),
+    normalizeStudy(requiredResponseRecord(study, `ClinicalTrials.gov studies response studies[${index}]`)),
   );
 
   return {
@@ -159,7 +169,7 @@ async function getStudy(input: Record<string, unknown>, fetcher: typeof fetch) {
 
   return {
     found: true,
-    study: normalizeStudy(requireRecord(payload, "ClinicalTrials.gov study response")),
+    study: normalizeStudy(requiredResponseRecord(payload, "ClinicalTrials.gov study response")),
   };
 }
 
@@ -214,7 +224,7 @@ async function getStudyEligibility(input: Record<string, unknown>, fetcher: type
   }
 
   const identity = getStudyIdentity(payload);
-  const protocol = requireRecord(payload.protocolSection, "ClinicalTrials.gov protocolSection");
+  const protocol = requiredResponseRecord(payload.protocolSection, "ClinicalTrials.gov protocolSection");
   const rawEligibility = optionalRecord(protocol.eligibilityModule);
   return {
     found: true,
@@ -224,9 +234,9 @@ async function getStudyEligibility(input: Record<string, unknown>, fetcher: type
     eligibility: rawEligibility
       ? {
           criteria: readOptionalString(rawEligibility.eligibilityCriteria) ?? null,
-          healthyVolunteers: readOptionalBoolean(rawEligibility.healthyVolunteers) ?? null,
+          healthyVolunteers: optionalBoolean(rawEligibility.healthyVolunteers) ?? null,
           sex: readOptionalString(rawEligibility.sex) ?? null,
-          genderBased: readOptionalBoolean(rawEligibility.genderBased) ?? null,
+          genderBased: optionalBoolean(rawEligibility.genderBased) ?? null,
           genderDescription: readOptionalString(rawEligibility.genderDescription) ?? null,
           minimumAge: readOptionalString(rawEligibility.minimumAge) ?? null,
           maximumAge: readOptionalString(rawEligibility.maximumAge) ?? null,
@@ -260,7 +270,7 @@ async function getStudyLocations(input: Record<string, unknown>, fetcher: typeof
   }
 
   const identity = getStudyIdentity(payload);
-  const protocol = requireRecord(payload.protocolSection, "ClinicalTrials.gov protocolSection");
+  const protocol = requiredResponseRecord(payload.protocolSection, "ClinicalTrials.gov protocolSection");
   const contactsLocations = optionalRecord(protocol.contactsLocationsModule);
   return {
     found: true,
@@ -281,8 +291,8 @@ async function getStudyLocations(input: Record<string, unknown>, fetcher: typeof
     locations: (readOptionalRecordArray(contactsLocations?.locations, "ClinicalTrials.gov locations") ?? []).map(
       (location) => {
         const rawGeoPoint = optionalRecord(location.geoPoint);
-        const latitude = readOptionalNumber(rawGeoPoint?.lat);
-        const longitude = readOptionalNumber(rawGeoPoint?.lon);
+        const latitude = optionalNumber(rawGeoPoint?.lat);
+        const longitude = optionalNumber(rawGeoPoint?.lon);
         return {
           facility: readOptionalString(location.facility) ?? null,
           status: readOptionalString(location.status) ?? null,
@@ -318,7 +328,7 @@ async function getStudyResults(input: Record<string, unknown>, fetcher: typeof f
     found: true,
     nctId: identity.nctId,
     briefTitle: identity.briefTitle,
-    hasResults: readOptionalBoolean(payload.hasResults) ?? null,
+    hasResults: optionalBoolean(payload.hasResults) ?? null,
     results: optionalRecord(payload.resultsSection) ?? null,
   };
 }
@@ -348,9 +358,9 @@ async function getStudyDocuments(input: Record<string, unknown>, fetcher: typeof
         uploadDate: readOptionalString(document.uploadDate) ?? null,
         filename: readOptionalString(document.filename) ?? null,
         sizeBytes: readOptionalInteger(document.size) ?? null,
-        hasProtocol: readOptionalBoolean(document.hasProtocol) ?? null,
-        hasStatisticalAnalysisPlan: readOptionalBoolean(document.hasSap) ?? null,
-        hasInformedConsentForm: readOptionalBoolean(document.hasIcf) ?? null,
+        hasProtocol: optionalBoolean(document.hasProtocol) ?? null,
+        hasStatisticalAnalysisPlan: optionalBoolean(document.hasSap) ?? null,
+        hasInformedConsentForm: optionalBoolean(document.hasIcf) ?? null,
         raw: document,
       };
     },
@@ -359,7 +369,7 @@ async function getStudyDocuments(input: Record<string, unknown>, fetcher: typeof
     found: true,
     nctId: identity.nctId,
     briefTitle: identity.briefTitle,
-    noStatisticalAnalysisPlan: readOptionalBoolean(documentModule?.noSap) ?? null,
+    noStatisticalAnalysisPlan: optionalBoolean(documentModule?.noSap) ?? null,
     documents,
   };
 }
@@ -408,7 +418,7 @@ async function listEnums(fetcher: typeof fetch) {
 }
 
 async function getRegistrySizeStatistics(fetcher: typeof fetch) {
-  return requireRecord(
+  return requiredResponseRecord(
     await requestJson("/stats/size", new URLSearchParams(), fetcher),
     "ClinicalTrials.gov registry size statistics response",
   );
@@ -436,7 +446,7 @@ async function getListFieldSizeStatistics(input: Record<string, unknown>, fetche
 }
 
 async function getApiVersion(fetcher: typeof fetch) {
-  const payload = requireRecord(
+  const payload = requiredResponseRecord(
     await requestJson("/version", new URLSearchParams(), fetcher),
     "ClinicalTrials.gov version response",
   );
@@ -455,7 +465,7 @@ async function requestStudyView(
   const query = new URLSearchParams({ fields: fields.join("|") });
   setOptionalString(query, "markupFormat", markupFormat);
   const payload = await requestJson(`/studies/${encodeURIComponent(nctId)}`, query, fetcher, true);
-  return payload === null ? null : requireRecord(payload, `ClinicalTrials.gov ${nctId} study response`);
+  return payload === null ? null : requiredResponseRecord(payload, `ClinicalTrials.gov ${nctId} study response`);
 }
 
 async function requestStudyBatches(
@@ -466,7 +476,7 @@ async function requestStudyBatches(
 ) {
   const studies: Record<string, unknown>[] = [];
   const responseBudget: ResponseBudget = { consumedBytes: 0, maxBytes: maxResponseBytes };
-  const deadlineAt = Date.now() + requestTimeoutMs;
+  const deadlineAt = Date.now() + defaultProviderRequestTimeoutMs;
   for (let start = 0; start < nctIds.length; start += maxBatchIdsPerRequest) {
     const remainingTimeMs = deadlineAt - Date.now();
     if (remainingTimeMs <= 0) {
@@ -488,12 +498,12 @@ async function requestStudyBatch(
 ): Promise<Record<string, unknown>[]> {
   const query = new URLSearchParams({
     "filter.ids": nctIds.join("|"),
-    fields: fields.join("|"),
-    pageSize: String(nctIds.length),
+    "fields": fields.join("|"),
+    "pageSize": String(nctIds.length),
   });
   setOptionalString(query, "markupFormat", markupFormat);
 
-  const payload = requireRecord(
+  const payload = requiredResponseRecord(
     await requestJson("/studies", query, fetcher, false, responseBudget, timeoutMs),
     "ClinicalTrials.gov batch studies response",
   );
@@ -506,7 +516,7 @@ async function requestJson(
   fetcher: typeof fetch,
   allowNotFound = false,
   responseBudget?: ResponseBudget,
-  timeoutMs = requestTimeoutMs,
+  timeoutMs = defaultProviderRequestTimeoutMs,
 ) {
   const url = new URL(`${clinicalTrialsGovApiBaseUrl}${path}`);
   url.search = query.toString();
@@ -519,7 +529,7 @@ async function requestJson(
       {
         method: "GET",
         headers: {
-          accept: "application/json",
+          "accept": "application/json",
           "user-agent": providerUserAgent,
         },
         signal: timeout.signal,
@@ -663,7 +673,7 @@ function requestTimeoutError(): ProviderRequestError {
 function mapResponseError(status: number, body: string) {
   const message = body.trim().slice(0, 4_096) || `ClinicalTrials.gov request failed with status ${status}`;
   if (status === 400 || status === 404) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (status === 429) {
     return new ProviderRequestError(429, message);
@@ -672,7 +682,7 @@ function mapResponseError(status: number, body: string) {
 }
 
 function normalizeStudy(raw: Record<string, unknown>) {
-  const protocol = requireRecord(raw.protocolSection, "ClinicalTrials.gov protocolSection");
+  const protocol = requiredResponseRecord(raw.protocolSection, "ClinicalTrials.gov protocolSection");
   const identification = getStudyIdentification(raw);
   const nctId = readRequiredString(identification.nctId, "ClinicalTrials.gov nctId");
   const status = optionalRecord(protocol.statusModule);
@@ -707,12 +717,12 @@ function normalizeStudy(raw: Record<string, unknown>) {
 }
 
 function getStudyIdentification(raw: Record<string, unknown>) {
-  const protocol = requireRecord(raw.protocolSection, "ClinicalTrials.gov protocolSection");
-  return requireRecord(protocol.identificationModule, "ClinicalTrials.gov identificationModule");
+  const protocol = requiredResponseRecord(raw.protocolSection, "ClinicalTrials.gov protocolSection");
+  return requiredResponseRecord(protocol.identificationModule, "ClinicalTrials.gov identificationModule");
 }
 
 function getStudyIdentity(raw: Record<string, unknown>) {
-  const protocol = requireRecord(raw.protocolSection, "ClinicalTrials.gov protocolSection");
+  const protocol = requiredResponseRecord(raw.protocolSection, "ClinicalTrials.gov protocolSection");
   const identification = getStudyIdentification(raw);
   const status = optionalRecord(protocol.statusModule);
   return {
@@ -831,14 +841,6 @@ function setOptionalArray(query: URLSearchParams, key: string, value: unknown, l
   }
 }
 
-function requireRecord(value: unknown, label: string): Record<string, unknown> {
-  const resolved = optionalRecord(value);
-  if (!resolved) {
-    throw new ProviderRequestError(502, `${label} must be an object`);
-  }
-  return resolved;
-}
-
 function optionalRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -853,7 +855,7 @@ function requireArray(value: unknown, label: string): unknown[] {
 }
 
 function requireRecordArray(value: unknown, label: string) {
-  return requireArray(value, label).map((item, index) => requireRecord(item, `${label}[${index}]`));
+  return requireArray(value, label).map((item, index) => requiredResponseRecord(item, `${label}[${index}]`));
 }
 
 function readOptionalRecordArray(value: unknown, label: string) {
@@ -897,10 +899,6 @@ function readRequiredBoolean(value: unknown, label: string) {
   return value;
 }
 
-function readOptionalBoolean(value: unknown) {
-  return typeof value === "boolean" ? value : undefined;
-}
-
 function readNumber(value: unknown, label: string) {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new ProviderRequestError(502, `${label} must be a finite number`);
@@ -931,10 +929,6 @@ function formatDecimalNumber(value: number) {
     decimal = `${digits.slice(0, decimalIndex)}.${digits.slice(decimalIndex)}`;
   }
   return negative ? `-${decimal}` : decimal;
-}
-
-function readOptionalNumber(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function readOptionalInteger(value: unknown) {

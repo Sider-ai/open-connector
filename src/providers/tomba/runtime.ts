@@ -1,16 +1,10 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { compactObject, optionalIntegerLike, optionalRecord, optionalString } from "../../core/cast.ts";
-import {
-  createProviderTimeout,
-  isAbortLikeError,
-  providerUserAgent,
-  ProviderRequestError,
-} from "../provider-runtime.ts";
+import { providerUserAgent, ProviderRequestError, runProviderRequest } from "../provider-runtime.ts";
 
 export const tombaApiBaseUrl: string = "https://api.tomba.io/v1";
-const tombaDefaultRequestTimeoutMs = 30_000;
 
 type TombaMode = "validate" | "execute";
 
@@ -116,7 +110,6 @@ export async function validateTombaCredential(
   signal?: AbortSignal,
 ): Promise<{
   profile: { accountId: string; displayName: string };
-  grantedScopes: string[];
   metadata: Record<string, unknown>;
 }> {
   const resolved = readTombaCredential(credential);
@@ -130,7 +123,6 @@ export async function validateTombaCredential(
       accountId: account.email ?? String(account.userId ?? "tomba_api_key"),
       displayName: account.email ?? "Tomba API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       validationEndpoint: "/me",
       apiBaseUrl: tombaApiBaseUrl,
@@ -152,13 +144,12 @@ async function requestTombaJson(
   input: TombaRequestInput,
   context: TombaActionContext,
 ): Promise<Record<string, unknown>> {
-  const timeout = createProviderTimeout(context.signal, tombaDefaultRequestTimeoutMs);
-  try {
+  return runProviderRequest({ signal: context.signal, label: "Tomba" }, async (signal) => {
     const response = await context.fetcher(buildTombaUrl(input), {
       method: input.method,
       headers: buildTombaHeaders(context.credential, Boolean(input.body)),
       body: input.body ? JSON.stringify(input.body) : undefined,
-      signal: timeout.signal,
+      signal,
     });
     const payload = await readTombaPayload(response);
     if (!response.ok) {
@@ -169,18 +160,7 @@ async function requestTombaJson(
       throw new ProviderRequestError(502, "Tomba returned an invalid payload");
     }
     return payloadObject;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) throw error;
-    if (timeout.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "Tomba request timed out");
-    }
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Tomba request failed: ${error.message}` : "Tomba request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+  });
 }
 
 function buildTombaUrl(input: TombaRequestInput): URL {
@@ -202,7 +182,7 @@ function appendQueryValue(url: URL, key: string, value: unknown): void {
 
 function buildTombaHeaders(credential: TombaCredential, hasBody: boolean): Record<string, string> {
   return {
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     "x-tomba-key": credential.apiKey,
     "x-tomba-secret": credential.apiSecret,

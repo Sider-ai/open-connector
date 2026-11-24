@@ -1,19 +1,25 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
   isAbortLikeError,
   ProviderRequestError,
   providerUserAgent,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 const service = "satismeter";
 const satismeterApiBaseUrl = "https://app.satismeter.com/api/v3";
-const satismeterDefaultRequestTimeoutMs = 30_000;
 const satismeterValidationProbeProjectId = "000000000000000000000000";
 const satismeterValidationPath = `/projects/${satismeterValidationProbeProjectId}`;
 
@@ -43,6 +49,16 @@ export const satismeterActionHandlers: ProviderActionHandlers<"satismeter", Sati
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, satismeterActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: satismeterApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }): Promise<CredentialValidationResult> {
     const apiKey = requiredString(input.apiKey, "apiKey", (message) => new ProviderRequestError(401, message));
@@ -61,7 +77,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "satismeter-api-key",
         displayName: "SatisMeter API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: satismeterApiBaseUrl,
         validationEndpoint: satismeterValidationPath,
@@ -80,7 +95,7 @@ async function getProject(
     apiKey: context.apiKey,
     fetcher: context.fetcher,
     signal: context.signal,
-    path: `/projects/${encodeURIComponent(requireInputString(input.projectId, "projectId"))}`,
+    path: `/projects/${encodeURIComponent(requiredInputString(input.projectId, "projectId"))}`,
     mode: "execute",
   });
   return { project: requireResponseObject(body.data, "data") };
@@ -94,7 +109,7 @@ async function listSurveys(
     apiKey: context.apiKey,
     fetcher: context.fetcher,
     signal: context.signal,
-    path: `/projects/${encodeURIComponent(requireInputString(input.projectId, "projectId"))}/campaigns`,
+    path: `/projects/${encodeURIComponent(requiredInputString(input.projectId, "projectId"))}/campaigns`,
     mode: "execute",
   });
   return { surveys: requireResponseArray(body.data, "data") };
@@ -104,8 +119,8 @@ async function getSurvey(
   input: Record<string, unknown>,
   context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
-  const projectId = requireInputString(input.projectId, "projectId");
-  const campaignId = requireInputString(input.campaignId, "campaignId");
+  const projectId = requiredInputString(input.projectId, "projectId");
+  const campaignId = requiredInputString(input.campaignId, "campaignId");
   const body = await requestSatismeterObject({
     apiKey: context.apiKey,
     fetcher: context.fetcher,
@@ -124,7 +139,7 @@ async function listProjectResponses(
     apiKey: context.apiKey,
     fetcher: context.fetcher,
     signal: context.signal,
-    path: `/projects/${encodeURIComponent(requireInputString(input.projectId, "projectId"))}/responses`,
+    path: `/projects/${encodeURIComponent(requiredInputString(input.projectId, "projectId"))}/responses`,
     query: buildQueryParams({
       startDate: optionalString(input.startDate),
       endDate: optionalString(input.endDate),
@@ -140,8 +155,8 @@ async function listSurveyResponses(
   input: Record<string, unknown>,
   context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
-  const projectId = requireInputString(input.projectId, "projectId");
-  const campaignId = requireInputString(input.campaignId, "campaignId");
+  const projectId = requiredInputString(input.projectId, "projectId");
+  const campaignId = requiredInputString(input.campaignId, "campaignId");
   const body = await requestSatismeterObject({
     apiKey: context.apiKey,
     fetcher: context.fetcher,
@@ -162,8 +177,8 @@ async function getSurveyStatistics(
   input: Record<string, unknown>,
   context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
-  const projectId = requireInputString(input.projectId, "projectId");
-  const campaignId = requireInputString(input.campaignId, "campaignId");
+  const projectId = requiredInputString(input.projectId, "projectId");
+  const campaignId = requiredInputString(input.campaignId, "campaignId");
   const body = await requestSatismeterObject({
     apiKey: context.apiKey,
     fetcher: context.fetcher,
@@ -213,7 +228,7 @@ async function requestSatismeterResponse(input: {
   query?: URLSearchParams;
   mode: SatismeterMode;
 }): Promise<{ httpResponse: Response; payload: unknown }> {
-  const timeout = createProviderTimeout(input.signal, satismeterDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   try {
     const httpResponse = await satismeterFetch({
       apiKey: input.apiKey,
@@ -246,8 +261,8 @@ async function satismeterFetch(input: {
   return input.fetcher(url, {
     method: "GET",
     headers: {
-      accept: "application/json",
-      authorization: `Bearer ${input.apiKey}`,
+      "accept": "application/json",
+      "authorization": `Bearer ${input.apiKey}`,
       "user-agent": providerUserAgent,
     },
     signal: input.signal,
@@ -286,10 +301,6 @@ function buildQueryParams(input: Record<string, string | number | undefined>): U
     if (value !== undefined) query.set(key, String(value));
   }
   return query.size > 0 ? query : undefined;
-}
-
-function requireInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function readOptionalPageSize(value: unknown): number | undefined {

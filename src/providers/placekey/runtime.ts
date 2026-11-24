@@ -1,6 +1,5 @@
 import type { CredentialValidationResult, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -11,9 +10,10 @@ import {
   requiredString,
 } from "../../core/cast.ts";
 import { compactJson } from "../../core/request.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
-const placekeyApiBaseUrl = "https://api.placekey.io";
+export const placekeyApiBaseUrl: string = "https://api.placekey.io";
 const placekeyLookupPath = "/v1/placekey";
 const placekeyBulkLookupPath = "/v1/placekeys";
 const validationQuery = { latitude: 37.7371, longitude: -122.44283 };
@@ -92,7 +92,6 @@ export async function validatePlacekeyCredential(
     profile: {
       accountId: "placekey-api-key",
       displayName: "Placekey API key",
-      grantedScopes: [],
     },
     metadata: {
       apiBaseUrl: placekeyApiBaseUrl,
@@ -103,7 +102,7 @@ export async function validatePlacekeyCredential(
 }
 
 async function requestPlacekey(
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   path: string,
   body: Record<string, unknown>,
   phase: "validate" | "execute" = "execute",
@@ -114,8 +113,8 @@ async function requestPlacekey(
     response = await context.fetcher(url, {
       method: "POST",
       headers: {
-        accept: "application/json",
-        apikey: context.apiKey,
+        "accept": "application/json",
+        "apikey": context.apiKey,
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },

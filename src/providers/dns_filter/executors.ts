@@ -1,6 +1,6 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   optionalBoolean,
@@ -11,9 +11,10 @@ import {
   requiredString,
 } from "../../core/cast.ts";
 import { encodePathSegment } from "../../core/request.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
@@ -21,7 +22,6 @@ import {
 
 const service = "dns_filter";
 const dnsFilterApiBaseUrl = "https://api.dnsfilter.com";
-const dnsFilterRequestTimeoutMs = 30_000;
 
 type DnsFilterRequestPhase = "validate" | "execute";
 type DnsFilterActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
@@ -65,6 +65,16 @@ export const dnsFilterActionHandlers: ProviderActionHandlers<"dns_filter", DnsFi
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, dnsFilterActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: dnsFilterApiBaseUrl,
+  auth: { type: "api_key_header", name: "Authorization" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = await requestDnsFilterJson({
@@ -82,7 +92,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: optionalString(user.id) ?? "dns_filter:api-key",
         displayName: optionalString(attributes?.email) ?? optionalString(attributes?.name) ?? "DNSFilter API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: dnsFilterApiBaseUrl,
         validationEndpoint: "/v1/current_user",
@@ -221,7 +230,7 @@ async function dnsFilterFetch(input: {
     url.search = input.query.toString();
   }
 
-  const timeout = createProviderTimeout(input.signal, dnsFilterRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   try {
     return await input.fetcher(url, {
       method: "GET",
@@ -243,8 +252,8 @@ async function dnsFilterFetch(input: {
 
 function buildDnsFilterHeaders(apiKey: string): Record<string, string> {
   return {
-    Authorization: apiKey,
-    Accept: "application/json",
+    "Authorization": apiKey,
+    "Accept": "application/json",
     "User-Agent": providerUserAgent,
   };
 }

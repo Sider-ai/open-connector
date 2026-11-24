@@ -1,13 +1,10 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ApiKeyProviderContext, ProviderActionHandlers, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ApiKeyProviderContext, ProviderActionHandlers, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
-  providerUserAgent,
-  ProviderRequestError,
-} from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "printify";
 const baseUrl = "https://api.printify.com/v1/";
@@ -16,7 +13,11 @@ async function request(path: string, query: Record<string, unknown>, context: Ap
   const url = new URL(path, baseUrl);
   for (const [key, value] of Object.entries(query)) if (value !== undefined) url.searchParams.set(key, String(value));
   const response = await context.fetcher(url, {
-    headers: { accept: "application/json", authorization: `Bearer ${context.apiKey}`, "user-agent": providerUserAgent },
+    headers: {
+      "accept": "application/json",
+      "authorization": `Bearer ${context.apiKey}`,
+      "user-agent": providerUserAgent,
+    },
     signal: context.signal,
   });
   const text = await response.text();
@@ -126,7 +127,6 @@ export const credentialValidators: CredentialValidators = {
     const first = optionalRecord(shops[0]);
     return {
       profile: { displayName: optionalString(first?.title)?.trim() || "Printify Merchant" },
-      grantedScopes: [],
       metadata: { apiBaseUrl: baseUrl, shopCount: shops.length },
     };
   },

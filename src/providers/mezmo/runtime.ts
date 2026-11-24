@@ -1,21 +1,19 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
-import { optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import {
-  createProviderTimeout,
-  isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
+  requiredInputString,
+  runProviderRequest,
 } from "../provider-runtime.ts";
 
 export const mezmoApiBaseUrl = "https://api.mezmo.com";
-const mezmoDefaultTimeoutMs = 30_000;
 
 type MezmoPhase = "validate" | "execute";
-type MezmoActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type MezmoActionHandler = (input: Record<string, unknown>, context: MezmoActionContext) => Promise<unknown>;
+type MezmoActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 const usageListPaths: Record<"list_app_usages" | "list_host_usages" | "list_tag_usages", string> = {
   list_app_usages: "/v1/usage/apps",
@@ -76,7 +74,6 @@ export async function validateMezmoCredential(
       accountId: "mezmo",
       displayName: "Mezmo Access Token",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: mezmoApiBaseUrl,
       validationEndpoint: "/v1/config/ingestion/status",
@@ -88,7 +85,7 @@ export async function validateMezmoCredential(
 async function requestDimensionUsage(
   actionName: keyof typeof usageListPaths,
   input: Record<string, unknown>,
-  context: MezmoActionContext,
+  context: ApiKeyProviderContext,
 ): Promise<Array<Record<string, unknown>>> {
   const payload = await requestMezmoJson({
     path: usageListPaths[actionName],
@@ -105,7 +102,7 @@ async function requestDimensionUsage(
 }
 
 async function requestMezmoIngestionStatus(
-  context: MezmoActionContext,
+  context: ApiKeyProviderContext,
   phase: MezmoPhase,
 ): Promise<{ isIngesting: boolean }> {
   const payload = await requestMezmoJson({
@@ -127,20 +124,18 @@ async function requestMezmoIngestionStatus(
 async function requestMezmoJson(input: {
   path: string;
   params: Record<string, string | undefined>;
-  context: MezmoActionContext;
+  context: ApiKeyProviderContext;
   phase: MezmoPhase;
 }): Promise<unknown> {
-  const timeout = createProviderTimeout(input.context.signal, mezmoDefaultTimeoutMs);
-
-  try {
+  return runProviderRequest({ signal: input.context.signal, label: "Mezmo" }, async (signal) => {
     const response = await input.context.fetcher(buildMezmoUrl(input.path, input.params), {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Token ${input.context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Token ${input.context.apiKey}`,
         "user-agent": providerUserAgent,
       },
-      signal: timeout.signal,
+      signal,
     });
     const payload = await readMezmoPayload(response);
 
@@ -149,21 +144,7 @@ async function requestMezmoJson(input: {
     }
 
     return payload;
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-    if (timeout.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "Mezmo request timed out");
-    }
-
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Mezmo request failed: ${error.message}` : "Mezmo request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+  });
 }
 
 function buildMezmoUrl(path: string, params: Record<string, string | undefined>): URL {
@@ -271,8 +252,4 @@ function readCandidateUsageList(record: Record<string, unknown> | undefined): un
 function readOptionalIntegerString(value: unknown): string | undefined {
   const integer = optionalInteger(value);
   return integer === undefined ? undefined : String(integer);
-}
-
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }

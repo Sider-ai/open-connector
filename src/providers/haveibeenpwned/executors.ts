@@ -1,13 +1,28 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
-import { compactObject, optionalBoolean, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import {
+  compactObject,
+  optionalBoolean,
+  optionalRecord,
+  optionalString,
+  rawStringOrNull,
+  requiredString,
+} from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import {
+  isAbortLikeError,
+  providerInputError,
+  providerUserAgent,
+  ProviderRequestError,
+  requiredResponseRecord,
+  defaultProviderRequestTimeoutMs,
+} from "../provider-runtime.ts";
 
 const service = "haveibeenpwned";
 const haveibeenpwnedApiBaseUrl = "https://haveibeenpwned.com/api/v3";
-const haveibeenpwnedDefaultRequestTimeoutMs = 30_000;
 
 type HaveIBeenPwnedRequestPhase = "validate" | "execute";
 type HaveIBeenPwnedActionContext = ApiKeyProviderContext;
@@ -56,6 +71,16 @@ export const haveibeenpwnedActionHandlers: ProviderActionHandlers<"haveibeenpwne
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, haveibeenpwnedActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: haveibeenpwnedApiBaseUrl,
+  auth: { type: "api_key_header", name: "hibp-api-key" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const subscription = normalizeSubscription(
@@ -72,7 +97,6 @@ export const credentialValidators: CredentialValidators = {
       profile: {
         displayName: subscription.SubscriptionName,
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: haveibeenpwnedApiBaseUrl,
         validationEndpoint: "/subscription/status",
@@ -222,14 +246,14 @@ async function requestHaveIBeenPwnedJson(input: {
   signal?: AbortSignal;
   query?: Record<string, string | undefined>;
 }): Promise<unknown> {
-  const timeoutSignal = AbortSignal.timeout(haveibeenpwnedDefaultRequestTimeoutMs);
+  const timeoutSignal = AbortSignal.timeout(defaultProviderRequestTimeoutMs);
   const signal = input.signal ? AbortSignal.any([input.signal, timeoutSignal]) : timeoutSignal;
 
   try {
     const response = await input.fetcher(buildHaveIBeenPwnedUrl(input.path, input.query ?? {}), {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "hibp-api-key": input.apiKey,
         "user-agent": providerUserAgent,
       },
@@ -336,7 +360,7 @@ function normalizeBreachArray(value: unknown, label: string): Array<Record<strin
 }
 
 function normalizeBreach(value: unknown, label: string): Record<string, unknown> {
-  const record = requireObject(value, label);
+  const record = requiredResponseRecord(value, label);
 
   return {
     Name: requireString(record.Name, `${label}.Name`),
@@ -357,7 +381,7 @@ function normalizeBreach(value: unknown, label: string): Record<string, unknown>
     IsSubscriptionFree: requireBoolean(record.IsSubscriptionFree, `${label}.IsSubscriptionFree`),
     IsStealerLog: requireBoolean(record.IsStealerLog, `${label}.IsStealerLog`),
     LogoPath: requireString(record.LogoPath, `${label}.LogoPath`),
-    Attribution: nullableString(record.Attribution),
+    Attribution: rawStringOrNull(record.Attribution),
   };
 }
 
@@ -370,19 +394,19 @@ function normalizePasteArray(value: unknown, label: string): Array<Record<string
 }
 
 function normalizePaste(value: unknown, label: string): Record<string, unknown> {
-  const record = requireObject(value, label);
+  const record = requiredResponseRecord(value, label);
 
   return {
     Source: requireString(record.Source, `${label}.Source`),
     Id: requireString(record.Id, `${label}.Id`),
-    Title: nullableString(record.Title),
-    Date: nullableString(record.Date),
+    Title: rawStringOrNull(record.Title),
+    Date: rawStringOrNull(record.Date),
     EmailCount: requireInteger(record.EmailCount, `${label}.EmailCount`),
   };
 }
 
 function normalizeSubscription(value: unknown): HaveIBeenPwnedSubscription {
-  const record = requireObject(value, "HIBP /subscription/status response");
+  const record = requiredResponseRecord(value, "HIBP /subscription/status response");
 
   return {
     SubscriptionName: requireString(record.SubscriptionName, "subscription.SubscriptionName"),
@@ -406,14 +430,6 @@ function normalizeSubscription(value: unknown): HaveIBeenPwnedSubscription {
     IncludesCustomerDomains: requireBoolean(record.IncludesCustomerDomains, "subscription.IncludesCustomerDomains"),
     IncludesKAnon: requireBoolean(record.IncludesKAnon, "subscription.IncludesKAnon"),
   };
-}
-
-function requireObject(value: unknown, label: string): Record<string, unknown> {
-  const record = optionalRecord(value);
-  if (!record) {
-    throw new ProviderRequestError(502, `${label} must be an object`);
-  }
-  return record;
 }
 
 function requireString(value: unknown, label: string): string {
@@ -446,24 +462,7 @@ function requireStringArray(value: unknown, label: string): string[] {
   return value.map((item, index) => requireString(item, `${label}[${index}]`));
 }
 
-function nullableString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
-}
-
 function stringifyOptionalBoolean(value: unknown): string | undefined {
   const parsed = optionalBoolean(value);
   return parsed === undefined ? undefined : String(parsed);
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
-}
-
-function isAbortLikeError(error: unknown): boolean {
-  return (
-    !!error &&
-    typeof error === "object" &&
-    "name" in error &&
-    String((error as { name?: unknown }).name) === "AbortError"
-  );
 }

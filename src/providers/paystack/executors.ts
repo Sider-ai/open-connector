@@ -1,11 +1,22 @@
-import type { CredentialValidators } from "../../core/types.ts";
+import type { CredentialValidators, ProviderProxyExecutor } from "../../core/types.ts";
 
-import { executors, validatePaystackCredential } from "./runtime.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { executors, paystackApiBaseUrl, validatePaystackCredential } from "./runtime.ts";
 
 export { executors };
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service: "paystack",
+  baseUrl: paystackApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
-  apiKey(input, { fetcher }) {
-    return validatePaystackCredential({ apiKey: input.apiKey, ...input.values }, fetcher);
+  apiKey(input, { fetcher, signal }) {
+    return validatePaystackCredential({ apiKey: input.apiKey, ...input.values }, fetcher, signal);
   },
 };

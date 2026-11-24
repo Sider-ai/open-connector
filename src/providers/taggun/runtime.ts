@@ -1,11 +1,11 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { optionalBoolean, optionalNumber, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { assertPublicHttpUrl, compactJson } from "../../core/request.ts";
-import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { providerInputError, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
-const taggunApiBaseUrl = "https://api.taggun.io";
+export const taggunApiBaseUrl = "https://api.taggun.io";
 const simpleUrlPath = "/api/receipt/v1/simple/url";
 const verboseUrlPath = "/api/receipt/v1/verbose/url";
 const campaignSettingsListPath = "/api/validation/v1/campaign/settings/list";
@@ -49,7 +49,6 @@ export const taggunActionHandlers: ProviderActionHandlers<"taggun", TaggunAction
 
 export async function validateTaggunCredential(): Promise<{
   profile: { accountId: string; displayName: string };
-  grantedScopes: string[];
   metadata: Record<string, unknown>;
 }> {
   return {
@@ -57,7 +56,6 @@ export async function validateTaggunCredential(): Promise<{
       accountId: "taggun",
       displayName: "Taggun API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: taggunApiBaseUrl,
       validationMode: "format_only",
@@ -132,8 +130,8 @@ async function taggunRequestJson(
 
 function taggunHeaders(apiKey: string, extraHeaders: Record<string, string>): Record<string, string> {
   return {
-    accept: "application/json",
-    apikey: apiKey,
+    "accept": "application/json",
+    "apikey": apiKey,
     "user-agent": providerUserAgent,
     ...extraHeaders,
   };
@@ -310,8 +308,4 @@ function readStringArray(value: unknown): string[] {
     return [];
   }
   return value.filter((item): item is string => typeof item === "string");
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

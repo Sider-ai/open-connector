@@ -1,12 +1,13 @@
 import type { CredentialValidationResult, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
-import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { booleanString, compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { providerUserAgent, ProviderRequestError, requiredInputString } from "../provider-runtime.ts";
 
 const service = "postgrid_verify";
-const postgridVerifyApiBaseUrl = "https://api.postgrid.com/v1/addver";
+export const postgridVerifyApiBaseUrl = "https://api.postgrid.com/v1/addver";
 const postgridVerifyValidationEndpoint = "/zip_codes";
 
 type PostgridVerifyPhase = "validate" | "execute";
@@ -17,9 +18,9 @@ export const postgridVerifyActionHandlers: ProviderActionHandlers<"postgrid_veri
     return requestPostgridVerifyJson({
       path: "/verifications",
       query: {
-        includeDetails: optionalBooleanString(input.includeDetails),
-        geocode: optionalBooleanString(input.geocode),
-        properCase: optionalBooleanString(input.properCase),
+        includeDetails: booleanString(input.includeDetails),
+        geocode: booleanString(input.geocode),
+        properCase: booleanString(input.properCase),
       },
       body: compactObject({
         address: optionalString(input.address),
@@ -38,7 +39,7 @@ export const postgridVerifyActionHandlers: ProviderActionHandlers<"postgrid_veri
     return requestPostgridVerifyJson({
       path: "/completions",
       body: compactObject({
-        partialStreet: requireInputString(input.partialStreet, "partialStreet"),
+        partialStreet: requiredInputString(input.partialStreet, "partialStreet"),
         index: optionalString(input.index),
         pcFilter: optionalString(input.pcFilter),
         cityFilter: optionalString(input.cityFilter),
@@ -53,7 +54,7 @@ export const postgridVerifyActionHandlers: ProviderActionHandlers<"postgrid_veri
     return requestPostgridVerifyJson({
       path: "/parses",
       body: {
-        address: requireInputString(input.address, "address"),
+        address: requiredInputString(input.address, "address"),
       },
       context,
       phase: "execute",
@@ -63,7 +64,7 @@ export const postgridVerifyActionHandlers: ProviderActionHandlers<"postgrid_veri
     return requestPostgridVerifyJson({
       path: postgridVerifyValidationEndpoint,
       body: {
-        postalOrZip: requireInputString(input.postalOrZip, "postalOrZip"),
+        postalOrZip: requiredInputString(input.postalOrZip, "postalOrZip"),
       },
       context,
       phase: "execute",
@@ -79,7 +80,7 @@ export async function validatePostgridVerifyCredential(
   signal?: AbortSignal,
 ): Promise<CredentialValidationResult> {
   const context: ApiKeyProviderContext = {
-    apiKey: requireInputString(input.apiKey, "apiKey"),
+    apiKey: requiredInputString(input.apiKey, "apiKey"),
     fetcher,
     signal,
   };
@@ -96,7 +97,6 @@ export async function validatePostgridVerifyCredential(
     profile: {
       accountId: "postgrid-verify-api-key",
       displayName: "PostGrid Verify API Key",
-      grantedScopes: [],
     },
     metadata: compactObject({
       apiBaseUrl: postgridVerifyApiBaseUrl,
@@ -121,7 +121,7 @@ async function requestPostgridVerifyJson(input: PostgridVerifyRequest): Promise<
     response = await input.context.fetcher(buildPostgridVerifyUrl(input.path, input.query ?? {}), {
       method: "POST",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
         "user-agent": providerUserAgent,
         "x-api-key": input.context.apiKey,
@@ -191,12 +191,4 @@ function extractPostgridVerifyErrorMessage(payload: unknown): string | undefined
   }
 
   return optionalString(record.message) ?? optionalString(record.error) ?? optionalString(record.status);
-}
-
-function requireInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
-}
-
-function optionalBooleanString(value: unknown): string | undefined {
-  return typeof value === "boolean" ? String(value) : undefined;
 }

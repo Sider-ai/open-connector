@@ -1,6 +1,5 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -10,9 +9,11 @@ import {
   positiveInteger,
   requiredRecord,
 } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
+  providerInputError,
+  providerResponseError,
   providerUserAgent,
   ProviderRequestError,
 } from "../provider-runtime.ts";
@@ -48,7 +49,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: email ?? "altoviz-api-key",
         displayName: displayName ?? email ?? "Altoviz API Key",
       },
-      grantedScopes: [],
       metadata: { apiBaseUrl: altovizApiBaseUrl },
     };
   },
@@ -58,10 +58,7 @@ export const proxy: ProviderProxyExecutor = defineProviderProxy({
   service,
   baseUrl: altovizApiBaseUrl,
   auth: { type: "api_key_header", name: "x-api-key" },
-  customizeRequest({ headers }) {
-    if (!headers.has("accept")) headers.set("accept", "application/json");
-    if (!headers.has("user-agent")) headers.set("user-agent", providerUserAgent);
-  },
+  defaultHeaders: { "accept": "application/json", "user-agent": providerUserAgent },
 });
 
 async function listCustomers(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
@@ -93,7 +90,7 @@ async function listCustomers(input: Record<string, unknown>, context: ApiKeyProv
 }
 
 async function getCustomer(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
-  const customerId = positiveInteger(input.customerId, "customerId", inputError);
+  const customerId = positiveInteger(input.customerId, "customerId", providerInputError);
   const response = await requestAltoviz(`/v1/Customers/${encodeURIComponent(String(customerId))}`, {
     ...context,
     phase: "execute",
@@ -125,7 +122,7 @@ async function createCustomer(input: Record<string, unknown>, context: ApiKeyPro
   return { customer: readObject(response.payload, "Altoviz customer") };
 }
 
-interface AltovizRequestContext extends Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal"> {
+interface AltovizRequestContext extends ApiKeyProviderContext {
   phase: AltovizPhase;
   init?: RequestInit;
 }
@@ -140,7 +137,7 @@ async function requestAltoviz(
     response = await context.fetcher(new URL(path, altovizApiBaseUrl), {
       ...context.init,
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
         "user-agent": providerUserAgent,
         "x-api-key": context.apiKey,
@@ -181,7 +178,7 @@ function mapAltovizError(status: number, payload: unknown, phase: AltovizPhase):
 }
 
 function readObject(payload: unknown, label: string): Record<string, unknown> {
-  return requiredRecord(payload, `${label} response`, outputError);
+  return requiredRecord(payload, `${label} response`, providerResponseError);
 }
 
 function readArray(payload: unknown, label: string): unknown[] {
@@ -193,12 +190,4 @@ function readIntegerHeader(headers: Headers, name: string): number | undefined {
   const value = headers.get(name);
   const parsed = value === null ? Number.NaN : Number(value);
   return Number.isInteger(parsed) ? parsed : undefined;
-}
-
-function inputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
-}
-
-function outputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(502, message);
 }

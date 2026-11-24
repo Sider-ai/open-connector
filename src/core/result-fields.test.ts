@@ -30,7 +30,7 @@ describe("result field selection", () => {
   });
 
   it("supports literal keys containing dots, brackets, quotes and empty strings", () => {
-    const output = { "a.b": [{ "x[y]": { 'a"b': 3 } }], "": 4, $: 5 };
+    const output = { "a.b": [{ "x[y]": { 'a"b': 3 } }], "": 4, "$": 5 };
     expect(createResultFieldSelection(['["a.b"][]["x[y]"]["a\\"b"]', '[""]', '["$"]']).project(output)).toEqual(output);
   });
 

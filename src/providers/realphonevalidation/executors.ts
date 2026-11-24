@@ -1,10 +1,11 @@
-import type { CredentialValidationResult, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidationResult, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { createHash } from "node:crypto";
 import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "realphonevalidation";
 const realPhoneValidationApiBaseUrl = "https://api.realvalidation.com";
@@ -52,6 +53,16 @@ export const realPhoneValidationActionHandlers: ProviderActionHandlers<
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, realPhoneValidationActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: realPhoneValidationApiBaseUrl,
+  auth: { type: "api_key_query", name: "token" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export async function validateRealPhoneValidationCredential(
   input: Record<string, string>,
   fetcher: typeof fetch,
@@ -69,9 +80,7 @@ export async function validateRealPhoneValidationCredential(
     profile: {
       accountId: createHash("sha256").update(apiKey).digest("hex"),
       displayName: "RealPhoneValidation API Token",
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: realPhoneValidationApiBaseUrl,
       validationEndpoint: turboStandardPath,
@@ -94,7 +103,7 @@ export const credentialValidators = {
 async function requestRealPhoneValidation(input: {
   path: string;
   phone: string;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   mode: "validate" | "execute";
   includeEnrichment: boolean;
 }): Promise<RealPhoneValidationResponse> {
@@ -109,7 +118,7 @@ async function requestRealPhoneValidation(input: {
     response = await input.context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
       signal: input.context.signal,

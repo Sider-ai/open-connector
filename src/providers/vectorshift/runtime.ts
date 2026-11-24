@@ -1,11 +1,17 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { optionalRecord, optionalString } from "../../core/cast.ts";
-import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import {
+  ProviderRequestError,
+  providerUserAgent,
+  requiredResponseRecord,
+  providerInputError,
+} from "../provider-runtime.ts";
 
-const vectorshiftApiBaseUrl = "https://api.vectorshift.ai/v1";
+export const vectorshiftApiBaseUrl = "https://api.vectorshift.ai/v1";
 const listPipelinesPath = "/pipelines";
 const fetchPipelinePath = "/pipeline";
 
@@ -39,7 +45,7 @@ export async function validateVectorshiftCredential(
     "validate",
     fetcher,
   );
-  const record = requireRecord(payload, "VectorShift pipeline list response");
+  const record = requiredResponseRecord(payload, "VectorShift pipeline list response");
   const pipelineIds = Array.isArray(record.object_ids)
     ? record.object_ids.filter((value): value is string => typeof value === "string")
     : [];
@@ -47,7 +53,6 @@ export async function validateVectorshiftCredential(
     profile: {
       accountId: "vectorshift-api-key",
       displayName: "VectorShift API Key",
-      grantedScopes: [],
     },
     metadata: {
       apiBaseUrl: vectorshiftApiBaseUrl,
@@ -72,7 +77,7 @@ async function executeListPipelines(input: Record<string, unknown>, context: Api
     "execute",
     context.fetcher,
   );
-  const record = requireRecord(payload, "VectorShift pipeline list response");
+  const record = requiredResponseRecord(payload, "VectorShift pipeline list response");
   return {
     status: typeof record.status === "string" ? record.status : "success",
     pipeline_ids: Array.isArray(record.object_ids)
@@ -103,22 +108,22 @@ async function executeGetPipeline(input: Record<string, unknown>, context: ApiKe
     "execute",
     context.fetcher,
   );
-  const record = requireRecord(payload, "VectorShift pipeline fetch response");
+  const record = requiredResponseRecord(payload, "VectorShift pipeline fetch response");
   return {
     status: typeof record.status === "string" ? record.status : "success",
-    pipeline: requireRecord(record.object, "VectorShift pipeline"),
+    pipeline: requiredResponseRecord(record.object, "VectorShift pipeline"),
   };
 }
 
 async function executeRunPipeline(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const pipelineId = requireTrimmedString(input.pipeline_id, "pipeline_id");
-  const inputs = requireRecord(input.inputs, "inputs");
+  const inputs = requiredResponseRecord(input.inputs, "inputs");
   assertJsonSafeRecord(inputs);
   return requestVectorshiftJson(
     buildVectorshiftUrl(`/pipeline/${encodeURIComponent(pipelineId)}/run`),
     {
       method: "POST",
-      headers: vectorshiftHeaders(context.apiKey, { accept: "application/json", "content-type": "application/json" }),
+      headers: vectorshiftHeaders(context.apiKey, { "accept": "application/json", "content-type": "application/json" }),
       body: JSON.stringify({ inputs }),
       signal: context.signal,
     },
@@ -136,8 +141,8 @@ async function executeBulkRunPipeline(
     throw new ProviderRequestError(400, "runs must be an array");
   }
   const runs = input.runs.map((run, index) => {
-    const runRecord = requireRecord(run, `runs[${index}]`);
-    const inputs = requireRecord(runRecord.inputs, `runs[${index}].inputs`);
+    const runRecord = requiredResponseRecord(run, `runs[${index}]`);
+    const inputs = requiredResponseRecord(runRecord.inputs, `runs[${index}].inputs`);
     assertJsonSafeRecord(inputs);
     return { inputs };
   });
@@ -145,7 +150,7 @@ async function executeBulkRunPipeline(
     buildVectorshiftUrl(`/pipeline/${encodeURIComponent(pipelineId)}/bulk_run`),
     {
       method: "POST",
-      headers: vectorshiftHeaders(context.apiKey, { accept: "application/json", "content-type": "application/json" }),
+      headers: vectorshiftHeaders(context.apiKey, { "accept": "application/json", "content-type": "application/json" }),
       body: JSON.stringify({ runs }),
       signal: context.signal,
     },
@@ -160,7 +165,7 @@ function buildVectorshiftUrl(path: string): URL {
 
 function vectorshiftHeaders(apiKey: string, extraHeaders: Record<string, string>): Record<string, string> {
   return {
-    authorization: `Bearer ${apiKey}`,
+    "authorization": `Bearer ${apiKey}`,
     "user-agent": providerUserAgent,
     ...extraHeaders,
   };
@@ -205,11 +210,10 @@ function createVectorshiftError(
 ): ProviderRequestError {
   const message = readErrorMessage(payload) ?? `vectorshift request failed with ${response.status}`;
   if (response.status === 429) return new ProviderRequestError(429, message);
-  if (phase === "validate" && (response.status === 401 || response.status === 403))
-    return new ProviderRequestError(400, message);
+  if (phase === "validate" && (response.status === 401 || response.status === 403)) return providerInputError(message);
   if (phase === "execute" && (response.status === 401 || response.status === 403))
     return new ProviderRequestError(401, message);
-  if (response.status >= 400 && response.status < 500) return new ProviderRequestError(400, message);
+  if (response.status >= 400 && response.status < 500) return providerInputError(message);
   return new ProviderRequestError(response.status || 502, message);
 }
 
@@ -221,12 +225,6 @@ function readErrorMessage(payload: unknown): string | undefined {
   if (typeof record.message === "string" && record.message.trim()) return record.message;
   const nestedError = optionalRecord(record.error);
   return optionalString(nestedError?.message);
-}
-
-function requireRecord(value: unknown, fieldName: string): Record<string, unknown> {
-  const record = optionalRecord(value);
-  if (!record) throw new ProviderRequestError(502, `${fieldName} must be an object`);
-  return record;
 }
 
 function requireTrimmedString(value: unknown, fieldName: string): string {

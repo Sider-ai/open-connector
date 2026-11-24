@@ -4,7 +4,7 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -14,14 +14,15 @@ import {
   optionalRecord,
   optionalString,
 } from "../../core/cast.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineProviderExecutors,
-  defineProviderProxy,
   providerUserAgent,
   ProviderRequestError,
   readProviderTextBody,
-  requireApiKeyCredential,
+  providerInputError,
 } from "../provider-runtime.ts";
 
 type QueryValue = string | number | boolean | undefined;
@@ -42,7 +43,6 @@ interface Digistore24RequestInput {
 }
 
 const digistore24ApiBaseUrl = "https://www.digistore24.com/api/call";
-const digistore24RequestTimeoutMs = 30_000;
 const digistore24MaxResponseBytes = 10 * 1024 * 1024;
 
 export const digistore24ActionHandlers: ProviderActionHandlers<"digistore24", Digistore24ActionHandler> = {
@@ -111,7 +111,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: userInfo.userId == null ? undefined : String(userInfo.userId),
         displayName: userInfo.userName ?? "Digistore24 API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: digistore24ApiBaseUrl,
         validationFunction: "getUserInfo",
@@ -278,13 +277,13 @@ async function digistore24Request(
 ) {
   let response: Response;
   let payload: unknown;
-  const timeout = createProviderTimeout(signal, digistore24RequestTimeoutMs);
+  const timeout = createProviderTimeout(signal);
 
   try {
     response = await fetcher(buildDigistore24Url(input), {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
         "X-DS-API-KEY": apiKey,
       },
@@ -351,11 +350,11 @@ function createDigistore24Error(status: number, statusText: string, payload: unk
   if (status === 429) {
     return new ProviderRequestError(429, message);
   } else if (phase === "validate" && (status === 400 || status === 401 || status === 403)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   } else if (phase === "execute" && (status === 401 || status === 403)) {
     return new ProviderRequestError(401, message);
   } else if (phase === "execute" && (status === 400 || status === 404 || status === 422)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   } else {
     return new ProviderRequestError(status >= 500 ? 502 : status || 502, message);
   }

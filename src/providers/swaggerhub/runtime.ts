@@ -1,9 +1,9 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { compactObject, optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
-import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { ProviderRequestError, providerUserAgent, requiredResponseRecord } from "../provider-runtime.ts";
 
 export const swaggerhubApiOrigin: string = "https://api.swaggerhub.com";
 const swaggerhubValidationPath = "/apis";
@@ -126,7 +126,7 @@ export const swaggerhubActionHandlers: ProviderActionHandlers<"swaggerhub", Swag
       phase: "execute",
       responseType: "json",
     });
-    const listing = requireObjectPayload(payload, "SwaggerHub project listing response");
+    const listing = requiredResponseRecord(payload, "SwaggerHub project listing response");
     return { listing, projects: extractObjectArray(listing.projects) };
   },
   async get_project(input, context) {
@@ -138,7 +138,7 @@ export const swaggerhubActionHandlers: ProviderActionHandlers<"swaggerhub", Swag
       phase: "execute",
       responseType: "json",
     });
-    return { project: requireObjectPayload(payload, "SwaggerHub project response") };
+    return { project: requiredResponseRecord(payload, "SwaggerHub project response") };
   },
 };
 
@@ -156,13 +156,12 @@ export async function validateSwaggerhubCredential(
     phase: "validate",
     responseType: "json",
   });
-  const listing = requireObjectPayload(payload, "SwaggerHub validation response");
+  const listing = requiredResponseRecord(payload, "SwaggerHub validation response");
   return {
     profile: {
       accountId: "swaggerhub",
       displayName: "SwaggerHub API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: swaggerhubApiOrigin,
       validationEndpoint: "/apis?limit=1",
@@ -184,7 +183,7 @@ async function getRegistryListing(
     phase: "execute",
     responseType: "json",
   });
-  const listing = requireObjectPayload(payload, "SwaggerHub registry listing response");
+  const listing = requiredResponseRecord(payload, "SwaggerHub registry listing response");
   return { listing, items: extractObjectArray(listing.apis) };
 }
 
@@ -213,7 +212,7 @@ async function getDefinition(
         ? typeof payload === "string"
           ? payload
           : JSON.stringify(payload, null, 2)
-        : requireObjectPayload(payload, "SwaggerHub definition response"),
+        : requiredResponseRecord(payload, "SwaggerHub definition response"),
   };
 }
 
@@ -255,8 +254,8 @@ async function requestSwaggerhubPayload<T>(input: {
 
 function swaggerhubHeaders(apiKey: string, accept?: string): Record<string, string> {
   return {
-    accept: accept ?? "application/json",
-    authorization: apiKey,
+    "accept": accept ?? "application/json",
+    "authorization": apiKey,
     "user-agent": providerUserAgent,
   };
 }
@@ -309,12 +308,6 @@ function readSwaggerhubErrorMessage(payload: unknown): string | undefined {
     })
     .filter((value): value is string => Boolean(value));
   return messages.length > 0 ? messages.join("; ") : undefined;
-}
-
-function requireObjectPayload(payload: unknown, label: string): Record<string, unknown> {
-  const record = optionalRecord(payload);
-  if (!record) throw new ProviderRequestError(502, `${label} must be an object`);
-  return record;
 }
 
 function extractObjectArray(value: unknown): Array<Record<string, unknown>> {

@@ -1,20 +1,20 @@
 import type { CredentialValidationResult, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderRequestContext, ProviderFetch } from "../provider-runtime.ts";
 
-import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 const service = "sensibo";
-const sensiboApiBaseUrl = "https://home.sensibo.com/api/v2";
+export const sensiboApiBaseUrl: string = "https://home.sensibo.com/api/v2";
 const sensiboValidationPath = "/users/me/pods";
-const sensiboTimeoutMs = 30_000;
 const defaultDeviceFields = "id,name,room,measurements,acState,connectionStatus,productModel";
 
 type SensiboPhase = "validate" | "execute";
@@ -38,7 +38,7 @@ export const sensiboActionHandlers: ProviderActionHandlers<"sensibo", SensiboAct
     };
   },
   async get_device(input, context) {
-    const deviceId = readInputString(input.device_id, "device_id");
+    const deviceId = requiredInputString(input.device_id, "device_id");
     const payload = await requestSensiboJson({
       apiKey: context.apiKey,
       path: `/pods/${encodeURIComponent(deviceId)}`,
@@ -55,7 +55,7 @@ export const sensiboActionHandlers: ProviderActionHandlers<"sensibo", SensiboAct
     };
   },
   async get_ac_states(input, context) {
-    const deviceId = readInputString(input.device_id, "device_id");
+    const deviceId = requiredInputString(input.device_id, "device_id");
     const limit = optionalInteger(input.limit);
     const payload = await requestSensiboJson({
       apiKey: context.apiKey,
@@ -73,7 +73,7 @@ export const sensiboActionHandlers: ProviderActionHandlers<"sensibo", SensiboAct
     };
   },
   async set_ac_state(input, context) {
-    const deviceId = readInputString(input.device_id, "device_id");
+    const deviceId = requiredInputString(input.device_id, "device_id");
     const acState = requireRecord(input.acState, "Sensibo acState");
 
     await requestSensiboJson({
@@ -120,7 +120,6 @@ export async function validateSensiboCredential(
       accountId: "sensibo",
       displayName: "Sensibo API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: sensiboApiBaseUrl,
       validationEndpoint: sensiboValidationPath,
@@ -134,13 +133,13 @@ async function requestSensiboJson(input: {
   apiKey: string;
   path: string;
   query?: Record<string, string | undefined>;
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">;
+  context: ProviderRequestContext;
   method: "GET" | "POST";
   body?: Record<string, unknown>;
   phase: SensiboPhase;
 }): Promise<unknown> {
   const url = buildSensiboUrl(input.path, input.apiKey, input.query);
-  const timeout = createProviderTimeout(input.context.signal, sensiboTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   try {
     const response = await input.context.fetcher(url, {
       method: input.method,
@@ -186,7 +185,7 @@ function buildSensiboUrl(path: string, apiKey: string, query?: Record<string, st
 
 function buildSensiboHeaders(method: "GET" | "POST"): Record<string, string> {
   return compactObject({
-    accept: "application/json",
+    "accept": "application/json",
     "accept-encoding": "gzip",
     "content-type": method === "POST" ? "application/json" : undefined,
     "user-agent": providerUserAgent,
@@ -240,10 +239,6 @@ function readSensiboResult(payload: unknown, label: string): unknown {
     throw new ProviderRequestError(502, `Sensibo ${label} response is missing result`, payload);
   }
   return result;
-}
-
-function readInputString(value: unknown, key: string): string {
-  return requiredString(value, key, (message) => new ProviderRequestError(400, message));
 }
 
 function requireRecord(value: unknown, label: string): Record<string, unknown> {

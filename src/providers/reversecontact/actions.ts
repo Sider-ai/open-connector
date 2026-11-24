@@ -3,7 +3,7 @@ import type { ActionDefinition } from "../../core/types.ts";
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
 
-const service = "reversecontact" as const;
+const service = "reversecontact";
 
 const trimmedNonEmptyString = (description: string) => s.nonEmptyString(description);
 const trimmedEmail = (description: string) => s.email(description);
@@ -96,6 +96,7 @@ const enrichCompanyOutputSchema = s.object(
 export const reversecontactActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "enrich_person",
+    operationType: "read",
     description:
       "Enrich one professional profile synchronously from an email, name, or company context using Reverse Contact V2.",
     inputSchema: enrichPersonInputSchema,
@@ -103,6 +104,7 @@ export const reversecontactActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "enrich_company",
+    operationType: "read",
     description: "Enrich one company profile synchronously from its domain using Reverse Contact V2.",
     inputSchema: enrichCompanyInputSchema,
     outputSchema: enrichCompanyOutputSchema,

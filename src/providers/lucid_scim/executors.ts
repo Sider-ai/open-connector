@@ -1,9 +1,10 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { optionalInteger, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "lucid_scim";
 const lucidScimApiBaseUrl = "https://users.lucid.app/scim/v2";
@@ -74,6 +75,16 @@ export const lucidScimActionHandlers: ProviderActionHandlers<"lucid_scim", Lucid
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, lucidScimActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: lucidScimApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/scim+json, application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const apiKey = input.apiKey.trim();
@@ -96,7 +107,6 @@ export const credentialValidators: CredentialValidators = {
       profile: {
         displayName: "Lucid SCIM Bearer Token",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: lucidScimApiBaseUrl,
         validationEndpoint: lucidScimConfigPath,
@@ -108,7 +118,7 @@ export const credentialValidators: CredentialValidators = {
 
 async function requestLucidScimJson(input: {
   path: string;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   phase: RequestPhase;
   searchParams?: URLSearchParams;
 }): Promise<unknown> {
@@ -123,8 +133,8 @@ async function requestLucidScimJson(input: {
     response = await input.context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/scim+json, application/json",
-        authorization: `Bearer ${input.context.apiKey}`,
+        "accept": "application/scim+json, application/json",
+        "authorization": `Bearer ${input.context.apiKey}`,
         "user-agent": providerUserAgent,
       },
       signal: input.context.signal,

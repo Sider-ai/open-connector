@@ -1,9 +1,10 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalScalarString, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "newsdata_io";
 const newsdataIoApiBaseUrl = "https://newsdata.io";
@@ -28,6 +29,16 @@ export const newsdataIoActionHandlers: ProviderActionHandlers<"newsdata_io", New
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, newsdataIoActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: newsdataIoApiBaseUrl,
+  auth: { type: "api_key_query", name: "apikey" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = optionalRecord(
@@ -48,7 +59,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "newsdata_io",
         displayName: "NewsData.io API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         validationEndpoint: "/api/1/sources",
         apiBaseUrl: newsdataIoApiBaseUrl,
@@ -61,13 +71,13 @@ export const credentialValidators: CredentialValidators = {
 async function requestNewsdataIoJson(
   path: string,
   query: Record<string, string>,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: NewsdataIoPhase,
 ): Promise<unknown> {
   const response = await context.fetcher(buildNewsdataIoUrl(path, query, context.apiKey), {
     method: "GET",
     headers: {
-      accept: "application/json",
+      "accept": "application/json",
       "user-agent": providerUserAgent,
     },
     signal: context.signal,

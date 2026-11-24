@@ -1,26 +1,25 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderRequestContext } from "../provider-runtime.ts";
 
-import {
-  compactObject,
-  optionalNumber,
-  optionalRecord,
-  optionalString,
-  requiredRecord,
-  requiredString,
-} from "../../core/cast.ts";
+import { compactObject, optionalNumber, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
+  requiredResponseRecord,
 } from "../provider-runtime.ts";
 
 const service = "mailcheck";
 const mailcheckApiBaseUrl = "https://api.usercheck.com";
-const mailcheckDefaultRequestTimeoutMs = 30_000;
 
 type MailcheckRequestPhase = "validate" | "execute";
 type MailcheckActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
@@ -59,6 +58,16 @@ export const mailcheckActionHandlers: ProviderActionHandlers<"mailcheck", Mailch
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, mailcheckActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: mailcheckApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     return validateMailcheckCredential(input.apiKey, fetcher, signal);
@@ -75,10 +84,10 @@ async function validateMailcheckCredential(
     context: { fetcher, signal },
     phase: "validate",
   });
-  const account = requireMailcheckObject(payload.account, "/status.account");
-  const user = requireMailcheckObject(account.user, "/status.account.user");
-  const plan = requireMailcheckObject(account.plan, "/status.account.plan");
-  const usage = requireMailcheckObject(payload.usage, "/status.usage");
+  const account = requiredResponseRecord(payload.account, "/status.account");
+  const user = requiredResponseRecord(account.user, "/status.account.user");
+  const plan = requiredResponseRecord(account.plan, "/status.account.plan");
+  const usage = requiredResponseRecord(payload.usage, "/status.usage");
   const userEmail = requireMailcheckString(user.email, "/status.account.user.email");
 
   return {
@@ -86,7 +95,6 @@ async function validateMailcheckCredential(
       accountId: userEmail,
       displayName: userEmail,
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: mailcheckApiBaseUrl,
       validationEndpoint: "/status",
@@ -102,7 +110,7 @@ async function validateMailcheckCredential(
 
 async function requestMailcheckStatus(input: {
   apiKey: string;
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">;
+  context: ProviderRequestContext;
   phase: MailcheckRequestPhase;
 }): Promise<Record<string, unknown>> {
   const payload = await requestMailcheckJson({
@@ -112,12 +120,12 @@ async function requestMailcheckStatus(input: {
     phase: input.phase,
   });
 
-  return requireMailcheckObject(payload, "/status");
+  return requiredResponseRecord(payload, "/status");
 }
 
 async function requestMailcheckEmail(input: {
   apiKey: string;
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">;
+  context: ProviderRequestContext;
   phase: MailcheckRequestPhase;
   email: string;
 }): Promise<Record<string, unknown>> {
@@ -128,12 +136,12 @@ async function requestMailcheckEmail(input: {
     phase: input.phase,
   });
 
-  return requireMailcheckObject(payload, "/email/{email}");
+  return requiredResponseRecord(payload, "/email/{email}");
 }
 
 async function requestMailcheckDomain(input: {
   apiKey: string;
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">;
+  context: ProviderRequestContext;
   phase: MailcheckRequestPhase;
   domain: string;
 }): Promise<Record<string, unknown>> {
@@ -144,17 +152,17 @@ async function requestMailcheckDomain(input: {
     phase: input.phase,
   });
 
-  return requireMailcheckObject(payload, "/domain/{domain}");
+  return requiredResponseRecord(payload, "/domain/{domain}");
 }
 
 async function requestMailcheckJson(input: {
   apiKey: string;
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">;
+  context: ProviderRequestContext;
   path: string;
   phase: MailcheckRequestPhase;
 }): Promise<unknown> {
   const url = new URL(input.path, mailcheckApiBaseUrl);
-  const timeout = createProviderTimeout(input.context.signal, mailcheckDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
 
   let response: Response;
   let payload: unknown;
@@ -162,8 +170,8 @@ async function requestMailcheckJson(input: {
     response = await input.context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${input.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${input.apiKey}`,
         "user-agent": providerUserAgent,
       },
       signal: timeout.signal,
@@ -232,10 +240,6 @@ function extractMailcheckErrorMessage(payload: unknown): string | undefined {
 
   const record = optionalRecord(payload);
   return optionalString(record?.error) ?? optionalString(record?.message);
-}
-
-function requireMailcheckObject(value: unknown, context: string): Record<string, unknown> {
-  return requiredRecord(value, context, (message) => new ProviderRequestError(502, message));
 }
 
 function requireMailcheckString(value: unknown, context: string): string {

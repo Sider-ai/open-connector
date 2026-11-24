@@ -1,5 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers, ProviderFetch } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { optionalRecord, optionalString } from "../../core/cast.ts";
 import {
@@ -7,10 +8,11 @@ import {
   isAbortLikeError,
   ProviderRequestError,
   providerUserAgent,
+  providerInputError,
+  providerResponseError,
 } from "../provider-runtime.ts";
 
 export const onfleetApiBaseUrl = "https://onfleet.com/api/v2";
-const onfleetRequestTimeoutMs = 30_000;
 
 type OnfleetRequestPhase = "validate" | "execute";
 export interface OnfleetActionContext {
@@ -96,7 +98,6 @@ export async function validateOnfleetCredential(
 
   return {
     profile: { accountId: "onfleet", displayName: "Onfleet Account" },
-    grantedScopes: [],
     metadata: { validationEndpoint: "/auth/test" },
   };
 }
@@ -113,7 +114,7 @@ export async function requestOnfleetJson(
     }
   }
 
-  const timeout = createProviderTimeout(context.signal, onfleetRequestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   let response: Response;
   try {
     response = await context.fetcher(url, {
@@ -162,8 +163,8 @@ function taskPath(taskId: unknown) {
 
 function onfleetHeaders(apiKey: string, hasBody: boolean) {
   const headers: Record<string, string> = {
-    Accept: "application/json",
-    Authorization: `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
+    "Accept": "application/json",
+    "Authorization": `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
     "User-Agent": providerUserAgent,
   };
   if (hasBody) headers["Content-Type"] = "application/json";
@@ -187,7 +188,7 @@ function createOnfleetError(response: Response, payload: unknown, phase: Onfleet
     `Onfleet request failed with status ${response.status}`;
 
   if (phase === "validate" && (response.status === 401 || response.status === 403)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (response.status === 400 || response.status === 404 || response.status === 422) {
     return new ProviderRequestError(response.status, message);
@@ -225,6 +226,6 @@ function requireObject(value: unknown, label: string) {
 }
 
 function requireArray(value: unknown, message: string) {
-  if (!Array.isArray(value)) throw new ProviderRequestError(502, message);
+  if (!Array.isArray(value)) throw providerResponseError(message);
   return value.map((item) => requireObject(item, "Onfleet task"));
 }

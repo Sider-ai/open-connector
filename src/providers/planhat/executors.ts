@@ -1,6 +1,6 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -10,18 +10,19 @@ import {
   optionalString,
   requiredString,
 } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
   providerUserAgent,
   ProviderRequestError,
   readProviderTextBody,
+  providerInputError,
+  providerResponseError,
 } from "../provider-runtime.ts";
 
 const service = "planhat";
 const apiBaseUrl = "https://api.planhat.com";
-const requestTimeoutMs = 30_000;
 const maxResponseBytes = 10 * 1024 * 1024;
 
 type PlanhatPhase = "validate" | "execute";
@@ -50,7 +51,7 @@ export const planhatActionHandlers: ProviderActionHandlers<"planhat", PlanhatAct
     );
   },
   async update_company(input, context) {
-    const companyId = requiredString(input.companyId, "companyId", providerInputError);
+    const companyId = requiredString(input.companyId, "companyId", planhatInputError);
     return normalizeCompanyResult(
       await requestPlanhatJson({
         method: "PUT",
@@ -62,7 +63,7 @@ export const planhatActionHandlers: ProviderActionHandlers<"planhat", PlanhatAct
     );
   },
   async get_company(input, context) {
-    const companyId = requiredString(input.companyId, "companyId", providerInputError);
+    const companyId = requiredString(input.companyId, "companyId", planhatInputError);
     return normalizeCompanyResult(
       await requestPlanhatJson({
         method: "GET",
@@ -97,7 +98,7 @@ export const planhatActionHandlers: ProviderActionHandlers<"planhat", PlanhatAct
     );
   },
   async update_enduser(input, context) {
-    const enduserId = requiredString(input.enduserId, "enduserId", providerInputError);
+    const enduserId = requiredString(input.enduserId, "enduserId", planhatInputError);
     return normalizeEnduserResult(
       await requestPlanhatJson({
         method: "PUT",
@@ -109,7 +110,7 @@ export const planhatActionHandlers: ProviderActionHandlers<"planhat", PlanhatAct
     );
   },
   async get_enduser(input, context) {
-    const enduserId = requiredString(input.enduserId, "enduserId", providerInputError);
+    const enduserId = requiredString(input.enduserId, "enduserId", planhatInputError);
     return normalizeEnduserResult(
       await requestPlanhatJson({
         method: "GET",
@@ -161,7 +162,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "planhat",
         displayName: "Planhat API Access Token",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl,
         validationEndpoint: "/companies",
@@ -179,13 +179,13 @@ async function requestPlanhatJson(request: PlanhatRequest): Promise<unknown> {
       url.searchParams.set(key, String(value));
     }
   }
-  const timeout = createProviderTimeout(request.context.signal, requestTimeoutMs);
+  const timeout = createProviderTimeout(request.context.signal);
   try {
     const response = await request.context.fetcher(url, {
       method: request.method,
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${request.context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${request.context.apiKey}`,
         "user-agent": providerUserAgent,
         ...(request.body === undefined ? {} : { "content-type": "application/json" }),
       },
@@ -306,19 +306,19 @@ function pickQuery(input: Record<string, unknown>, keys: string[]): Record<strin
 function readObject(value: unknown, message: string): Record<string, unknown> {
   const record = optionalRecord(value);
   if (!record) {
-    throw new ProviderRequestError(502, message);
+    throw providerResponseError(message);
   }
   return record;
 }
 
 function readArray(value: unknown, message: string): Array<Record<string, unknown>> {
-  return objectArray(value, message, () => new ProviderRequestError(502, message));
+  return objectArray(value, message, () => providerResponseError(message));
 }
 
 function requiredProviderString(value: unknown, message: string): string {
   const text = optionalRawString(value);
   if (!text?.trim()) {
-    throw new ProviderRequestError(502, message);
+    throw providerResponseError(message);
   }
   return text;
 }
@@ -350,13 +350,13 @@ function createPlanhatError(
     return new ProviderRequestError(429, message);
   }
   if (phase === "validate" && (status === 401 || status === 403)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (phase === "execute" && (status === 401 || status === 403)) {
     return new ProviderRequestError(401, message);
   }
   if (status === 400 || status === 404 || status === 422) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   return new ProviderRequestError(status >= 500 || status < 400 ? 502 : status, message);
 }
@@ -378,6 +378,6 @@ function extractErrorMessage(payload: unknown): string | undefined {
   return undefined;
 }
 
-function providerInputError(message: string): ProviderRequestError {
+function planhatInputError(message: string): ProviderRequestError {
   return new ProviderRequestError(400, message.endsWith(".") ? message.slice(0, -1) : message);
 }

@@ -1,12 +1,13 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
+  providerInputError,
   providerUserAgent,
   ProviderRequestError,
   readProviderTextBody,
@@ -71,7 +72,7 @@ const datagmaActionHandlers: ProviderActionHandlers<"datagma", DatagmaActionHand
   },
   search_phone_numbers(input, context) {
     if (input.email === undefined && input.username === undefined) {
-      throw invalidInput("Provide at least one of email or username");
+      throw providerInputError("Provide at least one of email or username");
     }
     return requestDatagmaResult({
       path: "/api/ingress/v1/search",
@@ -122,7 +123,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "api_key",
         displayName: "Datagma API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: datagmaApiBaseUrl,
         validationEndpoint: "/api/ingress/v1/mine",
@@ -164,7 +164,7 @@ async function requestDatagma(input: {
     const response = await input.fetcher(url.toString(), {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
       signal: timeoutHandle.signal,
@@ -278,24 +278,20 @@ function validateEnrichInput(input: Record<string, unknown>): void {
       (input.fullName !== undefined || (input.firstName !== undefined && input.lastName !== undefined))
     )
   ) {
-    throw invalidInput("Provide data, or provide company with fullName or firstName and lastName");
+    throw providerInputError("Provide data, or provide company with fullName or firstName and lastName");
   }
 }
 
 function validateFindWorkEmailInput(input: Record<string, unknown>): void {
   const hasName = input.fullName !== undefined || (input.firstName !== undefined && input.lastName !== undefined);
   if (!hasName || (input.company === undefined && input.linkedInSlug === undefined)) {
-    throw invalidInput("Provide fullName or firstName and lastName, plus either company or linkedInSlug");
+    throw providerInputError("Provide fullName or firstName and lastName, plus either company or linkedInSlug");
   }
 }
 
 function validateDetectJobChangeInput(input: Record<string, unknown>): void {
   const hasName = input.fullName !== undefined || (input.firstName !== undefined && input.lastName !== undefined);
   if (input.companyName === undefined || !hasName) {
-    throw invalidInput("Provide companyName with fullName or firstName and lastName");
+    throw providerInputError("Provide companyName with fullName or firstName and lastName");
   }
-}
-
-function invalidInput(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

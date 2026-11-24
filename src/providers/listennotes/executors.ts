@@ -4,8 +4,7 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -17,12 +16,9 @@ import {
   requiredString,
 } from "../../core/cast.ts";
 import { queryFlag, queryParams } from "../../core/request.ts";
-import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
-  ProviderRequestError,
-  providerUserAgent,
-} from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerInputError, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "listennotes";
 const listennotesApiBaseUrl = "https://listen-api.listennotes.com/api/v2";
@@ -36,7 +32,7 @@ export const listennotesActionHandlers: ProviderActionHandlers<"listennotes", Li
     const payload = await requestListennotesJson({
       path: "/search",
       query: queryParams({
-        q: requiredString(input.q, "q", invalidInputError),
+        q: requiredString(input.q, "q", providerInputError),
         type: resultType,
         offset: optionalInteger(input.offset),
         region: optionalString(input.region),
@@ -66,7 +62,7 @@ export const listennotesActionHandlers: ProviderActionHandlers<"listennotes", Li
     const payload = await requestListennotesJson({
       path: "/typeahead",
       query: queryParams({
-        q: requiredString(input.q, "q", invalidInputError),
+        q: requiredString(input.q, "q", providerInputError),
         safe_mode: queryFlag(optionalBoolean(input.safeMode)),
         show_genres: queryFlag(optionalBoolean(input.showGenres)),
         show_podcasts: queryFlag(optionalBoolean(input.showPodcasts)),
@@ -83,7 +79,7 @@ export const listennotesActionHandlers: ProviderActionHandlers<"listennotes", Li
     };
   },
   async get_podcast(input, context) {
-    const podcastId = requiredString(input.id, "id", invalidInputError);
+    const podcastId = requiredString(input.id, "id", providerInputError);
     const payload = await requestListennotesJson({
       path: `/podcasts/${encodeURIComponent(podcastId)}`,
       query: queryParams({
@@ -102,7 +98,7 @@ export const listennotesActionHandlers: ProviderActionHandlers<"listennotes", Li
     };
   },
   async get_episode(input, context) {
-    const episodeId = requiredString(input.id, "id", invalidInputError);
+    const episodeId = requiredString(input.id, "id", providerInputError);
     const payload = await requestListennotesJson({
       path: `/episodes/${encodeURIComponent(episodeId)}`,
       query: {},
@@ -186,7 +182,7 @@ export const listennotesActionHandlers: ProviderActionHandlers<"listennotes", Li
     };
   },
   async get_related_podcasts(input, context) {
-    const podcastId = requiredString(input.id, "id", invalidInputError);
+    const podcastId = requiredString(input.id, "id", providerInputError);
     const payload = await requestListennotesJson({
       path: `/podcasts/${encodeURIComponent(podcastId)}/recommendations`,
       query: queryParams({
@@ -221,7 +217,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "listennotes-api-key",
         displayName: "Listen Notes API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: listennotesApiBaseUrl,
         validationEndpoint: listennotesValidationPath,
@@ -234,7 +229,7 @@ export const credentialValidators: CredentialValidators = {
 async function requestListennotesJson(input: {
   path: string;
   query: Record<string, string>;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   phase: "validate" | "execute";
 }): Promise<unknown> {
   let response: Response;
@@ -269,7 +264,7 @@ function buildListennotesUrl(path: string, query: Record<string, string>): strin
 
 function listennotesHeaders(apiKey: string): Record<string, string> {
   return {
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     "X-ListenAPI-Key": apiKey,
   };
@@ -508,10 +503,6 @@ function joinNumberArray(value: unknown): string | undefined {
     return Number.isInteger(parsed) ? [parsed] : [];
   });
   return numbers.length > 0 ? numbers.join(",") : undefined;
-}
-
-function invalidInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }
 
 export const proxy: ProviderProxyExecutor = defineProviderProxy({

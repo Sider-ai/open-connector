@@ -1,30 +1,15 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
-import {
-  compactObject,
-  optionalBoolean,
-  optionalNumber,
-  optionalRecord,
-  optionalString,
-  requiredString,
-} from "../../core/cast.ts";
-import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
-  ProviderRequestError,
-  providerUserAgent,
-} from "../provider-runtime.ts";
+import { compactObject, optionalBoolean, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent, requiredInputString } from "../provider-runtime.ts";
 
 const service = "helpscout_docs";
 const helpscoutDocsApiBaseUrl = "https://docsapi.helpscout.net/v1";
 
-type HelpscoutDocsActionContext = ApiKeyProviderContext;
-type HelpscoutDocsActionHandler = (
-  input: Record<string, unknown>,
-  context: HelpscoutDocsActionContext,
-) => Promise<unknown>;
+type HelpscoutDocsActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 export const helpscoutDocsActionHandlers: ProviderActionHandlers<"helpscout_docs", HelpscoutDocsActionHandler> = {
   list_sites(input, context) {
@@ -34,7 +19,7 @@ export const helpscoutDocsActionHandlers: ProviderActionHandlers<"helpscout_docs
     return executePagedRequest("collections", "collections", input, context);
   },
   list_categories(input, context) {
-    const collectionId = readRequiredString(input.collectionId, "collectionId");
+    const collectionId = requiredInputString(input.collectionId, "collectionId");
     return executePagedRequest(
       `collections/${encodeURIComponent(collectionId)}/categories`,
       "categories",
@@ -60,7 +45,7 @@ export const helpscoutDocsActionHandlers: ProviderActionHandlers<"helpscout_docs
       input,
       context,
       compactObject({
-        query: readRequiredString(input.query, "query"),
+        query: requiredInputString(input.query, "query"),
         collectionId: optionalString(input.collectionId),
         siteId: optionalString(input.siteId),
         visibility: optionalString(input.visibility),
@@ -68,7 +53,7 @@ export const helpscoutDocsActionHandlers: ProviderActionHandlers<"helpscout_docs
     );
   },
   async get_article(input, context): Promise<unknown> {
-    const articleIdOrNumber = readRequiredString(input.articleIdOrNumber, "articleIdOrNumber");
+    const articleIdOrNumber = requiredInputString(input.articleIdOrNumber, "articleIdOrNumber");
     const payload = await helpscoutDocsGetJson(
       `articles/${encodeURIComponent(articleIdOrNumber)}`,
       context,
@@ -112,7 +97,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "api_key",
         displayName: "Help Scout Docs API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: helpscoutDocsApiBaseUrl,
         validationEndpoint: "/sites",
@@ -125,7 +109,7 @@ async function executePagedRequest(
   path: string,
   envelopeKey: string,
   input: Record<string, unknown>,
-  context: HelpscoutDocsActionContext,
+  context: ApiKeyProviderContext,
   query: Record<string, unknown> = {},
 ): Promise<unknown> {
   const payload = await helpscoutDocsGetJson(
@@ -143,7 +127,7 @@ async function executePagedRequest(
 
 async function helpscoutDocsGetJson(
   path: string,
-  context: Pick<HelpscoutDocsActionContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   query: Record<string, unknown> = {},
 ): Promise<unknown> {
   const url = new URL(joinPath(path));
@@ -177,8 +161,8 @@ async function helpscoutDocsGetJson(
 
 function helpscoutDocsHeaders(apiKey: string): Headers {
   return new Headers({
-    accept: "application/json",
-    authorization: helpscoutDocsAuthorization(apiKey),
+    "accept": "application/json",
+    "authorization": helpscoutDocsAuthorization(apiKey),
     "user-agent": providerUserAgent,
   });
 }
@@ -251,10 +235,6 @@ function extractHelpScoutDocsErrorMessage(payload: unknown): string | undefined 
     return undefined;
   }
   return optionalString(object.message) ?? optionalString(object.error) ?? optionalString(object.Message);
-}
-
-function readRequiredString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function readOptionalQueryNumber(value: unknown): string | undefined {

@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
@@ -8,13 +8,13 @@ import { base64Bytes, optionalRecord, optionalString, requiredString } from "../
 import {
   createProviderTimeout,
   isAbortLikeError,
+  providerInputError,
   providerUserAgent,
   ProviderRequestError,
 } from "../provider-runtime.ts";
 
-const emailListVerifyApiBaseUrl = "https://apps.emaillistverify.com";
+export const emailListVerifyApiBaseUrl = "https://apps.emaillistverify.com";
 const emailListVerifyApiKeyRejectedStatus = "error_credit";
-const emailListVerifyDefaultRequestTimeoutMs = 30_000;
 
 type EmailListVerifyRequestPhase = "validate" | "execute";
 type EmailListVerifyResponseType = "auto" | "binary";
@@ -22,7 +22,7 @@ type EmailListVerifyActionHandler = ProviderRuntimeHandler<ApiKeyProviderContext
 
 export const emailListVerifyActionHandlers: ProviderActionHandlers<"emaillistverify", EmailListVerifyActionHandler> = {
   async verify_email(input, context) {
-    const email = requiredString(input.email, "email", badInput);
+    const email = requiredString(input.email, "email", providerInputError);
     const status = await requestEmailListVerifyStatus({
       apiKey: context.apiKey,
       email,
@@ -39,7 +39,7 @@ export const emailListVerifyActionHandlers: ProviderActionHandlers<"emaillistver
   verify_email_detailed(input, context) {
     return requestEmailListVerifyDetailed({
       apiKey: context.apiKey,
-      email: requiredString(input.email, "email", badInput),
+      email: requiredString(input.email, "email", providerInputError),
       fetcher: context.fetcher,
       signal: context.signal,
       phase: "execute",
@@ -68,7 +68,7 @@ export const emailListVerifyActionHandlers: ProviderActionHandlers<"emaillistver
       fetcher: context.fetcher,
       signal: context.signal,
       phase: "execute",
-      domain: requiredString(input.domain, "domain", badInput),
+      domain: requiredString(input.domain, "domain", providerInputError),
     });
   },
   get_email_list_progress(input, context) {
@@ -77,7 +77,7 @@ export const emailListVerifyActionHandlers: ProviderActionHandlers<"emaillistver
       fetcher: context.fetcher,
       signal: context.signal,
       phase: "execute",
-      emailListId: requiredString(input.emailListId, "emailListId", badInput),
+      emailListId: requiredString(input.emailListId, "emailListId", providerInputError),
     });
   },
   download_email_list(input, context) {
@@ -86,7 +86,7 @@ export const emailListVerifyActionHandlers: ProviderActionHandlers<"emaillistver
       fetcher: context.fetcher,
       signal: context.signal,
       phase: "execute",
-      emailListId: requiredString(input.emailListId, "emailListId", badInput),
+      emailListId: requiredString(input.emailListId, "emailListId", providerInputError),
       format: optionalString(input.format),
       results: Array.isArray(input.results) ? input.results.map(String) : undefined,
     });
@@ -97,7 +97,7 @@ export const emailListVerifyActionHandlers: ProviderActionHandlers<"emaillistver
       fetcher: context.fetcher,
       signal: context.signal,
       phase: "execute",
-      emailListId: requiredString(input.emailListId, "emailListId", badInput),
+      emailListId: requiredString(input.emailListId, "emailListId", providerInputError),
     });
   },
 };
@@ -119,7 +119,6 @@ export async function validateEmailListVerifyCredential(
       accountId: buildEmailListVerifyProviderAccountId(apiKey),
       displayName: "EmailListVerify API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: emailListVerifyApiBaseUrl,
       validationEndpoint: "/api/credits",
@@ -187,7 +186,7 @@ async function requestEmailListVerifyCredits(input: EmailListVerifyRequestInput)
 async function requestEmailListVerifyUpload(
   input: EmailListVerifyRequestInput & { input: Record<string, unknown> },
 ): Promise<{ emailListId: string }> {
-  const fileName = requiredString(input.input.fileName, "fileName", badInput);
+  const fileName = requiredString(input.input.fileName, "fileName", providerInputError);
   const quality = optionalString(input.input.quality);
   const contentText = optionalString(input.input.contentText);
   const contentBase64 = optionalString(input.input.contentBase64);
@@ -326,12 +325,12 @@ async function requestEmailListVerifyApi(
     }
   }
 
-  const timeout = createProviderTimeout(input.signal, emailListVerifyDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   try {
     const response = await input.fetcher(url, {
       method: input.method ?? "GET",
       headers: {
-        accept: input.responseType === "binary" ? "*/*" : "application/json, text/plain",
+        "accept": input.responseType === "binary" ? "*/*" : "application/json, text/plain",
         "user-agent": providerUserAgent,
       },
       body: input.body,
@@ -442,7 +441,7 @@ function resolveEmailListVerifyUploadBytes(
   if (contentText !== undefined) {
     return new TextEncoder().encode(contentText);
   }
-  return base64Bytes(contentBase64, "contentBase64", badInput);
+  return base64Bytes(contentBase64, "contentBase64", providerInputError);
 }
 
 function inferEmailListVerifyUploadMimeType(fileName: string): string {
@@ -491,8 +490,4 @@ function mapEmailListVerifyRejectedApiKey(phase: EmailListVerifyRequestPhase): P
 
 function buildEmailListVerifyProviderAccountId(apiKey: string): string {
   return `emaillistverify:api_key:${createHash("sha256").update(apiKey).digest("hex").slice(0, 16)}`;
-}
-
-function badInput(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

@@ -1,11 +1,11 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
@@ -13,11 +13,9 @@ import {
 
 const service = "fairing";
 const fairingApiBaseUrl = "https://app.fairing.co/api";
-const fairingRequestTimeoutMs = 30_000;
 
 type FairingPhase = "validate" | "execute";
-type FairingActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type FairingActionHandler = (input: Record<string, unknown>, context: FairingActionContext) => Promise<unknown>;
+type FairingActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 export const fairingActionHandlers: ProviderActionHandlers<"fairing", FairingActionHandler> = {
   list_responses(input, context) {
@@ -26,6 +24,16 @@ export const fairingActionHandlers: ProviderActionHandlers<"fairing", FairingAct
 };
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, fairingActionHandlers);
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: fairingApiBaseUrl,
+  auth: { type: "api_key_header", name: "authorization" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
 
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
@@ -47,7 +55,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "api_key",
         displayName: "Fairing API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: fairingApiBaseUrl,
         validationEndpoint: "/responses",
@@ -57,7 +64,7 @@ export const credentialValidators: CredentialValidators = {
   },
 };
 
-async function listResponses(input: Record<string, unknown>, context: FairingActionContext): Promise<unknown> {
+async function listResponses(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   if (input.starting_after !== undefined && input.ending_before !== undefined) {
     throw new ProviderRequestError(400, "starting_after and ending_before are mutually exclusive.");
   }
@@ -88,7 +95,7 @@ async function listResponses(input: Record<string, unknown>, context: FairingAct
 }
 
 async function requestFairingJson(input: {
-  context: FairingActionContext;
+  context: ApiKeyProviderContext;
   path: string;
   query?: Record<string, unknown>;
   phase: FairingPhase;
@@ -100,13 +107,13 @@ async function requestFairingJson(input: {
     }
   }
 
-  const timeout = createProviderTimeout(input.context.signal, fairingRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   try {
     const response = await input.context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: input.context.apiKey,
+        "accept": "application/json",
+        "authorization": input.context.apiKey,
         "user-agent": providerUserAgent,
       },
       signal: timeout.signal,

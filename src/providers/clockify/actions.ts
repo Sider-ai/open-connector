@@ -78,13 +78,13 @@ const listProjectsInputSchema = s.object(
   "The input payload for listing Clockify projects.",
   {
     workspaceId,
-    name: s.nonEmptyString("Filter projects by a partial project name."),
+    "name": s.nonEmptyString("Filter projects by a partial project name."),
     page,
-    users: s.nonEmptyString("A comma-separated list of user IDs used to filter projects."),
-    clients: s.nonEmptyString("A comma-separated list of client IDs used to filter projects."),
-    archived: s.boolean("Whether to return archived projects."),
-    billable: s.boolean("Whether to return billable projects."),
-    hydrated: s.boolean("Whether to request hydrated project objects."),
+    "users": s.nonEmptyString("A comma-separated list of user IDs used to filter projects."),
+    "clients": s.nonEmptyString("A comma-separated list of client IDs used to filter projects."),
+    "archived": s.boolean("Whether to return archived projects."),
+    "billable": s.boolean("Whether to return billable projects."),
+    "hydrated": s.boolean("Whether to request hydrated project objects."),
     "page-size": pageSize,
     "sort-order": s.stringEnum("The project sort order accepted by Clockify.", ["ASCENDING", "DESCENDING"]),
     "is-template": s.boolean("Whether to return project templates."),
@@ -181,7 +181,7 @@ const listTasksInputSchema = s.object(
   {
     workspaceId,
     projectId,
-    name: s.nonEmptyString("Filter tasks by a partial task name."),
+    "name": s.nonEmptyString("Filter tasks by a partial task name."),
     page,
     "is-active": s.boolean("Whether to return only active tasks."),
     "page-size": pageSize,
@@ -211,15 +211,15 @@ const listTimeEntriesInputSchema = s.object(
   {
     workspaceId,
     userId,
-    start: isoDateTime,
-    end: isoDateTime,
+    "start": isoDateTime,
+    "end": isoDateTime,
     page,
-    tags: s.nonEmptyString("A comma-separated list of tag IDs used to filter time entries."),
-    task: taskId,
-    project: projectId,
-    hydrated: s.boolean("Whether to request hydrated time entry objects."),
+    "tags": s.nonEmptyString("A comma-separated list of tag IDs used to filter time entries."),
+    "task": taskId,
+    "project": projectId,
+    "hydrated": s.boolean("Whether to request hydrated time entry objects."),
     "page-size": pageSize,
-    description: s.nonEmptyString("Only return entries whose description matches this text."),
+    "description": s.nonEmptyString("Only return entries whose description matches this text."),
     "in-progress": s.boolean("Whether to return only in-progress time entries."),
   },
   {
@@ -260,6 +260,7 @@ const createTimeEntryInputSchema = s.object(
 export const clockifyActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "get_current_user",
+    operationType: "read",
     description: "Get the currently authenticated Clockify user.",
     followUpActions: ["clockify.list_workspaces", "clockify.list_time_entries"],
     inputSchema: s.object("No input is required.", {}),
@@ -269,6 +270,7 @@ export const clockifyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_workspaces",
+    operationType: "read",
     description: "List the Clockify workspaces available to the authenticated user.",
     inputSchema: listWorkspacesInputSchema,
     outputSchema: s.object("The Clockify workspace list.", {
@@ -277,6 +279,7 @@ export const clockifyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_workspace",
+    operationType: "read",
     description: "Get a single Clockify workspace by ID.",
     followUpActions: ["clockify.list_projects"],
     inputSchema: getWorkspaceInputSchema,
@@ -286,6 +289,7 @@ export const clockifyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_projects",
+    operationType: "read",
     description: "List Clockify projects in a workspace.",
     inputSchema: listProjectsInputSchema,
     outputSchema: paginatedOutput(
@@ -297,6 +301,7 @@ export const clockifyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_project",
+    operationType: "read",
     description: "Get a single Clockify project by ID.",
     followUpActions: ["clockify.update_project", "clockify.delete_project", "clockify.list_tasks"],
     inputSchema: getProjectInputSchema,
@@ -306,6 +311,7 @@ export const clockifyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_project",
+    operationType: "write",
     description: "Create a new Clockify project in a workspace.",
     followUpActions: ["clockify.get_project"],
     inputSchema: createProjectInputSchema,
@@ -315,6 +321,7 @@ export const clockifyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "update_project",
+    operationType: "write",
     description: "Update an existing Clockify project.",
     inputSchema: updateProjectInputSchema,
     outputSchema: s.object("The updated Clockify project.", {
@@ -323,6 +330,7 @@ export const clockifyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "delete_project",
+    operationType: "destructive",
     description: "Delete a Clockify project by ID.",
     inputSchema: deleteProjectInputSchema,
     outputSchema: s.object("The Clockify project deletion result.", {
@@ -331,12 +339,14 @@ export const clockifyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_tasks",
+    operationType: "read",
     description: "List Clockify tasks for a project.",
     inputSchema: listTasksInputSchema,
     outputSchema: paginatedOutput("The Clockify task list.", "tasks", "The tasks returned by Clockify.", taskSchema),
   }),
   defineProviderAction(service, {
     name: "create_task",
+    operationType: "write",
     description: "Create a new Clockify task inside a project.",
     inputSchema: createTaskInputSchema,
     outputSchema: s.object("The newly created Clockify task.", {
@@ -345,6 +355,7 @@ export const clockifyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_time_entries",
+    operationType: "read",
     description: "List Clockify time entries for a user in a workspace.",
     inputSchema: listTimeEntriesInputSchema,
     outputSchema: paginatedOutput(
@@ -356,6 +367,7 @@ export const clockifyActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_time_entry",
+    operationType: "write",
     description: "Create a new Clockify time entry for a user.",
     followUpActions: ["clockify.list_time_entries"],
     inputSchema: createTimeEntryInputSchema,

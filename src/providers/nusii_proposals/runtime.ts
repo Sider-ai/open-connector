@@ -1,6 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
 import {
@@ -9,16 +8,15 @@ import {
   providerUserAgent,
   ProviderRequestError,
   readProviderTextBody,
+  requiredResponseRecord,
+  providerInputError,
 } from "../provider-runtime.ts";
 
 export const nusiiProposalsApiBaseUrl = "https://app.nusii.com/api/v2/";
 
-const nusiiProposalsRequestTimeoutMs = 30_000;
-
 type NusiiProposalsRequestPhase = "validate" | "execute";
 type NusiiProposalsMethod = "GET" | "POST" | "PUT";
-type NusiiProposalsContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type NusiiProposalsActionHandler = (input: Record<string, unknown>, context: NusiiProposalsContext) => Promise<unknown>;
+type NusiiProposalsActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 const clientWriteFields = [
   "email",
@@ -219,19 +217,18 @@ export async function validateNusiiProposalsCredential(
     signal,
     phase: "validate",
   });
-  const account = requireObject(payload, "Nusii account response");
-  const data = requireObject(account.data, "Nusii account data");
-  const attributes = requireObject(data.attributes, "Nusii account attributes");
-  const name = readNonEmptyString(attributes.name);
-  const email = readNonEmptyString(attributes.email);
-  const subdomain = readNonEmptyString(attributes.subdomain);
+  const account = requiredResponseRecord(payload, "Nusii account response");
+  const data = requiredResponseRecord(account.data, "Nusii account data");
+  const attributes = requiredResponseRecord(data.attributes, "Nusii account attributes");
+  const name = optionalString(attributes.name);
+  const email = optionalString(attributes.email);
+  const subdomain = optionalString(attributes.subdomain);
 
   return {
     profile: {
       accountId: readStringLike(data.id) ?? "api_key",
       displayName: name ?? email ?? subdomain ?? "Nusii API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: nusiiProposalsApiBaseUrl,
       validationEndpoint: "/account/me",
@@ -278,10 +275,6 @@ function readStringLike(value: unknown) {
   return undefined;
 }
 
-function readNonEmptyString(value: unknown) {
-  return optionalString(value);
-}
-
 async function requestNusiiJson(input: {
   path: string;
   method: NusiiProposalsMethod;
@@ -299,14 +292,14 @@ async function requestNusiiJson(input: {
     }
   }
 
-  const timeout = createProviderTimeout(input.signal, nusiiProposalsRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   let response: Response;
   try {
     response = await input.fetcher(url, {
       method: input.method,
       headers: {
-        accept: "application/json",
-        authorization: `Token token=${input.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Token token=${input.apiKey}`,
         ...(input.body === undefined ? {} : { "content-type": "application/json" }),
         "user-agent": providerUserAgent,
       },
@@ -355,7 +348,7 @@ function createNusiiError(status: number, payload: unknown, phase: NusiiProposal
     return new ProviderRequestError(429, message);
   }
   if (phase === "validate" && (status === 401 || status === 403)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (phase === "execute" && status === 401) {
     return new ProviderRequestError(401, message);
@@ -380,11 +373,11 @@ function extractNusiiErrorMessage(payload: unknown) {
     return error;
   }
   const nestedError = optionalRecord(error);
-  const nestedMessage = readNonEmptyString(nestedError?.message);
+  const nestedMessage = optionalString(nestedError?.message);
   if (nestedMessage) {
     return nestedMessage;
   }
-  const message = readNonEmptyString(record.message);
+  const message = optionalString(record.message);
   if (message) {
     return message;
   }
@@ -394,19 +387,11 @@ function extractNusiiErrorMessage(payload: unknown) {
         return item;
       }
       const itemRecord = optionalRecord(item);
-      const itemMessage = readNonEmptyString(itemRecord?.message);
+      const itemMessage = optionalString(itemRecord?.message);
       if (itemMessage) {
         return itemMessage;
       }
     }
   }
   return undefined;
-}
-
-function requireObject(value: unknown, label: string) {
-  const record = optionalRecord(value);
-  if (!record) {
-    throw new ProviderRequestError(502, `${label} must be an object`);
-  }
-  return record;
 }

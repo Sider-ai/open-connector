@@ -1,17 +1,15 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
-import { compactObject, optionalRecord, optionalRawString, optionalString } from "../../core/cast.ts";
+import { booleanString, compactObject, optionalRecord, optionalRawString, optionalString } from "../../core/cast.ts";
 import {
-  createProviderTimeout,
-  isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
+  runProviderRequest,
+  providerInputError,
 } from "../provider-runtime.ts";
 
-const timecampApiBaseUrl = "https://app.timecamp.com/third_party/api";
-const timecampDefaultRequestTimeoutMs = 30_000;
+export const timecampApiBaseUrl: string = "https://app.timecamp.com/third_party/api";
 
 type TimecampPhase = "validate" | "execute";
 type TimecampQueryValue = string | number | boolean | readonly (string | number)[] | undefined;
@@ -37,7 +35,7 @@ export const timecampActionHandlers: ProviderActionHandlers<"timecamp", Timecamp
       method: "GET",
       context,
       params: compactObject({
-        active_only: readOptionalBooleanString(input.activeOnly),
+        active_only: booleanString(input.activeOnly),
       }),
       phase: "execute",
     });
@@ -58,7 +56,7 @@ export const timecampActionHandlers: ProviderActionHandlers<"timecamp", Timecamp
         perms: readOptionalStringList(input.permissions),
         status: optionalString(input.status),
         minimal: readOptionalFlag(input.minimal),
-        ignoreAdminRights: readOptionalBooleanString(input.ignoreAdminRights),
+        ignoreAdminRights: booleanString(input.ignoreAdminRights),
       }),
       phase: "execute",
     });
@@ -76,21 +74,21 @@ export const timecampActionHandlers: ProviderActionHandlers<"timecamp", Timecamp
       method: "GET",
       context,
       params: compactObject({
-        from: optionalString(input.from),
-        to: optionalString(input.to),
-        billable: readOptionalBooleanString(input.billable),
-        modify_from: optionalString(input.modifyFrom),
-        modify_to: optionalString(input.modifyTo),
+        "from": optionalString(input.from),
+        "to": optionalString(input.to),
+        "billable": booleanString(input.billable),
+        "modify_from": optionalString(input.modifyFrom),
+        "modify_to": optionalString(input.modifyTo),
         "tags_filter[items][][tag]": readOptionalIdArray(input.tagIds),
-        approvalMode: readOptionalBooleanString(input.approvalMode),
-        opt_fields: optionalString(input.optionalFields),
-        include_project: readOptionalBooleanString(input.includeProject),
-        include_rates: readOptionalBooleanString(input.includeRates),
-        with_subtasks: readOptionalBooleanString(input.withSubtasks),
-        ignoreInvoiced: readOptionalBooleanString(input.ignoreInvoiced),
-        round_duration: readOptionalBooleanString(input.roundDuration),
-        active_only: readOptionalBooleanString(input.activeOnly),
-        user_ids: readOptionalStringList(input.userIds),
+        "approvalMode": booleanString(input.approvalMode),
+        "opt_fields": optionalString(input.optionalFields),
+        "include_project": booleanString(input.includeProject),
+        "include_rates": booleanString(input.includeRates),
+        "with_subtasks": booleanString(input.withSubtasks),
+        "ignoreInvoiced": booleanString(input.ignoreInvoiced),
+        "round_duration": booleanString(input.roundDuration),
+        "active_only": booleanString(input.activeOnly),
+        "user_ids": readOptionalStringList(input.userIds),
       }),
       phase: "execute",
     });
@@ -205,7 +203,6 @@ export async function validateTimecampCredential(
       accountId: providerAccountId,
       displayName: accountLabel,
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: timecampApiBaseUrl,
       validationEndpoint: "/me",
@@ -216,10 +213,7 @@ export async function validateTimecampCredential(
   };
 }
 
-async function requestTimerAction(
-  body: Record<string, unknown>,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
-): Promise<unknown> {
+async function requestTimerAction(body: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await requestTimecampJson({
     path: "/timer",
     method: "POST",
@@ -236,24 +230,22 @@ async function requestTimerAction(
 async function requestTimecampJson(input: {
   path: string;
   method: "GET" | "POST" | "PUT";
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   params?: Record<string, TimecampQueryValue>;
   body?: Record<string, unknown>;
   phase: TimecampPhase;
 }): Promise<unknown> {
-  const timeout = createProviderTimeout(input.context.signal, timecampDefaultRequestTimeoutMs);
-
-  try {
+  return runProviderRequest({ signal: input.context.signal, label: "TimeCamp" }, async (signal) => {
     const response = await input.context.fetcher(buildTimecampUrl(input.path, input.params ?? {}), {
       method: input.method,
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${input.context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${input.context.apiKey}`,
         "user-agent": providerUserAgent,
         ...(input.body ? { "content-type": "application/json" } : {}),
       },
       body: input.body ? JSON.stringify(input.body) : undefined,
-      signal: timeout.signal,
+      signal,
     });
     const payload = await readTimecampPayload(response);
 
@@ -262,22 +254,7 @@ async function requestTimecampJson(input: {
     }
 
     return payload ?? {};
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-
-    if (timeout.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "TimeCamp request timed out");
-    }
-
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `TimeCamp request failed: ${error.message}` : "TimeCamp request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+  });
 }
 
 function buildTimecampUrl(path: string, params: Record<string, TimecampQueryValue>): URL {
@@ -319,7 +296,7 @@ function createTimecampError(status: number, payload: unknown, phase: TimecampPh
   }
 
   if (phase === "validate" && (status === 401 || status === 403)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   if (phase === "execute" && status === 401) {
@@ -545,10 +522,6 @@ function readOptionalIdArray(value: unknown): string[] | undefined {
     return id ? [id] : [];
   });
   return items.length > 0 ? items : undefined;
-}
-
-function readOptionalBooleanString(value: unknown): string | undefined {
-  return typeof value === "boolean" ? String(value) : undefined;
 }
 
 function readOptionalFlag(value: unknown): number | undefined {

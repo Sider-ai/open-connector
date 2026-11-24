@@ -1,6 +1,7 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import {
   compactObject,
@@ -153,7 +154,6 @@ export async function validateMapboxCredential(
       accountId: tokenUser ?? tokenAuthorization ?? "api_key",
       displayName: tokenUser ?? "Mapbox Access Token",
     },
-    grantedScopes: [],
     metadata: compactObject({
       validationEndpoint: mapboxValidationPath,
       apiBaseUrl: mapboxApiBaseUrl,
@@ -205,7 +205,7 @@ function buildMapboxUrl(path: string, query: Record<string, string | number | bo
 
 function mapboxHeaders(contentType?: string): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
   };
   if (contentType) {

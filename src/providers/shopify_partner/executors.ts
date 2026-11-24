@@ -4,18 +4,15 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { compactJson } from "../../core/request.ts";
-import {
-  defineProviderExecutors,
-  defineProviderProxy,
-  providerUserAgent,
-  ProviderRequestError,
-  requireApiKeyCredential,
-} from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError, requiredInputString } from "../provider-runtime.ts";
 import { partnerApiVersion } from "./constants.ts";
 
 const service = "shopify_partner";
@@ -255,7 +252,7 @@ export const executors: ProviderExecutors = defineProviderExecutors<ShopifyPartn
     const credential = await requireApiKeyCredential(context, service);
     return {
       apiKey: credential.apiKey,
-      organizationId: requiredCredentialValue(credential.values.organizationId, "organizationId"),
+      organizationId: requiredInputString(credential.values.organizationId, "organizationId"),
       fetcher,
       signal: context.signal,
     };
@@ -266,7 +263,7 @@ export const proxy: ProviderProxyExecutor = defineProviderProxy({
   service,
   baseUrl: async (context) => {
     const credential = await requireApiKeyCredential(context, service);
-    return buildShopifyPartnerApiBaseUrl(requiredCredentialValue(credential.values.organizationId, "organizationId"));
+    return buildShopifyPartnerApiBaseUrl(requiredInputString(credential.values.organizationId, "organizationId"));
   },
   auth: { type: "api_key_header", name: "x-shopify-access-token" },
 });
@@ -276,7 +273,7 @@ export const credentialValidators = {
     input: { apiKey: string; values: Record<string, string> },
     { fetcher, signal }: { fetcher: ProviderFetch; signal?: AbortSignal },
   ): Promise<CredentialValidationResult> {
-    const organizationId = requiredCredentialValue(input.values.organizationId, "organizationId");
+    const organizationId = requiredInputString(input.values.organizationId, "organizationId");
     await requestShopifyPartnerGraphQL(
       {
         apiKey: input.apiKey,
@@ -294,9 +291,7 @@ export const credentialValidators = {
       profile: {
         accountId: `shopify_partner:${organizationId}`,
         displayName: `Shopify Partner ${organizationId}`,
-        grantedScopes: [],
       },
-      grantedScopes: [],
       metadata: {
         organizationId,
         apiBaseUrl: buildShopifyPartnerApiBaseUrl(organizationId),
@@ -320,7 +315,7 @@ async function requestShopifyPartnerGraphQL(
     response = await context.fetcher(buildShopifyPartnerGraphQLUrl(context.organizationId), {
       method: "POST",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
         "user-agent": providerUserAgent,
         "x-shopify-access-token": context.apiKey,
@@ -549,8 +544,4 @@ function normalizeTransaction(input: Record<string, unknown>, cursor: string | n
     cursor,
     raw: input,
   });
-}
-
-function requiredCredentialValue(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }

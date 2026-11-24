@@ -3,9 +3,10 @@ import type {
   CredentialValidators,
   ExecutionContext,
   ProviderExecutors,
+  ProviderProxyExecutor,
   TransitFileWriter,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { extname } from "node:path";
 import {
@@ -17,18 +18,31 @@ import {
   requiredString,
 } from "../../core/cast.ts";
 import { readBoundedResponseBytes } from "../../core/request.ts";
-import {
-  defineProviderExecutors,
-  providerUserAgent,
-  ProviderRequestError,
-  requireApiKeyCredential,
-} from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerInputError, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "kraken_io";
 const krakenApiBaseUrl = "https://api.kraken.io";
 const krakenOptimizeUrl = `${krakenApiBaseUrl}/v1/url`;
 const krakenUploadUrl = `${krakenApiBaseUrl}/v1/upload`;
 const krakenUserStatusUrl = `${krakenApiBaseUrl}/user_status`;
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: krakenApiBaseUrl,
+  auth: { type: "none" },
+  skipDnsValidation: true,
+  async customizeRequest({ body, context, headers, setBody }) {
+    const credential = await requireApiKeyCredential(context, service);
+    const apiSecret = requireKrakenApiSecret(credential.values.apiSecret ?? credential.metadata.apiSecret);
+    const record = body == null ? {} : optionalRecord(body);
+    if (!record) throw providerInputError("auth proxy auth requires a JSON object body");
+    setBody({ ...record, auth: { api_key: credential.apiKey, api_secret: apiSecret } });
+    if (!headers.has("accept")) headers.set("accept", "application/json");
+  },
+});
 
 type KrakenRequestPhase = "validate" | "execute";
 type KrakenIoActionHandler = (input: Record<string, unknown>, context: KrakenIoActionContext) => Promise<unknown>;
@@ -88,7 +102,6 @@ async function validateKrakenIoCredential(
       accountId: "kraken_io",
       displayName: status.planName || "Kraken.io API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: krakenApiBaseUrl,
       validationEndpoint: "/user_status",
@@ -352,7 +365,7 @@ function extractKrakenMessage(payload: unknown): string | undefined {
 async function downloadKrakenFile(
   krakedUrl: string,
   fileName: string,
-  context: Pick<KrakenIoActionContext, "fetcher" | "signal" | "transitFiles">,
+  context: KrakenIoActionContext,
 ): Promise<{ bytes: Uint8Array; contentType: string }> {
   if (!context.transitFiles) {
     throw new ProviderRequestError(400, "Transit file storage is not enabled.");
@@ -451,14 +464,14 @@ function buildKrakenAuth(apiKey: string, apiSecret: string): { api_key: string; 
 function krakenJsonHeaders(): Record<string, string> {
   return {
     "content-type": "application/json",
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
   };
 }
 
 function krakenMultipartHeaders(): Record<string, string> {
   return {
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
   };
 }

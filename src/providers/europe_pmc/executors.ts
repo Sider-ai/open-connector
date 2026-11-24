@@ -1,6 +1,8 @@
-import type { ProviderExecutors } from "../../core/types.ts";
+import type { ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
 
-import { defineProviderExecutors, mapProviderActionSources } from "../provider-runtime.ts";
+import { defineProviderExecutors, mapProviderActionSources } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { europePmcApiBaseUrl } from "./request.ts";
 import { europePmcActionHandlers } from "./runtime.ts";
 const service = "europe_pmc";
 interface EuropePmcContext {
@@ -16,4 +18,14 @@ export const executors: ProviderExecutors = defineProviderExecutors<EuropePmcCon
   handlers,
   createContext: (_context, fetcher) => ({ fetcher }),
   skipDnsValidation: true,
+});
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: europePmcApiBaseUrl,
+  auth: { type: "none" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json, application/xml, text/xml, application/zip");
+  },
 });

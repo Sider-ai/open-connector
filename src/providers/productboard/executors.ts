@@ -1,13 +1,13 @@
-import type { CredentialValidationResult, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
-import { compactObject, optionalBoolean, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { compactObject, optionalBoolean, optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent, requiredInputString } from "../provider-runtime.ts";
 
 const service = "productboard";
 const productboardApiBaseUrl = "https://api.productboard.com/v2";
-const validationEndpoint = "/entities/configurations";
 
 type ProductboardQueryValue = string | number | boolean | readonly string[] | undefined;
 
@@ -31,15 +31,15 @@ export const productboardActionHandlers: ProviderActionHandlers<"productboard", 
       {
         path: "/entities",
         query: compactObject({
-          pageCursor: optionalString(input.pageCursor),
+          "pageCursor": optionalString(input.pageCursor),
           "type[]": readOptionalStringArray(input.types),
           "fields[]": readOptionalStringArray(input.fields),
-          name: optionalString(input.name),
+          "name": optionalString(input.name),
           "owner[id]": optionalString(input.ownerId),
           "owner[email]": optionalString(input.ownerEmail),
           "status[id]": optionalString(input.statusId),
           "status[name]": optionalString(input.statusName),
-          archived: optionalBoolean(input.archived),
+          "archived": optionalBoolean(input.archived),
           "parent[id]": optionalString(input.parentId),
           "metadata[source][system]": optionalString(input.metadataSourceSystem),
           "metadata[source][recordId]": optionalString(input.metadataSourceRecordId),
@@ -74,9 +74,9 @@ export const productboardActionHandlers: ProviderActionHandlers<"productboard", 
       {
         path: "/notes",
         query: compactObject({
-          pageCursor: optionalString(input.pageCursor),
-          archived: optionalBoolean(input.archived),
-          processed: optionalBoolean(input.processed),
+          "pageCursor": optionalString(input.pageCursor),
+          "archived": optionalBoolean(input.archived),
+          "processed": optionalBoolean(input.processed),
           "type[]": readOptionalStringArray(input.types),
           "owner[id]": optionalString(input.ownerId),
           "owner[email]": optionalString(input.ownerEmail),
@@ -84,10 +84,10 @@ export const productboardActionHandlers: ProviderActionHandlers<"productboard", 
           "creator[email]": optionalString(input.creatorEmail),
           "metadata[source][system]": optionalString(input.metadataSourceSystem),
           "metadata[source][recordId]": optionalString(input.metadataSourceRecordId),
-          createdFrom: optionalString(input.createdFrom),
-          createdTo: optionalString(input.createdTo),
-          updatedFrom: optionalString(input.updatedFrom),
-          updatedTo: optionalString(input.updatedTo),
+          "createdFrom": optionalString(input.createdFrom),
+          "createdTo": optionalString(input.createdTo),
+          "updatedFrom": optionalString(input.updatedFrom),
+          "updatedTo": optionalString(input.updatedTo),
           "fields[]": readOptionalStringArray(input.fields),
         }),
       },
@@ -108,11 +108,11 @@ export const productboardActionHandlers: ProviderActionHandlers<"productboard", 
       {
         path: "/members",
         query: compactObject({
-          pageCursor: optionalString(input.pageCursor),
-          query: optionalString(input.query),
+          "pageCursor": optionalString(input.pageCursor),
+          "query": optionalString(input.query),
           "roles[]": readOptionalStringArray(input.roles),
-          includeDisabled: optionalBoolean(input.includeDisabled),
-          includeInvitationPending: optionalBoolean(input.includeInvitationPending),
+          "includeDisabled": optionalBoolean(input.includeDisabled),
+          "includeInvitationPending": optionalBoolean(input.includeInvitationPending),
         }),
       },
       context,
@@ -149,22 +149,15 @@ export const productboardActionHandlers: ProviderActionHandlers<"productboard", 
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, productboardActionHandlers);
 
-export async function validateProductboardCredential(
-  input: Record<string, string>,
-  fetcher: typeof fetch,
-): Promise<CredentialValidationResult> {
-  const apiKey = requiredString(input.apiKey, "apiKey", (message) => new ProviderRequestError(401, message));
-  await productboardRequest({ path: validationEndpoint }, { apiKey, fetcher }, "validate");
-  return {
-    profile: { accountId: "productboard-api-token", displayName: "Productboard API Token", grantedScopes: [] },
-    grantedScopes: [],
-    metadata: {
-      apiBaseUrl: productboardApiBaseUrl,
-      validationEndpoint,
-      credentialHelpUrl: "https://developer.productboard.com/reference/api-token",
-    },
-  };
-}
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: productboardApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
 
 async function listPayload(
   input: { path: string; query?: Record<string, ProductboardQueryValue> },
@@ -197,7 +190,7 @@ async function singlePayload(
 
 async function productboardRequest(
   input: { path: string; query?: Record<string, ProductboardQueryValue> },
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: "validate" | "execute",
 ): Promise<unknown> {
   let response: Response;
@@ -205,8 +198,8 @@ async function productboardRequest(
     response = await context.fetcher(buildProductboardUrl(input), {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${context.apiKey}`,
         "user-agent": providerUserAgent,
       },
       signal: context.signal,
@@ -305,10 +298,6 @@ function extractPageCursor(nextPageUrl: string): string | null {
   } catch {
     return null;
   }
-}
-
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function readOptionalStringArray(value: unknown): string[] | undefined {

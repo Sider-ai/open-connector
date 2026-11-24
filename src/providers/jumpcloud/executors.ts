@@ -4,21 +4,19 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
 import {
   createProviderProxyUrl,
-  defineProviderExecutors,
   normalizeProviderProxyHeaders,
-  providerFetch,
-  ProviderRequestError,
-  providerUserAgent,
   readProviderProxyErrorMessage,
   readProviderProxyResponse,
-  requireApiKeyCredential,
   toProviderProxyError,
-} from "../provider-runtime.ts";
+} from "../provider-proxy.ts";
+import { providerFetch, providerInputError, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "jumpcloud";
 
@@ -142,7 +140,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "api_key",
         displayName: "JumpCloud API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: jumpcloudRegionBaseUrls[region],
         region,
@@ -162,7 +159,7 @@ async function getSystemUser(input: Record<string, unknown>, context: JumpcloudA
   return {
     systemUser: await jumpcloudGetJson(
       buildReadRequest(
-        `/systemusers/${encodeURIComponent(requiredString(input.id, "id", jumpcloudInputError))}`,
+        `/systemusers/${encodeURIComponent(requiredString(input.id, "id", providerInputError))}`,
         input,
         context,
         "execute",
@@ -179,7 +176,7 @@ async function getSystem(input: Record<string, unknown>, context: JumpcloudActio
   return {
     system: await jumpcloudGetJson(
       buildReadRequest(
-        `/systems/${encodeURIComponent(requiredString(input.id, "id", jumpcloudInputError))}`,
+        `/systems/${encodeURIComponent(requiredString(input.id, "id", providerInputError))}`,
         input,
         context,
         "execute",
@@ -273,7 +270,7 @@ async function jumpcloudGetJson(input: JumpcloudRequestInput): Promise<unknown> 
 
 function jumpcloudHeaders(apiKey: string, orgId?: string): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
+    "accept": "application/json",
     "content-type": "application/json",
     "user-agent": providerUserAgent,
     "x-api-key": apiKey,
@@ -389,8 +386,4 @@ function readJumpcloudRegion(value: unknown): JumpcloudRegion {
     return defaultJumpcloudRegion;
   }
   throw new ProviderRequestError(400, "region must be one of us, eu, or in");
-}
-
-function jumpcloudInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

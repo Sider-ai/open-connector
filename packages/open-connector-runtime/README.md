@@ -67,4 +67,4 @@ the browser; only `prepared.authorizationUrl` is client-facing.
 
 ## License
 
-Apache-2.0. The published tarball includes the upstream license and notice files.
+The OpenConnector License applies. The published tarball includes LICENSE.txt, LICENSE-APACHE-2.0.txt, and NOTICE.md.

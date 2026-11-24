@@ -1,6 +1,8 @@
 import type { FeishuJsonRequest } from "./client.ts";
 
+import { optionalBoolean } from "../../../core/cast.ts";
 import { ProviderRequestError } from "../../provider-runtime.ts";
+import { readFeishuResponsePage } from "./response.ts";
 
 interface FeishuImUserActionHandler {
   (input: Record<string, unknown>): Promise<unknown>;
@@ -119,10 +121,10 @@ async function replyMessage(input: Record<string, unknown>, request: FeishuJsonR
 }
 
 function readPage(data: Record<string, unknown>) {
+  const page = readFeishuResponsePage(data);
   return {
-    items: Array.isArray(data.items) ? data.items : [],
-    hasMore: data.has_more === true,
-    pageToken: optionalString(data.page_token) ?? null,
+    ...page,
+    pageToken: page.pageToken ?? null,
   };
 }
 
@@ -139,10 +141,6 @@ function optionalString(value: unknown) {
 
 function optionalNumber(value: unknown) {
   return typeof value === "number" ? value : undefined;
-}
-
-function optionalBoolean(value: unknown) {
-  return typeof value === "boolean" ? value : undefined;
 }
 
 function requireObject(value: unknown, fieldName: string) {

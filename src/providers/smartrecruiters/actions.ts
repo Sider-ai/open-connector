@@ -3,7 +3,7 @@ import type { ActionDefinition } from "../../core/types.ts";
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
 
-const service = "smartrecruiters" as const;
+const service = "smartrecruiters";
 
 const idSchema = s.string("The SmartRecruiters resource identifier.", { minLength: 1 });
 const pageIdSchema = s.string("The SmartRecruiters pageId cursor returned by a previous page.", {
@@ -56,6 +56,7 @@ const candidateSchema = s.looseObject("A SmartRecruiters candidate returned by t
 
 const listJobsAction = defineProviderAction(service, {
   name: "list_jobs",
+  operationType: "read",
   description: "Search SmartRecruiters jobs with optional filters and cursor pagination.",
   requiredScopes: [],
   inputSchema: s.object(
@@ -87,6 +88,7 @@ const listJobsAction = defineProviderAction(service, {
 
 const getJobAction = defineProviderAction(service, {
   name: "get_job",
+  operationType: "read",
   description: "Get SmartRecruiters job details by job ID.",
   requiredScopes: [],
   inputSchema: s.object(
@@ -104,6 +106,7 @@ const getJobAction = defineProviderAction(service, {
 
 const searchCandidatesAction = defineProviderAction(service, {
   name: "search_candidates",
+  operationType: "read",
   description: "Search SmartRecruiters candidates with optional filters and cursor pagination.",
   requiredScopes: [],
   inputSchema: s.object(
@@ -141,6 +144,7 @@ const searchCandidatesAction = defineProviderAction(service, {
 
 const getCandidateAction = defineProviderAction(service, {
   name: "get_candidate",
+  operationType: "read",
   description: "Get SmartRecruiters candidate details by candidate ID.",
   requiredScopes: [],
   inputSchema: s.object("The input payload for getting one SmartRecruiters candidate.", {

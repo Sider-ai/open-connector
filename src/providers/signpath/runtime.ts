@@ -1,14 +1,15 @@
 import type { CredentialValidationResult, ExecutionContext, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
 import {
   createProviderTimeout,
-  defineProviderExecutors,
   ProviderRequestError,
   providerUserAgent,
-  requireApiKeyCredential,
+  providerInputError,
 } from "../provider-runtime.ts";
 
 type SignpathActionContext = {
@@ -21,7 +22,6 @@ type SignpathActionHandler = (input: Record<string, unknown>, context: SignpathA
 type SignpathPhase = "validate" | "execute";
 
 export const signpathApiBaseUrl = "https://app.signpath.io/api/v1";
-const signpathDefaultRequestTimeoutMs = 30_000;
 
 export const signpathActionHandlers: ProviderActionHandlers<"signpath", SignpathActionHandler> = {
   async list_signing_policies(input, context) {
@@ -102,9 +102,7 @@ export async function validateSignpathCredential(
     profile: {
       accountId: organizationId,
       displayName: "SignPath API Token",
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: signpathApiBaseUrl,
       organizationId,
@@ -145,7 +143,7 @@ async function requestSignpathJson(
   signal: AbortSignal | undefined,
   phase: SignpathPhase,
 ) {
-  const timeoutSignal = createProviderTimeout(signal, signpathDefaultRequestTimeoutMs);
+  const timeoutSignal = createProviderTimeout(signal);
 
   try {
     const response = await fetcher(buildSignpathUrl(input), {
@@ -189,8 +187,8 @@ async function requestSignpathJson(
 
 function buildSignpathHeaders(apiKey: string, body?: BodyInit) {
   return {
-    authorization: `Bearer ${apiKey}`,
-    accept: "application/json",
+    "authorization": `Bearer ${apiKey}`,
+    "accept": "application/json",
     ...(body instanceof FormData ? {} : { "content-type": "application/json" }),
     "user-agent": providerUserAgent,
   };
@@ -240,7 +238,7 @@ function createSignpathError(status: number, payload: unknown, phase: SignpathPh
   }
 
   if (status >= 400 && status < 500) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   return new ProviderRequestError(status || 502, message);

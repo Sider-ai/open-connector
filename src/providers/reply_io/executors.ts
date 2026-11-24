@@ -1,10 +1,16 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { createHash } from "node:crypto";
 import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "reply_io";
 const replyIoApiBaseUrl = "https://api.reply.io";
@@ -54,6 +60,14 @@ export const replyIoActionHandlers: ProviderActionHandlers<"reply_io", ReplyIoAc
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, replyIoActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: replyIoApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  defaultHeaders: { "accept": "application/json", "content-type": "application/json" },
+});
+
 export const credentialValidators: CredentialValidators = {
   apiKey(input, { fetcher, signal }) {
     return validateReplyIoCredential(input.apiKey, fetcher, signal);
@@ -76,9 +90,7 @@ async function validateReplyIoCredential(
           ? `reply_io:key:${createHash("sha256").update(apiKey).digest("hex").slice(0, 16)}`
           : `reply_io:user:${userId}`,
       displayName: username ?? (userId === undefined ? "Reply.io API Key" : `Reply.io ${userId}`),
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: replyIoApiBaseUrl,
       validationEndpoint: "/v3/whoami",
@@ -99,7 +111,7 @@ function createReplyIoUrl(path: string, query: Record<string, unknown> = {}): UR
 }
 
 async function requestReplyIo(
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   request: {
     method: string;
     path?: string;
@@ -113,8 +125,8 @@ async function requestReplyIo(
     response = await context.fetcher(url, {
       method: request.method,
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${context.apiKey}`,
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },

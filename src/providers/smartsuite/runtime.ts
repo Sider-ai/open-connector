@@ -1,6 +1,12 @@
 import { optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import { jsonObject } from "../../core/request.ts";
-import { createProviderTimeout, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import {
+  createProviderTimeout,
+  ProviderRequestError,
+  providerUserAgent,
+  providerInputError,
+  providerResponseError,
+} from "../provider-runtime.ts";
 
 interface ApiKeyProviderActionInput {
   apiKey: string;
@@ -10,7 +16,6 @@ interface ApiKeyProviderActionInput {
 }
 
 export const smartsuiteApiBaseUrl = "https://app.smartsuite.com/api/v1";
-const smartsuiteRequestTimeoutMs = 30_000;
 
 interface SmartsuiteActionInput extends ApiKeyProviderActionInput {
   actionName: string;
@@ -158,13 +163,13 @@ async function requestSmartsuite(input: SmartsuiteRequestInput) {
   for (const [key, value] of Object.entries(input.query ?? {})) {
     if (value !== undefined) url.searchParams.set(key, String(value));
   }
-  const timeout = createProviderTimeout(undefined, smartsuiteRequestTimeoutMs);
+  const timeout = createProviderTimeout(undefined);
   try {
     const response = await input.fetcher(url, {
       method: input.method ?? "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Token ${input.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Token ${input.apiKey}`,
         "account-id": input.workspaceId,
         "content-type": "application/json",
         "user-agent": providerUserAgent,
@@ -215,9 +220,9 @@ function createSmartsuiteError(response: Response, payload: unknown, phase: "val
     return new ProviderRequestError(phase === "validate" ? 400 : 401, message);
   }
   if (400 <= response.status && response.status < 500) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
-  return new ProviderRequestError(502, message);
+  return providerResponseError(message);
 }
 
 function readWorkspaceId(input: Record<string, unknown> | undefined) {

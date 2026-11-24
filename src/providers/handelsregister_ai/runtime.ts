@@ -1,8 +1,8 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { providerInputError, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 export const handelsregisterAiApiBaseUrl = "https://handelsregister.ai/api";
 
 export const handelsregisterAiActionHandlers: ProviderActionHandlers<
@@ -20,7 +20,7 @@ export const handelsregisterAiActionHandlers: ProviderActionHandlers<
   },
   fetch_organization(input, context) {
     const query = new URLSearchParams();
-    appendString(query, "q", requiredString(input.q, "q", badInput));
+    appendString(query, "q", requiredString(input.q, "q", providerInputError));
     if (Array.isArray(input.features)) for (const feature of input.features) appendString(query, "feature", feature);
     appendString(query, "ai_search", input.ai_search);
     appendString(query, "realtime_mode", input.realtime_mode);
@@ -35,7 +35,6 @@ export const handelsregisterAiActionHandlers: ProviderActionHandlers<
 };
 export async function validateHandelsregisterAi(context: ApiKeyProviderContext): Promise<{
   profile: { accountId: string; displayName: string };
-  grantedScopes: string[];
   metadata: Record<string, unknown>;
 }> {
   const payload = await request("/v1/account", undefined, context, "validate");
@@ -43,7 +42,6 @@ export async function validateHandelsregisterAi(context: ApiKeyProviderContext):
   const label = optionalString(account?.name) ?? "Handelsregister AI API Key";
   return {
     profile: { accountId: "api_key", displayName: label },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: handelsregisterAiApiBaseUrl,
       validationEndpoint: "/v1/account",
@@ -60,7 +58,7 @@ async function request(
   const url = new URL(`${handelsregisterAiApiBaseUrl}${path}`);
   if (query) url.search = query.toString();
   const response = await context.fetcher(url, {
-    headers: { accept: "application/json", "user-agent": providerUserAgent, "x-api-key": context.apiKey },
+    headers: { "accept": "application/json", "user-agent": providerUserAgent, "x-api-key": context.apiKey },
     signal: context.signal,
   });
   const text = await response.text();
@@ -95,7 +93,4 @@ function appendString(query: URLSearchParams, name: string, value: unknown): voi
 }
 function appendNumber(query: URLSearchParams, name: string, value: unknown): void {
   if (typeof value === "number") query.append(name, String(value));
-}
-function badInput(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

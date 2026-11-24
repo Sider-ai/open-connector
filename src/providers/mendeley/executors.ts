@@ -1,18 +1,14 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { OAuthProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { OAuthProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
-import {
-  defineOAuthProviderExecutors,
-  mapProviderActionHandlers,
-  ProviderRequestError,
-  providerUserAgent,
-} from "../provider-runtime.ts";
+import { defineOAuthProviderExecutors, mapProviderActionHandlers } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent, defaultProviderRequestTimeoutMs } from "../provider-runtime.ts";
 import { mendeleyActions } from "./actions.ts";
 
 const service = "mendeley";
 const mendeleyApiBaseUrl = "https://api.mendeley.com";
-const mendeleyRequestTimeoutMs = 30_000;
 const documentMediaType = "application/vnd.mendeley-document.1+json";
 const profileMediaType = "application/vnd.mendeley-profiles.1+json";
 
@@ -34,6 +30,16 @@ const handlers: ProviderActionHandlers<
   (_action, name) => (input, context) => executeMendeleyAction(name, input, context.accessToken, context.fetcher),
 );
 export const executors: ProviderExecutors = defineOAuthProviderExecutors(service, handlers);
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: mendeleyApiBaseUrl,
+  auth: { type: "oauth_bearer" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
 
 export const credentialValidators: CredentialValidators = {
   async oauth2(input, { fetcher }) {
@@ -144,8 +150,8 @@ async function requestMendeley(
   options: MendeleyRequestOptions,
 ) {
   const headers = new Headers({
-    accept: options.accept,
-    authorization: `Bearer ${accessToken}`,
+    "accept": options.accept,
+    "authorization": `Bearer ${accessToken}`,
     "user-agent": providerUserAgent,
   });
   if (options.contentType) headers.set("content-type", options.contentType);
@@ -153,7 +159,7 @@ async function requestMendeley(
     method: options.method ?? "GET",
     headers,
     body: options.body,
-    signal: AbortSignal.timeout(mendeleyRequestTimeoutMs),
+    signal: AbortSignal.timeout(defaultProviderRequestTimeoutMs),
   });
   if (!response.ok) {
     const payload = await readOptionalJson(response);

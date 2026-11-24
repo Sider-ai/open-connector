@@ -1,11 +1,10 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { optionalRecord, optionalString } from "../../core/cast.ts";
 import { ProviderRequestError } from "../provider-runtime.ts";
 
-const what3wordsApiBaseUrl = "https://api.what3words.com/v3";
+export const what3wordsApiBaseUrl: string = "https://api.what3words.com/v3";
 const validationWords = "filled.count.soap";
 
 type What3wordsPhase = "validate" | "execute";
@@ -46,7 +45,6 @@ export async function validateWhat3wordsCredential(
       accountId: "what3words-api-key",
       displayName: "what3words API Key",
     },
-    grantedScopes: [],
     metadata: {
       validationEndpoint: "/convert-to-coordinates",
       apiBaseUrl: what3wordsApiBaseUrl,
@@ -59,7 +57,7 @@ export async function validateWhat3wordsCredential(
 async function what3wordsGet(
   path: string,
   query: Record<string, What3wordsQueryValue>,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: What3wordsPhase = "execute",
 ): Promise<unknown> {
   let response: Response;
@@ -108,7 +106,7 @@ function createWhat3wordsError(response: Response, payload: unknown, phase: What
     return new ProviderRequestError(400, message, payload);
   }
   if (phase === "execute" && (response.status === 401 || response.status === 403)) {
-    return new ProviderRequestError(409, message, payload);
+    return new ProviderRequestError(401, message, payload);
   }
   if (response.status === 400 || response.status === 404 || response.status === 422) {
     return new ProviderRequestError(400, message, payload);

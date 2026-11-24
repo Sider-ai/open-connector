@@ -1,8 +1,11 @@
-import type { IConnectionStore, StoredConnection } from "./connection-service.ts";
+import type { CatalogStore } from "./catalog-store.ts";
+import type { IConnectionStore, StoredConnection } from "./connection-store.ts";
 import type { ActionPolicySnapshot } from "./core/action-policy.ts";
 import type { ActionDefinition, ActionExecutor, ProviderDefinition, ResolvedCredential } from "./core/types.ts";
 import type { IProviderLoader } from "./providers/provider-loader.ts";
+import type { McpOutputMode } from "./server/mcp-settings.ts";
 import type { IRunLogStore, RunLog, RunLogPage } from "./server/storage/runtime-store.ts";
+import type { RuntimeGrant } from "./server/storage/runtime-token-service.ts";
 
 import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/client";
@@ -10,7 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createCatalogStore } from "./catalog-store.ts";
 import { ConnectionService } from "./connection-service.ts";
 import { ActionPolicyService, emptyPolicyRules } from "./core/action-policy.ts";
-import { createMcpServer } from "./mcp.ts";
+import { createMcpServer, listMcpToolSummaries } from "./mcp.ts";
 import { ActionRunner } from "./server/actions/action-runner.ts";
 
 const echoAction: ActionDefinition = {
@@ -18,6 +21,7 @@ const echoAction: ActionDefinition = {
   service: "example",
   name: "echo",
   description: "Echo input.",
+  operationType: "write",
   requiredScopes: [],
   providerPermissions: [],
   inputSchema: {
@@ -45,6 +49,7 @@ const getAccountAction: ActionDefinition = {
   service: "example_auth",
   name: "get_account",
   description: "Return the connected account.",
+  operationType: "read",
   requiredScopes: ["records:read"],
   providerPermissions: [],
   inputSchema: {
@@ -89,6 +94,200 @@ const secondaryCredential: ResolvedCredential = {
 };
 
 describe("MCP server", () => {
+  it.each<McpOutputMode>(["compatible", "compact"])("returns all tool payloads in %s mode", async (outputMode) => {
+    await withMcpClient(
+      async (client) => {
+        const requests = [
+          { name: "list_apps", arguments: {} },
+          { name: "list_connections", arguments: { service: "example" } },
+          { name: "search_actions", arguments: { query: "echo" } },
+          { name: "get_action_guide", arguments: { actionId: "example.echo" } },
+          { name: "execute_action", arguments: { actionId: "example.echo", input: { message: "hello" } } },
+        ];
+        for (const request of requests) {
+          const result = await client.callTool(request);
+          expect(result.structuredContent).toMatchObject({ ok: true, data: expect.anything() });
+          expect(result.isError).not.toBe(true);
+          expect(result.content).toEqual([
+            {
+              type: "text",
+              text:
+                outputMode === "compatible"
+                  ? JSON.stringify(result.structuredContent)
+                  : "The complete result is available in structuredContent.",
+            },
+          ]);
+        }
+      },
+      { outputMode },
+    );
+  });
+
+  it.each([
+    {
+      name: "get_action_guide",
+      arguments: { actionId: "missing.action" },
+      code: "unknown_action",
+      message: "Unknown action: missing.action",
+    },
+    {
+      name: "execute_action",
+      arguments: { actionId: "missing.action" },
+      code: "unknown_action",
+      message: "Unknown action: missing.action",
+    },
+    {
+      name: "execute_action",
+      arguments: { actionId: "example.echo", input: {} },
+      code: "invalid_input",
+      message: "Action input does not match the action schema.",
+    },
+  ])("keeps actionable compact errors for $name ($code)", async ({ name, arguments: input, code, message }) => {
+    await withMcpClient(
+      async (client) => {
+        const result = await client.callTool({ name, arguments: input });
+        expect(result).toMatchObject({
+          isError: true,
+          content: [{ type: "text", text: `${code}: ${message}` }],
+          structuredContent: { ok: false, error: { code, message } },
+        });
+      },
+      { outputMode: "compact" },
+    );
+  });
+
+  it("searches without loading schemas and filters denied hits before limiting", async () => {
+    const other: ActionDefinition = { ...echoAction, id: "example.echo_other", name: "echo_other" };
+    const catalog = createCatalogStore([{ ...exampleProvider, actions: [echoAction, other] }]);
+    const getAction = vi.spyOn(catalog, "getAction").mockRejectedValue(new Error("schema must stay lazy"));
+    const policy = new ActionPolicyService().createSnapshot(emptyPolicyRules(), {
+      allowedActions: [],
+      blockedActions: ["example.echo"],
+      allowedProxies: [],
+    });
+    await withMcpClient(
+      async (client) => {
+        const result = await client.callTool({ name: "search_actions", arguments: { query: "echo", limit: 1 } });
+        expect(result.structuredContent).toEqual({
+          ok: true,
+          data: [{ id: other.id, description: other.description, available: false }],
+        });
+        expect(getAction).not.toHaveBeenCalled();
+      },
+      { catalog, getPolicySnapshot: async () => policy },
+    );
+  });
+
+  it("loads connections in one batch for selected services without reading schemas", async () => {
+    const actions = [
+      getAccountAction,
+      { ...getAccountAction, id: "example_auth.get_other_account", name: "get_other_account" },
+    ];
+    const catalog = createCatalogStore([{ ...authenticatedProvider, actions }], {
+      executableActionIds: actions.map((action) => action.id),
+    });
+    const getAction = vi.spyOn(catalog, "getAction").mockRejectedValue(new Error("schema must remain lazy"));
+    const list = vi.spyOn(ConnectionService.prototype, "listConnections");
+    try {
+      await withMcpClient(
+        async (client) => {
+          const result = await client.callTool({ name: "search_actions", arguments: { query: "account" } });
+          expect(result.structuredContent).toMatchObject({ data: [expect.anything(), expect.anything()] });
+          expect(list).toHaveBeenCalledExactlyOnceWith(new Set(["example_auth"]));
+          expect(getAction).not.toHaveBeenCalled();
+        },
+        { catalog },
+      );
+    } finally {
+      list.mockRestore();
+    }
+  });
+
+  it("paginates provider names after policy filtering without reading schemas", async () => {
+    const providers = ["alpha", "beta", "gamma"].map((service) => ({
+      ...exampleProvider,
+      service,
+      displayName: service,
+      actions: [{ ...echoAction, id: `${service}.echo`, service }],
+    }));
+    const catalog = createCatalogStore(providers);
+    const getAction = vi.spyOn(catalog, "getAction").mockRejectedValue(new Error("schema must stay lazy"));
+    const policy = new ActionPolicyService().createSnapshot(emptyPolicyRules(), {
+      allowedActions: [],
+      blockedActions: ["alpha.*"],
+      allowedProxies: [],
+    });
+    await withMcpClient(
+      async (client) => {
+        const first = await client.callTool({ name: "list_apps", arguments: { limit: 1 } });
+        expect(first.structuredContent).toEqual({
+          ok: true,
+          data: [{ service: "beta", displayName: "beta" }],
+          nextCursor: "1",
+        });
+        const second = await client.callTool({ name: "list_apps", arguments: { limit: 1, cursor: "1" } });
+        expect(second.structuredContent).toEqual({
+          ok: true,
+          data: [{ service: "gamma", displayName: "gamma" }],
+          nextCursor: null,
+        });
+        expect(second.content).toEqual([{ type: "text", text: JSON.stringify(second.structuredContent) }]);
+        expect(getAction).not.toHaveBeenCalled();
+      },
+      { catalog, getPolicySnapshot: async () => policy },
+    );
+  });
+
+  it("paginates connection summaries without profiles", async () => {
+    await withAuthenticatedMcpClient(async (client) => {
+      const first = await client.callTool({
+        name: "list_connections",
+        arguments: { service: "example_auth", limit: 1 },
+      });
+      expect(first.structuredContent).toMatchObject({ data: [{ connectionName: "default" }], nextCursor: "1" });
+      const second = await client.callTool({
+        name: "list_connections",
+        arguments: { service: "example_auth", limit: 1, cursor: "1" },
+      });
+      expect(second.structuredContent).toMatchObject({ data: [{ connectionName: "secondary" }], nextCursor: null });
+      expect(JSON.stringify(second.structuredContent)).not.toContain("profile");
+    });
+  });
+
+  it.each([
+    { name: "search_actions", arguments: { query: " " } },
+    { name: "search_actions", arguments: { query: "echo", limit: 21 } },
+    { name: "list_connections", arguments: {} },
+    { name: "list_apps", arguments: { cursor: "-1" } },
+    { name: "list_apps", arguments: { limit: 51 } },
+  ])("rejects invalid discovery inputs: %j", async (request) => {
+    await withMcpClient(async (client) => {
+      const result = await client.callTool(request);
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  it.each(["missing", "unreadable"])("returns structured discovery errors for %s action definitions", async (state) => {
+    const catalog = createCatalogStore([exampleProvider]);
+    vi.spyOn(catalog, "getAction").mockImplementation(async () => {
+      if (state === "unreadable") throw new Error("private catalog file path");
+      return undefined;
+    });
+    await withMcpClient(
+      async (client) => {
+        for (const request of [{ name: "get_action_guide", arguments: { actionId: "example.echo" } }]) {
+          const response = await client.callTool(request);
+          expect(response.structuredContent).toMatchObject({
+            ok: false,
+            error: { code: state === "missing" ? "unknown_action" : "internal_error" },
+          });
+          expect(JSON.stringify(response)).not.toContain("private catalog file path");
+        }
+      },
+      { catalog },
+    );
+  });
+
   it("lists the discovery tools through the MCP protocol", async () => {
     await withMcpClient(async (client) => {
       const result = await client.listTools();
@@ -100,6 +299,23 @@ describe("MCP server", () => {
         "get_action_guide",
         "execute_action",
       ]);
+      expect(result.tools.map((tool) => tool.annotations)).toEqual([
+        { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+        { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+        { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+        { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+        { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+      ]);
+    });
+  });
+
+  it("projects the tool summaries from the registered tools", async () => {
+    await withMcpClient(async (client) => {
+      const result = await client.listTools();
+
+      expect(listMcpToolSummaries()).toEqual(
+        result.tools.map(({ name, title, description }) => ({ name, title, description })),
+      );
     });
   });
 
@@ -109,79 +325,8 @@ describe("MCP server", () => {
 
       expect(instructions).toBeTypeOf("string");
       expect(instructions).toContain("use list_connections before choosing among multiple accounts");
-      expect(instructions).toContain("Always call get_action_guide before execute_action");
-      expect(instructions).not.toContain("request at most 10 items from paginated Actions");
+      expect(instructions).toContain("Call get_action_guide before execute_action");
     });
-  });
-
-  it("defaults action search to ten compact model-facing results", async () => {
-    await withMcpClient(async (client) => {
-      const tools = await client.listTools();
-      const searchTool = tools.tools.find((tool) => tool.name === "search_actions");
-      const limitSchema = (searchTool?.inputSchema.properties as Record<string, Record<string, unknown>> | undefined)
-        ?.limit;
-      const result = await client.callTool({
-        name: "search_actions",
-        arguments: { query: "echo" },
-      });
-      const text = result.content.find((content) => content.type === "text")?.text ?? "";
-
-      expect(limitSchema?.default).toBe(10);
-      expect(JSON.parse(text)).toEqual({
-        ok: true,
-        data: [
-          {
-            id: "example.echo",
-            service: "example",
-            name: "echo",
-            description: "Echo input.",
-            inputSummary: [{ name: "message", required: true, type: "string", description: "" }],
-          },
-        ],
-        returnedCount: 1,
-        hasMore: false,
-      });
-      expect(result.structuredContent).toMatchObject({
-        ok: true,
-        data: [{ id: "example.echo", capability: expect.any(Object) }],
-        returnedCount: 1,
-        hasMore: false,
-      });
-    });
-  });
-
-  it("tells the model when more action search matches are available", async () => {
-    const secondEchoAction: ActionDefinition = {
-      ...echoAction,
-      id: "example.echo_twice",
-      name: "echo_twice",
-      description: "Echo input twice.",
-    };
-    await withMcpClient(
-      async (client) => {
-        const result = await client.callTool({
-          name: "search_actions",
-          arguments: { query: "echo", limit: 1 },
-        });
-        const text = result.content.find((content) => content.type === "text")?.text ?? "";
-        const modelPayload = JSON.parse(text) as Record<string, unknown>;
-
-        expect(modelPayload).toMatchObject({
-          ok: true,
-          returnedCount: 1,
-          hasMore: true,
-          hint: "More matches are available. Refine query or increase limit (maximum 50).",
-        });
-        expect(modelPayload.data).toHaveLength(1);
-        expect(result.structuredContent).toMatchObject({
-          returnedCount: 1,
-          hasMore: true,
-          hint: "More matches are available. Refine query or increase limit (maximum 50).",
-        });
-      },
-      {},
-      [echoAction, secondEchoAction],
-    );
   });
 
   it("returns structured content for action search and execution", async () => {
@@ -201,7 +346,7 @@ describe("MCP server", () => {
         data: [
           {
             id: "example.echo",
-            service: "example",
+            available: true,
           },
         ],
       });
@@ -223,166 +368,23 @@ describe("MCP server", () => {
     });
   });
 
-  it("replaces oversized Action text with a bounded field overview and keeps complete structured content", async () => {
+  it("renders an execute_action example in action guides instead of HTTP requests", async () => {
     await withMcpClient(async (client) => {
-      const message = `prefix-${'🙂\\"'.repeat(24 * 1024)}-suffix`;
-      const result = await client.callTool({
-        name: "execute_action",
-        arguments: { actionId: "example.echo", input: { message } },
-      });
-      const text = result.content.find((content) => content.type === "text")?.text ?? "";
-      const truncated = JSON.parse(text) as Record<string, unknown>;
-      const complete = JSON.stringify(result.structuredContent);
+      const guide = await client.callTool({ name: "get_action_guide", arguments: { actionId: "example.echo" } });
 
-      expect(text.length).toBeLessThanOrEqual(64 * 1024);
-      expect(truncated).toMatchObject({
+      expect(guide.structuredContent).toMatchObject({
         ok: true,
-        resultOmitted: true,
-        originalCharacterCount: complete.length,
-        outputFields: {
-          fields: expect.arrayContaining([expect.objectContaining({ path: "message", type: "string" })]),
+        data: {
+          capability: {
+            operationType: "write",
+          },
+          markdown: expect.stringContaining("Call the `execute_action` tool with these arguments:"),
         },
       });
-      expect(truncated).not.toHaveProperty("contentPrefix");
-      expect(text.length).toBeLessThan(4_000);
-      expect(truncated.hint).toContain("never repeat a write");
-      expect(result.structuredContent).toMatchObject({ ok: true, data: { message } });
-    });
-  });
-
-  it("wraps oversized non-Action model text in bounded valid JSON", async () => {
-    const action = {
-      ...echoAction,
-      description: `large-guide-${"x".repeat(70 * 1024)}`,
-    };
-    await withMcpClient(
-      async (client) => {
-        const result = await client.callTool({
-          name: "get_action_guide",
-          arguments: { actionId: action.id },
-        });
-        const text = result.content.find((content) => content.type === "text")?.text ?? "";
-        const bounded = JSON.parse(text) as Record<string, unknown>;
-
-        expect(text.length).toBeLessThanOrEqual(64 * 1024);
-        expect(bounded).toMatchObject({
-          truncated: true,
-          originalCharacterCount: expect.any(Number),
-          contentPrefix: expect.stringContaining('{"ok":true'),
-          hint: "Narrow the request or use pagination to retrieve a smaller result.",
-        });
-        expect(result.structuredContent).toMatchObject({ ok: true });
-      },
-      {},
-      [action],
-    );
-  });
-
-  it("projects only model-facing output without altering provider input, full output or execution metadata", async () => {
-    const action = {
-      ...echoAction,
-      inputSchema: { type: "object" },
-      outputSchema: {
-        type: "object",
-        properties: {
-          total_count: { type: "integer" },
-          items: {
-            type: "array",
-            items: { type: "object", properties: { name: { type: "string" }, body: { type: "string" } } },
-          },
-        },
-      },
-    };
-    await withMcpClient(
-      async (client) => {
-        const guide = await client.callTool({ name: "get_action_guide", arguments: { actionId: action.id } });
-        expect(guide.structuredContent).toMatchObject({
-          data: {
-            outputFields: {
-              fields: expect.arrayContaining([expect.objectContaining({ path: "items[].name", type: "string" })]),
-            },
-          },
-        });
-        const input = {
-          total_count: 100,
-          items: Array.from({ length: 100 }, (_, i) => ({ name: `record-${i}`, body: "x".repeat(2_000) })),
-        };
-        const run = await client.callTool({
-          name: "execute_action",
-          arguments: {
-            actionId: action.id,
-            input,
-            resultFields: ["total_count", "items[].name"],
-          },
-        });
-        const text = run.content.find((c) => c.type === "text")?.text ?? "";
-        const model = JSON.parse(text);
-        expect(text.length).toBeLessThan(4_000);
-        expect(model.data).toEqual({ total_count: 100, items: input.items.map(({ name }) => ({ name })) });
-        expect(model).toMatchObject({ ok: true, executionId: expect.any(String), auditPersisted: true });
-        expect(model).not.toHaveProperty("resultOmitted");
-        expect(run.structuredContent).toMatchObject({ ok: true, data: input });
-      },
-      {},
-      [action],
-    );
-  });
-
-  it("rejects malformed selectors before invoking the Action runner", async () => {
-    const run = vi.spyOn(ActionRunner.prototype, "run");
-    try {
-      await withMcpClient(async (client) => {
-        const result = await client.callTool({
-          name: "execute_action",
-          arguments: {
-            actionId: echoAction.id,
-            input: { message: "hello" },
-            resultFields: ["message[0]"],
-          },
-        });
-        expect(result.structuredContent).toMatchObject({ ok: false, error: { code: "invalid_result_fields" } });
-        expect(result.isError).toBe(true);
-      });
-      expect(run).not.toHaveBeenCalled();
-    } finally {
-      run.mockRestore();
-    }
-  });
-
-  it("does not turn a successful Action into a retryable failure when a selected output field is absent", async () => {
-    await withMcpClient(async (client) => {
-      const result = await client.callTool({
-        name: "execute_action",
-        arguments: {
-          actionId: echoAction.id,
-          input: { message: "hello" },
-          resultFields: ["misspelled"],
-        },
-      });
-      expect(result.isError).toBeUndefined();
-      expect(result.structuredContent).toMatchObject({ ok: true, data: { message: "hello" } });
-      const text = result.content.find((c) => c.type === "text")?.text ?? "";
-      expect(JSON.parse(text)).toMatchObject({
-        ok: true,
-        resultOmitted: true,
-        executionId: expect.any(String),
-        selectionError: { code: "invalid_result_fields", message: expect.stringContaining("misspelled") },
-      });
-    });
-  });
-
-  it("preserves execution errors when resultFields are supplied", async () => {
-    await withMcpClient(async (client) => {
-      const result = await client.callTool({
-        name: "execute_action",
-        arguments: {
-          actionId: echoAction.id,
-          input: {},
-          resultFields: ["message"],
-        },
-      });
-      expect(result.structuredContent).toMatchObject({ ok: false, error: { code: "invalid_input" } });
-      expect(result.isError).toBe(true);
+      const markdown = (guide.structuredContent as { data: { markdown: string } }).data.markdown;
+      expect(markdown).toContain('"actionId": "example.echo"');
+      expect(markdown).not.toContain("curl");
+      expect(markdown).not.toContain("localhost");
     });
   });
 
@@ -397,29 +399,16 @@ describe("MCP server", () => {
       expect(result.structuredContent).toEqual({
         ok: true,
         data: [
-          {
-            id: "connection-default",
-            service: "example_auth",
-            connectionName: "default",
-            authType: "api_key",
-            default: true,
-            profile: defaultCredential.profile,
-          },
-          {
-            id: "connection-secondary",
-            service: "example_auth",
-            connectionName: "secondary",
-            authType: "api_key",
-            default: false,
-            profile: secondaryCredential.profile,
-          },
+          { connectionName: "default", accountLabel: "Default Account", default: true, available: true },
+          { connectionName: "secondary", accountLabel: "Secondary Account", default: false, available: true },
         ],
+        nextCursor: null,
       });
       expect(JSON.stringify(result.structuredContent)).not.toContain("test-token");
     });
   });
 
-  it("keeps virtual no-auth connections discoverable without a connection grant", async () => {
+  it("omits virtual no-auth accounts without preventing action discovery", async () => {
     const policy = new ActionPolicyService().createSnapshot(emptyPolicyRules(), {
       allowedActions: [],
       blockedActions: [],
@@ -432,11 +421,39 @@ describe("MCP server", () => {
 
         expect(result.structuredContent).toMatchObject({
           ok: true,
-          data: [{ service: "example", authType: "no_auth", connectionName: "default" }],
+          data: [],
+          nextCursor: null,
         });
       },
       { getPolicySnapshot: async () => policy },
     );
+  });
+
+  it("returns compact search summaries and keeps the full capability in guides", async () => {
+    await withAuthenticatedMcpClient(async (client) => {
+      const search = await client.callTool({
+        name: "search_actions",
+        arguments: { query: "account", service: "example_auth" },
+      });
+      const guide = await client.callTool({
+        name: "get_action_guide",
+        arguments: { actionId: "example_auth.get_account" },
+      });
+
+      expect(search.structuredContent).toEqual({
+        ok: true,
+        data: [{ id: "example_auth.get_account", description: "Return the connected account.", available: true }],
+      });
+      expect(guide.structuredContent).toMatchObject({
+        ok: true,
+        data: {
+          capability: {
+            requiredScopes: ["records:read"],
+            connection: { connectionName: "default", profile: defaultCredential.profile },
+          },
+        },
+      });
+    });
   });
 
   it("uses an explicitly selected connection for guides and execution", async () => {
@@ -484,7 +501,7 @@ describe("MCP server", () => {
     }, runs);
   });
 
-  it("returns the selected connection when execution fails", async () => {
+  it("returns validation errors before resolving the selected connection", async () => {
     await withAuthenticatedMcpClient(async (client) => {
       const result = await client.callTool({
         name: "execute_action",
@@ -504,11 +521,8 @@ describe("MCP server", () => {
         },
         executionId: expect.any(String),
         auditPersisted: true,
-        connection: {
-          connectionName: "secondary",
-          profile: secondaryCredential.profile,
-        },
       });
+      expect(result.structuredContent).not.toHaveProperty("connection");
     });
   });
 
@@ -592,17 +606,12 @@ describe("MCP server", () => {
         ok: false,
         executionId: expect.any(String),
         auditPersisted: true,
-        connection: {
-          service: "example",
-          connectionName: "default",
-          authType: "no_auth",
-          default: true,
-        },
         error: {
           code: "invalid_input",
           message: "Action input does not match the action schema.",
         },
       });
+      expect(result.structuredContent).not.toHaveProperty("connection");
     });
   });
 
@@ -647,10 +656,10 @@ describe("MCP server", () => {
     await withMcpClient(
       async (client) => {
         await client.callTool({ name: "list_apps", arguments: {} });
-        await client.callTool({ name: "list_connections", arguments: {} });
+        await client.callTool({ name: "list_connections", arguments: { service: "example" } });
         expect(load).toHaveBeenCalledTimes(1);
 
-        await client.callTool({ name: "search_actions", arguments: { limit: 5 } });
+        await client.callTool({ name: "search_actions", arguments: { query: "echo", limit: 5 } });
         await client.callTool({ name: "get_action_guide", arguments: { actionId: "example.echo" } });
         expect(load).toHaveBeenCalledTimes(1);
       },
@@ -663,8 +672,8 @@ describe("MCP server", () => {
       async (client) => {
         for (const request of [
           { name: "list_apps", arguments: {} },
-          { name: "list_connections", arguments: {} },
-          { name: "search_actions", arguments: { limit: 5 } },
+          { name: "list_connections", arguments: { service: "example" } },
+          { name: "search_actions", arguments: { query: "echo", limit: 5 } },
           { name: "get_action_guide", arguments: { actionId: "example.echo" } },
           { name: "execute_action", arguments: { actionId: "example.echo", input: { message: "hello" } } },
         ]) {
@@ -849,24 +858,31 @@ describe("MCP server", () => {
   });
 });
 
-async function withMcpClient(
-  run: (client: Client) => Promise<void>,
-  policy: {
-    getPolicySnapshot?(): Promise<ActionPolicySnapshot>;
-    runtimeGrant?: {
-      tokenId: string;
-      allowedActions: string[];
-      blockedActions: string[];
-      allowedProxies: string[];
-      allowedConnections?: string[];
-    };
-    signal?: AbortSignal;
-  } = {},
-  catalogActions: readonly ActionDefinition[] = exampleProvider.actions,
-): Promise<void> {
-  const catalog = createCatalogStore([{ ...exampleProvider, actions: [...catalogActions] }], {
-    executableActionIds: catalogActions.map((action) => action.id),
-  });
+interface McpPolicyOptions {
+  getPolicySnapshot?(): Promise<ActionPolicySnapshot>;
+  runtimeGrant?: RuntimeGrant;
+}
+
+interface McpClientOptions extends McpPolicyOptions {
+  signal?: AbortSignal;
+  catalog?: CatalogStore;
+  outputMode?: McpOutputMode;
+}
+
+/** Default to an empty deployment policy scoped to the runtime grant, the way the server does without a store. */
+function policySnapshotFor(policy: McpPolicyOptions): () => Promise<ActionPolicySnapshot> {
+  return (
+    policy.getPolicySnapshot ??
+    (async () => new ActionPolicyService().createSnapshot(emptyPolicyRules(), policy.runtimeGrant))
+  );
+}
+
+async function withMcpClient(run: (client: Client) => Promise<void>, policy: McpClientOptions = {}): Promise<void> {
+  const catalog =
+    policy.catalog ??
+    createCatalogStore([exampleProvider], {
+      executableActionIds: ["example.echo"],
+    });
   const providerLoader = new EchoProviderLoader();
   const connections = new ConnectionService({
     catalog,
@@ -881,10 +897,10 @@ async function withMcpClient(
   });
   const server = createMcpServer({
     catalog,
-    providerLoader,
     connections,
     actions,
     ...policy,
+    getPolicySnapshot: policySnapshotFor(policy),
   });
   const client = new Client({ name: "mcp-test", version: "0.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -901,16 +917,7 @@ async function withMcpClient(
 async function withAuthenticatedMcpClient(
   run: (client: Client) => Promise<void>,
   runs = new MemoryRunLogStore(),
-  policy: {
-    getPolicySnapshot?(): Promise<ActionPolicySnapshot>;
-    runtimeGrant?: {
-      tokenId: string;
-      allowedActions: string[];
-      blockedActions: string[];
-      allowedProxies: string[];
-      allowedConnections?: string[];
-    };
-  } = {},
+  policy: McpPolicyOptions = {},
 ): Promise<void> {
   const catalog = createCatalogStore([authenticatedProvider], {
     executableActionIds: ["example_auth.get_account"],
@@ -937,7 +944,13 @@ async function withAuthenticatedMcpClient(
     ]),
   });
   const actions = new ActionRunner({ catalog, providerLoader, connections, runs });
-  const server = createMcpServer({ catalog, providerLoader, connections, actions, ...policy });
+  const server = createMcpServer({
+    catalog,
+    connections,
+    actions,
+    ...policy,
+    getPolicySnapshot: policySnapshotFor(policy),
+  });
   const client = new Client({ name: "mcp-test", version: "0.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
@@ -976,6 +989,10 @@ class EchoProviderLoader implements IProviderLoader {
 class MemoryConnectionStore implements IConnectionStore {
   private readonly connections = new Map<string, StoredConnection>();
 
+  async getById(id: string): Promise<StoredConnection | undefined> {
+    return [...this.connections.values()].find((connection) => connection.id === id);
+  }
+
   constructor(connections: StoredConnection[] = []) {
     for (const connection of connections) {
       this.connections.set(this.key(connection.service, connection.connectionName), connection);
@@ -986,7 +1003,29 @@ class MemoryConnectionStore implements IConnectionStore {
     return this.connections.get(this.key(service, connectionName));
   }
 
-  async set(service: string, connectionName: string, credential: ResolvedCredential): Promise<StoredConnection> {
+  private readonly retirementGenerations = new Map<string, string>();
+
+  async getRetirementGeneration(service: string, connectionName: string): Promise<string> {
+    const key = JSON.stringify([service, connectionName]);
+    let generation = this.retirementGenerations.get(key);
+    if (!generation) {
+      generation = crypto.randomUUID();
+      this.retirementGenerations.set(key, generation);
+    }
+    return generation;
+  }
+
+  async setIfCurrentGeneration(
+    service: string,
+    connectionName: string,
+    credential: ResolvedCredential,
+    retirementGeneration: string,
+  ) {
+    if ((await this.getRetirementGeneration(service, connectionName)) !== retirementGeneration) return undefined;
+    return this.set(service, connectionName, credential);
+  }
+
+  async set(service: string, connectionName: string, credential: ResolvedCredential) {
     const key = this.key(service, connectionName);
     const connection = {
       id: this.connections.get(key)?.id ?? crypto.randomUUID(),
@@ -1008,6 +1047,7 @@ class MemoryConnectionStore implements IConnectionStore {
   }
 
   async delete(service: string, connectionName: string): Promise<void> {
+    this.retirementGenerations.set(JSON.stringify([service, connectionName]), crypto.randomUUID());
     this.connections.delete(this.key(service, connectionName));
   }
 

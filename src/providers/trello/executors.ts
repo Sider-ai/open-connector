@@ -1,29 +1,26 @@
 import type {
   CredentialValidators,
   ExecutionContext,
-  ExecutionResult,
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { TrelloActionContext } from "./runtime.ts";
-import type { TrelloCredential } from "./runtime.ts";
+import type { TrelloActionContext, TrelloAuth } from "./runtime.ts";
 
+import { encodeRfc3986 } from "../../core/aws-sigv4.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
 import {
-  createProviderFetch,
   createProviderProxyUrl,
-  defineProviderExecutors,
   normalizeProviderProxyHeaders,
-  ProviderRequestError,
-  providerUserAgent,
   readProviderProxyErrorMessage,
   readProviderProxyResponse,
-  toProviderExecutionError,
   toProviderProxyError,
-} from "../provider-runtime.ts";
+} from "../provider-proxy.ts";
+import { createProviderFetch, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 import {
-  applyTrelloAuthentication,
   trelloActionHandlers,
-  trelloApiBaseUrl,
+  trelloBaseUrl,
+  trelloResponseErrorCode,
+  trelloBearerAuth,
   validateTrelloCredential,
   validateTrelloOAuthCredential,
 } from "./runtime.ts";
@@ -36,40 +33,37 @@ export const executors: ProviderExecutors = defineProviderExecutors<TrelloAction
   service,
   handlers: trelloActionHandlers,
   skipDnsValidation: true,
-  mapError: mapTrelloActionError,
   async createContext(context: ExecutionContext, fetcher: typeof fetch): Promise<TrelloActionContext> {
-    const credential = await requireTrelloCredential(context);
-    return {
-      ...credential,
-      fetcher,
-      signal: context.signal,
-    };
+    return { auth: await requireTrelloAuth(context), fetcher, signal: context.signal };
   },
 });
 
-export function mapTrelloActionError(error: unknown): ExecutionResult {
-  const result = toProviderExecutionError(error, "Trello request failed");
-  if (!(error instanceof ProviderRequestError) || error.status !== 400 || result.ok || !result.error) {
-    return result;
+async function requireTrelloAuth(context: ExecutionContext): Promise<TrelloAuth> {
+  const credential = await context.getCredential(service);
+  if (credential?.authType === "oauth2") {
+    return trelloBearerAuth(credential);
   }
-  const details = error.details;
-  const upstreamMessage =
-    details !== null && typeof details === "object" && "upstreamMessage" in details
-      ? details.upstreamMessage
-      : undefined;
-  if (upstreamMessage !== "invalid token" && upstreamMessage !== "invalid key") {
-    return result;
+  if (credential?.authType === "custom_credential") {
+    return { type: "key", apiKey: credential.values.apiKey, apiToken: credential.values.apiToken };
   }
-  return { ...result, error: { ...result.error, code: "authorization_failed" } };
+  throw new ProviderRequestError(401, "Connect trello with OAuth or configure custom credentials first.");
 }
 
 export const proxy: ProviderProxyExecutor = async (input, context) => {
   try {
-    const credential = await requireTrelloCredential(context);
-    const url = createProviderProxyUrl(trelloApiBaseUrl, input.endpoint, input.query);
+    const auth = await requireTrelloAuth(context);
+    const url = createProviderProxyUrl(trelloBaseUrl(auth), input.endpoint, input.query);
+    url.searchParams.delete("key");
+    url.searchParams.delete("token");
     const headers = normalizeProviderProxyHeaders(input.headers);
+    // Trello attachment downloads require header authentication, unlike metadata reads.
+    headers.set(
+      "authorization",
+      auth.type === "bearer"
+        ? `${auth.tokenType} ${auth.accessToken}`
+        : `OAuth oauth_consumer_key="${encodeRfc3986(auth.apiKey)}", oauth_token="${encodeRfc3986(auth.apiToken)}"`,
+    );
     headers.set("user-agent", providerUserAgent);
-    applyTrelloAuthentication(url, headers, credential);
 
     const init: RequestInit = {
       method: input.method,
@@ -86,7 +80,12 @@ export const proxy: ProviderProxyExecutor = async (input, context) => {
     const response = await trelloFetch(url, init);
     if (!response.ok) {
       const text = await readProviderProxyErrorMessage(response, "");
-      throw new ProviderRequestError(response.status, text || `Trello request failed with HTTP ${response.status}`);
+      throw new ProviderRequestError(
+        response.status,
+        text || `Trello request failed with HTTP ${response.status}`,
+        undefined,
+        trelloResponseErrorCode(auth, response.status, text),
+      );
     }
     return { ok: true, response: await readProviderProxyResponse(response) };
   } catch (error) {
@@ -96,25 +95,5 @@ export const proxy: ProviderProxyExecutor = async (input, context) => {
 
 export const credentialValidators: CredentialValidators = {
   customCredential: validateTrelloCredential,
-  oauth2(input, options) {
-    return validateTrelloOAuthCredential(input.accessToken, input.metadata.scope, options);
-  },
+  oauth2: validateTrelloOAuthCredential,
 };
-
-async function requireTrelloCredential(context: ExecutionContext): Promise<TrelloCredential> {
-  const credential = await context.getCredential(service);
-  if (credential?.authType === "custom_credential") {
-    return {
-      authType: "custom_credential",
-      apiKey: credential.values.apiKey,
-      apiToken: credential.values.apiToken,
-    };
-  }
-  if (credential?.authType === "oauth2") {
-    return {
-      authType: "oauth2",
-      accessToken: credential.accessToken,
-    };
-  }
-  throw new ProviderRequestError(401, "Configure Trello credentials first.");
-}

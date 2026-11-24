@@ -1,7 +1,9 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
-import { defineProviderExecutors, defineProviderProxy, requireApiKeyCredential } from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   sellerSpriteActionHandlers,
   sellerSpriteApiBaseUrl,
@@ -35,14 +37,7 @@ export const proxy: ProviderProxyExecutor = defineProviderProxy({
   baseUrl: sellerSpriteApiBaseUrl,
   auth: { type: "api_key_header", name: "secret-key" },
   skipDnsValidation: true,
-  customizeRequest({ headers }) {
-    if (!headers.has("accept")) {
-      headers.set("accept", "application/json");
-    }
-    if (!headers.has("content-type")) {
-      headers.set("content-type", "application/json;charset=UTF-8");
-    }
-  },
+  defaultHeaders: { "accept": "application/json", "content-type": "application/json;charset=UTF-8" },
 });
 
 export const credentialValidators: CredentialValidators = {

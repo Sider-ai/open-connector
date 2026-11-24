@@ -7,7 +7,9 @@ import type {
 } from "../../core/types.ts";
 import type { AmiliaContext } from "./runtime.ts";
 
-import { defineProviderExecutors, defineProviderProxy, requireApiKeyCredential } from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   amiliaActionHandlers,
   buildAmiliaApiBaseUrl,
@@ -41,11 +43,7 @@ export const proxy: ProviderProxyExecutor = defineProviderProxy({
     type: "api_key_authorization",
     prefix: "Bearer ",
   },
-  customizeRequest({ headers }) {
-    if (!headers.has("accept")) {
-      headers.set("accept", "application/json");
-    }
-  },
+  defaultHeaders: { accept: "application/json" },
 });
 
 export const credentialValidators: CredentialValidators = {

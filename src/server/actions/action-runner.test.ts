@@ -1,4 +1,5 @@
-import type { IConnectionStore, StoredConnection } from "../../connection-service.ts";
+import type { CatalogStore } from "../../catalog-store.ts";
+import type { IConnectionStore, StoredConnection } from "../../connection-store.ts";
 import type { ActionDefinition, ActionExecutor, ProviderDefinition, ResolvedCredential } from "../../core/types.ts";
 import type { IProviderLoader } from "../../providers/provider-loader.ts";
 import type { Logger } from "../logger.ts";
@@ -8,15 +9,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCatalogStore } from "../../catalog-store.ts";
 import { ConnectionService } from "../../connection-service.ts";
 import { ActionPolicyService } from "../../core/action-policy.ts";
+import { ExecutionError } from "../../core/execution-error.ts";
 import { ProviderInputError, toProviderExecutionError } from "../../providers/provider-runtime.ts";
+import { serializeRuntimeActionResult } from "../api/runtime-api.ts";
 import { ActionRunner } from "./action-runner.ts";
-import * as runLogSummary from "./run-log-summary.ts";
 
 const echoAction: ActionDefinition = {
   id: "example.echo",
   service: "example",
   name: "echo",
   description: "Echo input.",
+  operationType: "read",
   requiredScopes: [],
   providerPermissions: [],
   inputSchema: { type: "object" },
@@ -43,6 +46,7 @@ const credential: Extract<ResolvedCredential, { authType: "api_key" }> = {
   profile: { accountId: "example", displayName: "Example", grantedScopes: [] },
   metadata: {},
 };
+const openPolicy = new ActionPolicyService().createSnapshot();
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -59,7 +63,7 @@ describe("ActionRunner", () => {
         toProviderExecutionError(new ProviderInputError("path_is_directory", "private-path"), "fallback"),
       ),
     });
-    const run = await runner.run({ actionId: "example.echo", input: {}, caller: "mcp" });
+    const run = await runner.run({ actionId: "example.echo", input: {}, caller: "mcp", policy: openPolicy });
     expect(run?.result).toMatchObject({ error: { code: "invalid_input" } });
     expect(run?.providerFailure).toBeUndefined();
     expect(runs.items[0]).toMatchObject({
@@ -73,6 +77,154 @@ describe("ActionRunner", () => {
     expect(JSON.stringify(runs.items)).not.toContain("private-path");
   });
 
+  it("rejects invalid input before reading or refreshing credentials or loading executors", async () => {
+    const provider: ProviderDefinition = {
+      ...exampleProvider,
+      authTypes: ["oauth2"],
+      auth: [
+        {
+          type: "oauth2",
+          authorizationUrl: "https://example.com/authorize",
+          tokenUrl: "https://example.com/token",
+          scopes: [],
+          tokenEndpointAuthMethod: "client_secret_post",
+        },
+      ],
+      actions: [
+        {
+          ...echoAction,
+          inputSchema: { type: "object", required: ["message"], properties: { message: { type: "string" } } },
+        },
+      ],
+    };
+    const catalog = createCatalogStore([provider], { executableActionIds: [echoAction.id] });
+    const store = new MemoryConnectionStore();
+    await store.set("example", "default", {
+      authType: "oauth2",
+      accessToken: "expired-token",
+      refreshToken: "refresh-token",
+      tokenType: "Bearer",
+      expiresAt: "2000-01-01T00:00:00.000Z",
+      profile: credential.profile,
+      metadata: {},
+    });
+    const read = vi.spyOn(store, "get");
+    const refresh = vi.fn(async (): Promise<never> => {
+      throw new Error("Refresh must not run.");
+    });
+    const execute = vi.fn(async () => ({ ok: true, output: {} }));
+    const providerLoader = new TestProviderLoader(execute);
+    const loadExecutor = vi.spyOn(providerLoader, "loadActionExecutor");
+    const runs = new MemoryRunLogStore();
+    const runner = new ActionRunner({
+      catalog,
+      providerLoader,
+      runs,
+      connections: new ConnectionService({ catalog, providerLoader, store, oauthCredentials: { refresh } }),
+    });
+
+    const run = await runner.run({ actionId: echoAction.id, input: {}, caller: "http", policy: openPolicy });
+
+    expect(run).toMatchObject({
+      auditPersisted: true,
+      result: { ok: false, error: { code: "invalid_input", details: expect.any(Array) } },
+    });
+    expect(read).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+    expect(loadExecutor).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    expect(runs.items).toMatchObject([{ errorCode: "invalid_input" }]);
+  });
+
+  it("preserves executor_unavailable when a validated action has no local handler", async () => {
+    const runner = createRunner({
+      runs: new MemoryRunLogStore(),
+      logger: createTestLogger().logger,
+      providerLoader: {
+        loadActionExecutor: async () => undefined,
+        loadProxyExecutor: async () => undefined,
+        loadCredentialValidators: async () => undefined,
+      },
+    });
+
+    const run = await runner.run({ actionId: echoAction.id, input: {}, caller: "http", policy: openPolicy });
+    expect(run?.result).toMatchObject({ ok: false, error: { code: "executor_unavailable" } });
+  });
+
+  it.each([
+    ["unsupported", 501],
+    ["timeout", 504],
+    ["too_large", 413],
+  ] as const)("preserves the %s failure category through HTTP serialization", async (kind, status) => {
+    const runner = createRunner({
+      runs: new MemoryRunLogStore(),
+      logger: createTestLogger().logger,
+      providerLoader: new TestProviderLoader(async () => {
+        throw new ExecutionError("custom_failure", "Failed.", kind);
+      }),
+    });
+    const run = await runner.run({ actionId: echoAction.id, input: {}, caller: "http", policy: openPolicy });
+    if (!run) throw new Error("Expected a run");
+    expect(run.failureKind).toBe(kind);
+    expect(serializeRuntimeActionResult({ ...run, actionId: echoAction.id }).status).toBe(status);
+  });
+
+  it.each(["missing", "unreadable"])("handles a %s action definition without invoking the executor", async (state) => {
+    const catalog = createCatalogStore([exampleProvider], { executableActionIds: [echoAction.id] });
+    vi.spyOn(catalog, "getAction").mockImplementation(async () => {
+      if (state === "unreadable") throw new Error("private catalog file path");
+      return undefined;
+    });
+    const execute = vi.fn(async () => ({ ok: true }));
+    const runs = new MemoryRunLogStore();
+    const runner = createRunner({
+      catalog,
+      runs,
+      logger: createTestLogger().logger,
+      providerLoader: new TestProviderLoader(execute),
+    });
+    const run = await runner.run({ actionId: echoAction.id, input: {}, caller: "http", policy: openPolicy });
+    expect(run?.result.error?.code).toBe(state === "missing" ? "unknown_action" : "internal_error");
+    expect(JSON.stringify(run)).not.toContain("private catalog file path");
+    expect(execute).not.toHaveBeenCalled();
+    expect(runs.items).toHaveLength(1);
+  });
+
+  it("does not invoke the executor when cancelled during schema loading", async () => {
+    const catalog = createCatalogStore([exampleProvider], { executableActionIds: [echoAction.id] });
+    const controller = new AbortController();
+    const read = catalog.getAction.bind(catalog);
+    vi.spyOn(catalog, "getAction").mockImplementation(async (id) => {
+      const action = await read(id);
+      controller.abort();
+      return action;
+    });
+    const execute = vi.fn(async () => ({ ok: true, output: {} }));
+    const providerLoader = new TestProviderLoader(execute);
+    const loadExecutor = vi.spyOn(providerLoader, "loadActionExecutor");
+    const runs = new MemoryRunLogStore();
+    const connections = new ConnectionService({ catalog, providerLoader, store: new MemoryConnectionStore() });
+    const resolveConnection = vi.spyOn(connections, "resolveConnection");
+    const runner = new ActionRunner({
+      catalog,
+      providerLoader,
+      runs,
+      connections,
+    });
+    const result = await runner.run({
+      actionId: echoAction.id,
+      input: {},
+      caller: "http",
+      policy: openPolicy,
+      signal: controller.signal,
+    });
+    expect(result?.result.error?.code).toBe("execution_cancelled");
+    expect(resolveConnection).not.toHaveBeenCalled();
+    expect(loadExecutor).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    expect(runs.items[0]?.errorCode).toBe("execution_cancelled");
+  });
+
   it("uses one execution id across logs, storage, and the result", async () => {
     const runs = new MemoryRunLogStore();
     const { entries, logger } = createTestLogger();
@@ -82,6 +234,7 @@ describe("ActionRunner", () => {
       actionId: "example.echo",
       input: { message: "hello", token: "secret" },
       caller: "http",
+      policy: openPolicy,
     });
 
     expect(run).toMatchObject({ auditPersisted: true, result: { ok: true } });
@@ -110,7 +263,7 @@ describe("ActionRunner", () => {
     const { entries, logger } = createTestLogger();
     const runner = createRunner({ runs, logger });
 
-    const run = await runner.run({ actionId: "example.echo", input: {}, caller: "mcp" });
+    const run = await runner.run({ actionId: "example.echo", input: {}, caller: "mcp", policy: openPolicy });
 
     expect(run).toMatchObject({
       auditPersisted: false,
@@ -120,14 +273,20 @@ describe("ActionRunner", () => {
   });
 
   it("falls back to an unavailable summary without changing the action result", async () => {
-    vi.spyOn(runLogSummary, "summarizeForRunLog").mockImplementationOnce(() => {
-      throw new Error("secret-in-summary");
-    });
+    // A non-plain prototype is the shape summarizeForRunLog refuses to enumerate.
+    const unsummarizableInput = new (class {
+      readonly message = "secret-in-summary";
+    })() as unknown as Record<string, unknown>;
     const runs = new MemoryRunLogStore();
     const { entries, logger } = createTestLogger();
     const runner = createRunner({ runs, logger });
 
-    const run = await runner.run({ actionId: "example.echo", input: {}, caller: "web" });
+    const run = await runner.run({
+      actionId: "example.echo",
+      input: unsummarizableInput,
+      caller: "web",
+      policy: openPolicy,
+    });
 
     expect(run?.result).toEqual({ ok: true, output: { message: "ok" } });
     expect(runs.items[0]).toMatchObject({ inputSummary: "[unavailable]" });
@@ -145,7 +304,7 @@ describe("ActionRunner", () => {
       }),
     });
 
-    const run = await runner.run({ actionId: "example.echo", input: {}, caller: "http" });
+    const run = await runner.run({ actionId: "example.echo", input: {}, caller: "http", policy: openPolicy });
 
     expect(run?.result).toEqual({
       ok: false,
@@ -171,7 +330,7 @@ describe("ActionRunner", () => {
       })),
     });
 
-    const run = await runner.run({ actionId: "example.echo", input: {}, caller: "mcp" });
+    const run = await runner.run({ actionId: "example.echo", input: {}, caller: "mcp", policy: openPolicy });
 
     expect(run?.providerFailure).toEqual({
       providerHttpStatus: 403,
@@ -210,7 +369,7 @@ describe("ActionRunner", () => {
         },
       })),
     });
-    const run = await runner.run({ actionId: "example.echo", input: {}, caller: "mcp" });
+    const run = await runner.run({ actionId: "example.echo", input: {}, caller: "mcp", policy: openPolicy });
     expect(run?.providerFailure).toEqual({
       providerHttpStatus: 422,
       providerErrorCode: "missing_field",
@@ -253,6 +412,7 @@ describe("ActionRunner", () => {
       actionId: "example.echo",
       input: {},
       caller: "http",
+      policy: openPolicy,
       signal: controller.signal,
     });
     await started;
@@ -274,7 +434,7 @@ describe("ActionRunner", () => {
     const runs = new MemoryRunLogStore();
     const providerLoader = new TestProviderLoader(async () => ({ ok: true, output: {} }));
     const loadExecutor = vi.spyOn(providerLoader, "loadActionExecutor");
-    const resolveConnection = vi.spyOn(ConnectionService.prototype, "resolveForExecution");
+    const resolveConnection = vi.spyOn(ConnectionService.prototype, "resolveConnection");
     const controller = new AbortController();
     controller.abort();
     const runner = createRunner({ runs, logger: createTestLogger().logger, providerLoader });
@@ -283,6 +443,7 @@ describe("ActionRunner", () => {
       actionId: "example.echo",
       input: {},
       caller: "http",
+      policy: openPolicy,
       signal: controller.signal,
     });
 
@@ -306,7 +467,7 @@ describe("ActionRunner", () => {
         await lookupPending;
         return undefined;
       });
-    const resolveConnection = vi.spyOn(ConnectionService.prototype, "resolveForExecution");
+    const resolveConnection = vi.spyOn(ConnectionService.prototype, "resolveConnection");
     const controller = new AbortController();
     const runner = createRunner({ runs, logger: createTestLogger().logger, providerLoader });
 
@@ -314,6 +475,7 @@ describe("ActionRunner", () => {
       actionId: "example.echo",
       input: {},
       caller: "http",
+      policy: openPolicy,
       signal: controller.signal,
     });
     await vi.waitFor(() => expect(getConnectionSummary).toHaveBeenCalledOnce());
@@ -338,7 +500,7 @@ describe("ActionRunner", () => {
       }),
     });
 
-    const run = await runner.run({ actionId: "example.echo", input: {}, caller: "web" });
+    const run = await runner.run({ actionId: "example.echo", input: {}, caller: "web", policy: openPolicy });
 
     expect(run?.result.ok).toBe(true);
   });
@@ -348,9 +510,9 @@ describe("ActionRunner", () => {
     const { logger } = createTestLogger();
     const providerLoader = new TestProviderLoader(async () => ({ ok: true, output: {} }));
     const loadExecutor = vi.spyOn(providerLoader, "loadActionExecutor");
-    const resolveConnection = vi.spyOn(ConnectionService.prototype, "resolveForExecution");
+    const resolveConnection = vi.spyOn(ConnectionService.prototype, "resolveConnection");
     const actionPolicy = new ActionPolicyService({ blockedActions: ["example.echo"] });
-    const runner = createRunner({ runs, logger, providerLoader, actionPolicy });
+    const runner = createRunner({ runs, logger, providerLoader });
 
     const run = await runner.run({
       actionId: "example.echo",
@@ -379,7 +541,7 @@ describe("ActionRunner", () => {
     const runs = new MemoryRunLogStore();
     const providerLoader = new TestProviderLoader(async () => ({ ok: true, output: {} }));
     const loadExecutor = vi.spyOn(providerLoader, "loadActionExecutor");
-    const resolveConnection = vi.spyOn(ConnectionService.prototype, "resolveForExecution");
+    const resolveConnection = vi.spyOn(ConnectionService.prototype, "resolveConnection");
     const actionPolicy = new ActionPolicyService();
     const policy = actionPolicy.createSnapshot(undefined, {
       allowedActions: [],
@@ -387,7 +549,7 @@ describe("ActionRunner", () => {
       allowedProxies: [],
       allowedConnections: ["ungranted-connection-id"],
     });
-    const runner = createRunner({ runs, logger: createTestLogger().logger, providerLoader, actionPolicy });
+    const runner = createRunner({ runs, logger: createTestLogger().logger, providerLoader });
 
     const omitted = await runner.run({
       actionId: "example.echo",
@@ -417,14 +579,13 @@ describe("ActionRunner", () => {
 
   it("uses stable IDs for credential connections on a provider that also supports no-auth", async () => {
     const runs = new MemoryRunLogStore();
-    const resolveConnection = vi.spyOn(ConnectionService.prototype, "resolveForExecution");
+    const resolveConnection = vi.spyOn(ConnectionService.prototype, "resolveConnection");
     const actionPolicy = new ActionPolicyService();
     const store = new MemoryConnectionStore();
     const connection = await store.set("example", "work", credential);
     const runner = createRunner({
       runs,
       logger: createTestLogger().logger,
-      actionPolicy,
       provider: authenticatedProvider,
       store,
     });
@@ -474,14 +635,16 @@ describe("ActionRunner", () => {
 });
 
 function createRunner(options: {
+  catalog?: CatalogStore;
   runs: IRunLogStore;
   logger: Logger;
   providerLoader?: IProviderLoader;
-  actionPolicy?: ActionPolicyService;
   provider?: ProviderDefinition;
   store?: IConnectionStore;
 }): ActionRunner {
-  const catalog = createCatalogStore([options.provider ?? exampleProvider], { executableActionIds: [echoAction.id] });
+  const catalog =
+    options.catalog ??
+    createCatalogStore([options.provider ?? exampleProvider], { executableActionIds: [echoAction.id] });
   const providerLoader =
     options.providerLoader ?? new TestProviderLoader(async () => ({ ok: true, output: { message: "ok" } }));
   return new ActionRunner({
@@ -493,7 +656,6 @@ function createRunner(options: {
       store: options.store ?? new MemoryConnectionStore(),
     }),
     runs: options.runs,
-    actionPolicy: options.actionPolicy,
     logger: options.logger,
   });
 }
@@ -521,11 +683,37 @@ class TestProviderLoader implements IProviderLoader {
 class MemoryConnectionStore implements IConnectionStore {
   private readonly connections = new Map<string, StoredConnection>();
 
+  async getById(id: string): Promise<StoredConnection | undefined> {
+    return [...this.connections.values()].find((connection) => connection.id === id);
+  }
+
   async get(service: string, connectionName: string): Promise<StoredConnection | undefined> {
     return this.connections.get(`${service}:${connectionName}`);
   }
 
-  async set(service: string, connectionName: string, credential: ResolvedCredential): Promise<StoredConnection> {
+  private readonly retirementGenerations = new Map<string, string>();
+
+  async getRetirementGeneration(service: string, connectionName: string): Promise<string> {
+    const key = JSON.stringify([service, connectionName]);
+    let generation = this.retirementGenerations.get(key);
+    if (!generation) {
+      generation = crypto.randomUUID();
+      this.retirementGenerations.set(key, generation);
+    }
+    return generation;
+  }
+
+  async setIfCurrentGeneration(
+    service: string,
+    connectionName: string,
+    credential: ResolvedCredential,
+    retirementGeneration: string,
+  ) {
+    if ((await this.getRetirementGeneration(service, connectionName)) !== retirementGeneration) return undefined;
+    return this.set(service, connectionName, credential);
+  }
+
+  async set(service: string, connectionName: string, credential: ResolvedCredential) {
     const key = `${service}:${connectionName}`;
     const connection = {
       id: this.connections.get(key)?.id ?? crypto.randomUUID(),
@@ -543,6 +731,7 @@ class MemoryConnectionStore implements IConnectionStore {
   }
 
   async delete(service: string, connectionName: string): Promise<void> {
+    this.retirementGenerations.set(JSON.stringify([service, connectionName]), crypto.randomUUID());
     this.connections.delete(`${service}:${connectionName}`);
   }
 

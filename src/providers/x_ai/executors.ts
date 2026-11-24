@@ -1,9 +1,10 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError, requiredResponseRecord } from "../provider-runtime.ts";
 
 const service = "x_ai";
 const xAiApiBaseUrl = "https://api.x.ai/v1";
@@ -33,6 +34,13 @@ export const xAiActionHandlers: ProviderActionHandlers<"x_ai", XAiActionHandler>
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, xAiActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: xAiApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const payload = await xAiRequest(
@@ -46,14 +54,13 @@ export const credentialValidators: CredentialValidators = {
         mode: "validate",
       },
     );
-    const record = requireObject(payload, "xAI models response");
+    const record = requiredResponseRecord(payload, "xAI models response");
     const data = Array.isArray(record.data) ? record.data : [];
     return {
       profile: {
         accountId: "xai-api-key",
         displayName: "xAI API Key",
       },
-      grantedScopes: [],
       metadata: {
         validationEndpoint: "/v1/models",
         availableModels: data
@@ -65,7 +72,7 @@ export const credentialValidators: CredentialValidators = {
 };
 
 async function xAiRequest(
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   request: {
     method?: "GET" | "POST";
     path: string;
@@ -100,7 +107,7 @@ async function xAiRequest(
 
 function xAiHeaders(apiKey: string): Headers {
   return new Headers({
-    authorization: `Bearer ${apiKey}`,
+    "authorization": `Bearer ${apiKey}`,
     "content-type": "application/json",
     "user-agent": providerUserAgent,
   });
@@ -142,12 +149,4 @@ async function readXAiError(response: Response): Promise<{ type: string; code?: 
       message: raw || `x_ai request failed with ${response.status}`,
     };
   }
-}
-
-function requireObject(value: unknown, label: string): Record<string, unknown> {
-  const record = optionalRecord(value);
-  if (!record) {
-    throw new ProviderRequestError(502, `${label} must be an object`);
-  }
-  return record;
 }

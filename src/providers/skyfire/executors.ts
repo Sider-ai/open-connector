@@ -1,20 +1,14 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
+import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
-  compactObject,
-  optionalInteger,
-  optionalRecord,
-  optionalString,
-  requiredRecord,
-  requiredString,
-} from "../../core/cast.ts";
-import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
   ProviderRequestError,
   providerUserAgent,
+  requiredInputString,
+  requiredResponseRecord,
 } from "../provider-runtime.ts";
 
 const service = "skyfire";
@@ -67,8 +61,7 @@ export const credentialValidators: CredentialValidators = {
     });
 
     return {
-      profile: { accountId: "api_key", displayName: "Skyfire API Key", grantedScopes: [] },
-      grantedScopes: [],
+      profile: { accountId: "api_key", displayName: "Skyfire API Key" },
       metadata: {
         apiBaseUrl: skyfireApiBaseUrl,
         validationEndpoint: skyfireValidationPath,
@@ -79,7 +72,7 @@ export const credentialValidators: CredentialValidators = {
 
 async function listServices(path: string, context: ApiKeyProviderContext): Promise<Record<string, unknown>> {
   const payload = await requestSkyfireJson({ path, context, phase: "execute" });
-  const record = requiredProviderRecord(payload, "Skyfire services response");
+  const record = requiredResponseRecord(payload, "Skyfire services response");
   const data = requiredArray(record.data, "Skyfire services response data");
   return { services: data.map((item) => normalizeServicePayload(item, "Skyfire service")) };
 }
@@ -119,7 +112,7 @@ function validateCreateTokenInput(input: Record<string, unknown>): void {
 
 async function requestSkyfireJson(input: {
   path: string;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   phase: SkyfireRequestPhase;
   method?: "GET" | "POST";
   body?: Record<string, unknown>;
@@ -147,7 +140,7 @@ async function requestSkyfireJson(input: {
 
 function skyfireHeaders(apiKey: string, extraHeaders: Record<string, string>): Record<string, string> {
   return {
-    accept: "application/json",
+    "accept": "application/json",
     "skyfire-api-key": apiKey,
     "user-agent": providerUserAgent,
     ...extraHeaders,
@@ -180,7 +173,7 @@ function extractSkyfireErrorMessage(payload: unknown): string | undefined {
 }
 
 function normalizeServicePayload(payload: unknown, label: string): Record<string, unknown> {
-  const record = requiredProviderRecord(payload, label);
+  const record = requiredResponseRecord(payload, label);
   const requirement = optionalRecord(record.humanIdentityRequirement);
   return {
     id: requiredInputString(record.id, `${label}.id`),
@@ -207,7 +200,7 @@ function normalizeServicePayload(payload: unknown, label: string): Record<string
 }
 
 function normalizeSellerPayload(payload: unknown, label: string): Record<string, unknown> {
-  const record = requiredProviderRecord(payload, label);
+  const record = requiredResponseRecord(payload, label);
   return {
     id: requiredInputString(record.id, `${label}.id`),
     name: requiredInputString(record.name, `${label}.name`),
@@ -216,23 +209,15 @@ function normalizeSellerPayload(payload: unknown, label: string): Record<string,
 
 function normalizeTokenPayload(payload: unknown): Record<string, unknown> {
   if (typeof payload === "string") return { token: payload };
-  const record = requiredProviderRecord(payload, "Skyfire token response");
+  const record = requiredResponseRecord(payload, "Skyfire token response");
   const token = optionalString(record.token) ?? optionalString(record.jwt) ?? optionalString(record.accessToken);
   if (!token) throw new ProviderRequestError(502, "Skyfire token response did not include a token", payload);
   return { token, raw: record };
 }
 
-function requiredProviderRecord(value: unknown, label: string): Record<string, unknown> {
-  return requiredRecord(value, label, (message) => new ProviderRequestError(502, message));
-}
-
 function requiredArray(value: unknown, label: string): unknown[] {
   if (!Array.isArray(value)) throw new ProviderRequestError(502, `${label} is not an array`);
   return value;
-}
-
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function nullableString(value: unknown): string | null {

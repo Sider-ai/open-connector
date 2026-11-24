@@ -1,10 +1,15 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { createProviderTimeout, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import {
+  providerInputError,
+  providerUserAgent,
+  ProviderRequestError,
+  runProviderRequest,
+  providerResponseError,
+} from "../provider-runtime.ts";
 
-const embaseApiBaseUrl = "https://api.elsevier.com/content/embase";
-const embaseDefaultRequestTimeoutMs = 30_000;
+export const embaseApiBaseUrl = "https://api.elsevier.com/content/embase";
 
 type EmbasePhase = "validate" | "execute";
 interface EmbaseCredentials {
@@ -77,7 +82,7 @@ export function createEmbaseActionContext(values: Record<string, string>, fetche
 export async function validateEmbaseCredential(
   input: Record<string, string>,
   fetcher: typeof fetch,
-): Promise<{ profile: { displayName: string }; grantedScopes: string[]; metadata: Record<string, unknown> }> {
+): Promise<{ profile: { displayName: string }; metadata: Record<string, unknown> }> {
   const credentials = readValidationCredentials(input);
   const response = await requestEmbaseJson({
     path: "/article",
@@ -89,7 +94,6 @@ export async function validateEmbaseCredential(
 
   return {
     profile: { displayName: "Embase API Key" },
-    grantedScopes: [],
     metadata: compactObject({
       validationEndpoint: "/article",
       usesInstitutionToken: credentials.institutionToken ? true : undefined,
@@ -107,13 +111,11 @@ async function requestEmbaseJson(input: {
   fetcher: typeof fetch;
   phase: EmbasePhase;
 }): Promise<EmbaseResponse> {
-  const timeoutHandle = createProviderTimeout(undefined, embaseDefaultRequestTimeoutMs);
-
-  try {
+  return runProviderRequest({ label: "Embase" }, async (signal) => {
     const response = await input.fetcher(buildEmbaseUrl(input.path, input.params), {
       method: "GET",
       headers: buildEmbaseHeaders(input.credentials),
-      signal: timeoutHandle.signal,
+      signal,
     });
     const payload = await readEmbasePayload(response);
 
@@ -127,20 +129,7 @@ async function requestEmbaseJson(input: {
     }
 
     return { payload: payloadRecord, quota: readEmbaseQuota(response.headers) };
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-    if (timeoutHandle.didTimeout() || isAbortLikeError(error)) {
-      throw new ProviderRequestError(504, "Embase request timed out");
-    }
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Embase request failed: ${error.message}` : "Embase request failed",
-    );
-  } finally {
-    timeoutHandle.cleanup();
-  }
+  });
 }
 
 function buildEmbaseUrl(path: string, params: Record<string, string | undefined>) {
@@ -156,7 +145,7 @@ function buildEmbaseUrl(path: string, params: Record<string, string | undefined>
 
 function buildEmbaseHeaders(credentials: EmbaseCredentials) {
   const headers: Record<string, string> = {
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     "x-els-apikey": credentials.apiKey,
   };
@@ -184,10 +173,10 @@ function createEmbaseError(status: number, payload: unknown, phase: EmbasePhase)
     return new ProviderRequestError(429, message);
   }
   if (phase === "validate" && 400 <= status && status < 500) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (status === 401) {
-    return new ProviderRequestError(409, message);
+    return new ProviderRequestError(401, message);
   }
   if (status === 403) {
     return new ProviderRequestError(403, message);
@@ -195,7 +184,7 @@ function createEmbaseError(status: number, payload: unknown, phase: EmbasePhase)
   if (400 <= status && status < 500) {
     return new ProviderRequestError(502, message, status);
   }
-  return new ProviderRequestError(502, message);
+  return providerResponseError(message);
 }
 
 function extractEmbaseErrorMessage(payload: unknown): string | undefined {
@@ -334,12 +323,4 @@ function readRequiredString(value: unknown, fieldName: string) {
     throw new ProviderRequestError(400, `${fieldName} is required`);
   }
   return value.trim();
-}
-
-function isAbortLikeError(error: unknown) {
-  return error instanceof DOMException && error.name === "AbortError";
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

@@ -1,5 +1,6 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { BearerProviderContext, ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { BearerProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import {
   compactObject,
@@ -9,11 +10,16 @@ import {
   optionalString,
   requiredString,
 } from "../../core/cast.ts";
-import { createProviderTimeout, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import {
+  createProviderTimeout,
+  providerInputError,
+  ProviderRequestError,
+  providerResponseError,
+  providerUserAgent,
+} from "../provider-runtime.ts";
 
 export const typeformApiBaseUrl: string = "https://api.typeform.com";
 const typeformValidationPath = "/me";
-const typeformDefaultRequestTimeoutMs = 30_000;
 
 type TypeformRequestPhase = "validate" | "execute";
 type TypeformQueryValue = string | number | undefined;
@@ -35,9 +41,11 @@ interface TypeformRequest {
 
 export const typeformActionHandlers: ProviderActionHandlers<"typeform", TypeformActionHandler> = {
   async create_form(input, context) {
-    const title = requiredString(input.title, "title", badInput);
+    const title = requiredString(input.title, "title", providerInputError);
     const workspaceId =
-      input.workspaceId === undefined ? undefined : requiredString(input.workspaceId, "workspaceId", badInput);
+      input.workspaceId === undefined
+        ? undefined
+        : requiredString(input.workspaceId, "workspaceId", providerInputError);
     const form = await requestTypeformObject({
       ...context,
       phase: "execute",
@@ -53,16 +61,18 @@ export const typeformActionHandlers: ProviderActionHandlers<"typeform", Typeform
       },
     });
     if (optionalRecord(form.settings)?.is_public !== false)
-      throw providerOutput("Typeform did not confirm private form creation; inspect the form before retrying.");
+      throw providerResponseError("Typeform did not confirm private form creation; inspect the form before retrying.");
     return { form };
   },
   async update_form(input, context) {
-    const formId = requiredString(input.formId, "formId", badInput);
+    const formId = requiredString(input.formId, "formId", providerInputError);
     const path = formPath(formId);
-    const title = input.title === undefined ? undefined : requiredString(input.title, "title", badInput);
-    const additions = input.addFields === undefined ? [] : objectArray(input.addFields, "addFields", badInput);
-    const renames = input.renameFields === undefined ? [] : objectArray(input.renameFields, "renameFields", badInput);
-    if (!title && !additions.length && !renames.length) throw badInput("Provide a title or question edits.");
+    const title = input.title === undefined ? undefined : requiredString(input.title, "title", providerInputError);
+    const additions =
+      input.addFields === undefined ? [] : objectArray(input.addFields, "addFields", providerInputError);
+    const renames =
+      input.renameFields === undefined ? [] : objectArray(input.renameFields, "renameFields", providerInputError);
+    if (!title && !additions.length && !renames.length) throw providerInputError("Provide a title or question edits.");
     let etag: string | undefined;
     const req: TypeformRequest = { ...context, path, phase: "execute", notFoundAsInvalidInput: true };
     const form = await requestTypeformObject({
@@ -72,7 +82,7 @@ export const typeformActionHandlers: ProviderActionHandlers<"typeform", Typeform
       },
     });
     if (optionalRecord(form.settings)?.is_public !== false)
-      throw badInput("update_form only edits non-public forms with a known visibility.");
+      throw providerInputError("update_form only edits non-public forms with a known visibility.");
     if (!additions.length && !renames.length) {
       await requestTypeformJson({
         ...req,
@@ -83,22 +93,23 @@ export const typeformActionHandlers: ProviderActionHandlers<"typeform", Typeform
     } else {
       // PUT is a full replacement. Start with the retrieved definition, keep every existing
       // field (including nested IDs/refs), and never accept a replacement array from the caller.
-      const fields = form.fields === undefined ? [] : objectArray(form.fields, "existing fields", providerOutput);
+      const fields =
+        form.fields === undefined ? [] : objectArray(form.fields, "existing fields", providerResponseError);
       const remaining = new Map<string, string>();
       for (const rename of renames) {
-        const id = requiredString(rename.id, "field id", badInput);
-        if (remaining.has(id)) throw badInput("Duplicate field ID in renameFields.");
-        remaining.set(id, requiredString(rename.title, "field title", badInput));
+        const id = requiredString(rename.id, "field id", providerInputError);
+        if (remaining.has(id)) throw providerInputError("Duplicate field ID in renameFields.");
+        remaining.set(id, requiredString(rename.title, "field title", providerInputError));
       }
       const nextFields = fields.map((field) => {
-        const id = requiredString(field.id, "existing field ID", providerOutput);
+        const id = requiredString(field.id, "existing field ID", providerResponseError);
         const replacement = remaining.get(id);
         if (!replacement) return field;
         remaining.delete(id);
         return { ...field, title: replacement };
       });
-      if (remaining.size) throw badInput("Unknown top-level field ID; read the form again before editing.");
-      if (form.id !== formId) throw providerOutput("Typeform returned an unexpected form ID.");
+      if (remaining.size) throw providerInputError("Unknown top-level field ID; read the form again before editing.");
+      if (form.id !== formId) throw providerResponseError("Typeform returned an unexpected form ID.");
       const definition = { ...form };
       for (const key of ["id", "_links", "created_at", "last_updated_at", "published_at"]) delete definition[key];
       await requestTypeformObject({
@@ -116,7 +127,7 @@ export const typeformActionHandlers: ProviderActionHandlers<"typeform", Typeform
     return { formId, updated: true };
   },
   async publish_form(input, context) {
-    const formId = requiredString(input.formId, "formId", badInput);
+    const formId = requiredString(input.formId, "formId", providerInputError);
     await requestTypeformJson({
       ...context,
       path: formPath(formId),
@@ -156,7 +167,7 @@ export const typeformActionHandlers: ProviderActionHandlers<"typeform", Typeform
     });
   },
   async get_form(input, context) {
-    const formId = requiredString(input.formId, "formId", badInput);
+    const formId = requiredString(input.formId, "formId", providerInputError);
     return {
       form: await requestTypeformObject({
         accessToken: context.accessToken,
@@ -169,7 +180,7 @@ export const typeformActionHandlers: ProviderActionHandlers<"typeform", Typeform
     };
   },
   list_form_responses(input, context) {
-    const formId = requiredString(input.formId, "formId", badInput);
+    const formId = requiredString(input.formId, "formId", providerInputError);
     return requestTypeformList({
       accessToken: context.accessToken,
       path: `/forms/${encodeURIComponent(formId)}/responses`,
@@ -212,7 +223,7 @@ export const typeformActionHandlers: ProviderActionHandlers<"typeform", Typeform
     });
   },
   async get_workspace(input, context) {
-    const workspaceId = requiredString(input.workspaceId, "workspaceId", badInput);
+    const workspaceId = requiredString(input.workspaceId, "workspaceId", providerInputError);
     return {
       workspace: await requestTypeformObject({
         accessToken: context.accessToken,
@@ -275,7 +286,7 @@ async function requestTypeformList(input: {
   const object = requireObject(payload, "Typeform list response");
 
   return {
-    items: objectArray(object.items, "items", providerOutput),
+    items: objectArray(object.items, "items", providerResponseError),
     pageCount: requireNonNegativeInteger(object.page_count, "page_count"),
     totalItems: requireNonNegativeInteger(object.total_items, "total_items"),
   };
@@ -287,7 +298,7 @@ async function requestTypeformObject(input: TypeformRequest): Promise<Record<str
 }
 
 function formPath(formId: string): string {
-  if (!/^[a-zA-Z0-9_-]+$/.test(formId)) throw badInput("Invalid Typeform form ID.");
+  if (!/^[a-zA-Z0-9_-]+$/.test(formId)) throw providerInputError("Invalid Typeform form ID.");
   return `/forms/${formId}`;
 }
 
@@ -299,15 +310,15 @@ async function requestTypeformJson(input: TypeformRequest): Promise<unknown> {
     }
   }
 
-  const timeoutHandle = createProviderTimeout(input.signal, typeformDefaultRequestTimeoutMs);
+  const timeoutHandle = createProviderTimeout(input.signal);
 
   try {
     const response = await input.fetcher(url, {
       method: input.method ?? "GET",
       body: input.body === undefined ? undefined : JSON.stringify(input.body),
       headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${input.accessToken}`,
+        "Accept": "application/json",
+        "Authorization": `Bearer ${input.accessToken}`,
         "User-Agent": providerUserAgent,
         ...(input.body === undefined ? {} : { "Content-Type": "application/json" }),
         ...(input.ifMatch === undefined ? {} : { "If-Match": input.ifMatch }),
@@ -400,7 +411,7 @@ function mapTypeformError(input: {
 
   if (input.phase === "validate") {
     if (input.status === 401 || input.status === 403) {
-      return new ProviderRequestError(400, message);
+      return providerInputError(message);
     }
 
     return new ProviderRequestError(input.status, message);
@@ -411,7 +422,7 @@ function mapTypeformError(input: {
   }
 
   if (input.status === 400 || (input.status === 404 && input.notFoundAsInvalidInput)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   return new ProviderRequestError(input.status, message);
@@ -462,7 +473,7 @@ function readOptionalStringArray(value: unknown, fieldName: string): string[] | 
     throw new ProviderRequestError(400, `${fieldName} must be an array`);
   }
 
-  return value.map((item) => requiredString(item, fieldName, badInput));
+  return value.map((item) => requiredString(item, fieldName, providerInputError));
 }
 
 function joinCommaSeparated(value: string[] | undefined): string | undefined {
@@ -499,12 +510,4 @@ function requireNonNegativeInteger(value: unknown, fieldName: string): number {
     throw new ProviderRequestError(502, `invalid Typeform ${fieldName} value`);
   }
   return parsed;
-}
-
-function badInput(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
-}
-
-function providerOutput(message: string): ProviderRequestError {
-  return new ProviderRequestError(502, message);
 }

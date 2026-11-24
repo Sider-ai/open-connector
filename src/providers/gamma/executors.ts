@@ -1,36 +1,29 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
-import {
-  compactObject,
-  optionalInteger,
-  optionalNumber,
-  optionalRecord,
-  optionalString,
-  requiredString,
-} from "../../core/cast.ts";
+import { compactObject, optionalInteger, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
 import { compactJson } from "../../core/request.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
-  defineApiKeyProviderExecutors,
-  defineProviderProxy,
+  isAbortLikeError,
   ProviderRequestError,
   providerUserAgent,
+  requiredInputString,
+  defaultProviderRequestTimeoutMs,
 } from "../provider-runtime.ts";
 
 const service = "gamma";
 const gammaApiBaseUrl = "https://public-api.gamma.app";
 const gammaApiVersionPath = "/v1.0";
-const gammaDefaultRequestTimeoutMs = 30_000;
 
 type GammaRequestPhase = "validate" | "execute";
-type GammaActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type GammaActionHandler = (input: Record<string, unknown>, context: GammaActionContext) => Promise<unknown>;
+type GammaActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 interface GammaRequestInput {
   method: "GET" | "POST";
   path: string;
-  context: GammaActionContext;
+  context: ApiKeyProviderContext;
   phase: GammaRequestPhase;
   query?: Record<string, string | undefined>;
   body?: Record<string, unknown>;
@@ -73,7 +66,7 @@ export const executors: ProviderExecutors = defineApiKeyProviderExecutors(servic
 
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
-    const context: GammaActionContext = {
+    const context: ApiKeyProviderContext = {
       apiKey: input.apiKey,
       fetcher,
       signal,
@@ -91,7 +84,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "gamma-api-key",
         displayName: "Gamma API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: gammaApiBaseUrl,
         validationEndpoint: "/v1.0/themes",
@@ -101,7 +93,7 @@ export const credentialValidators: CredentialValidators = {
   },
 };
 
-async function createGeneration(input: Record<string, unknown>, context: GammaActionContext): Promise<unknown> {
+async function createGeneration(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await gammaRequest({
     method: "POST",
     path: "/generations",
@@ -115,15 +107,15 @@ async function createGeneration(input: Record<string, unknown>, context: GammaAc
   };
 }
 
-async function getGeneration(input: Record<string, unknown>, context: GammaActionContext): Promise<unknown> {
+async function getGeneration(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   return {
-    generation: await fetchGeneration(readInputString(input.generationId, "generationId"), context),
+    generation: await fetchGeneration(requiredInputString(input.generationId, "generationId"), context),
   };
 }
 
 async function createGenerationFromTemplate(
   input: Record<string, unknown>,
-  context: GammaActionContext,
+  context: ApiKeyProviderContext,
 ): Promise<unknown> {
   const payload = await gammaRequest({
     method: "POST",
@@ -138,7 +130,10 @@ async function createGenerationFromTemplate(
   };
 }
 
-async function createGenerationAndWait(input: Record<string, unknown>, context: GammaActionContext): Promise<unknown> {
+async function createGenerationAndWait(
+  input: Record<string, unknown>,
+  context: ApiKeyProviderContext,
+): Promise<unknown> {
   const created = (await createGeneration(input, context)) as { generation: GammaGeneration };
   return waitForGeneration(
     {
@@ -152,7 +147,7 @@ async function createGenerationAndWait(input: Record<string, unknown>, context: 
 
 async function createGenerationFromTemplateAndWait(
   input: Record<string, unknown>,
-  context: GammaActionContext,
+  context: ApiKeyProviderContext,
 ): Promise<unknown> {
   const created = (await createGenerationFromTemplate(input, context)) as { generation: GammaGeneration };
   return waitForGeneration(
@@ -165,8 +160,8 @@ async function createGenerationFromTemplateAndWait(
   );
 }
 
-async function waitForGeneration(input: Record<string, unknown>, context: GammaActionContext): Promise<unknown> {
-  const generationId = readInputString(input.generationId, "generationId");
+async function waitForGeneration(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
+  const generationId = requiredInputString(input.generationId, "generationId");
   const timeoutMs = toMilliseconds(input.timeoutSeconds, 120_000);
   const pollIntervalMs = toMilliseconds(input.pollIntervalSeconds, 5_000);
   const startedAt = Date.now();
@@ -203,7 +198,7 @@ async function waitForGeneration(input: Record<string, unknown>, context: GammaA
   }
 }
 
-async function listThemes(input: Record<string, unknown>, context: GammaActionContext): Promise<unknown> {
+async function listThemes(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await gammaRequest({
     method: "GET",
     path: "/themes",
@@ -219,7 +214,7 @@ async function listThemes(input: Record<string, unknown>, context: GammaActionCo
   };
 }
 
-async function listFolders(input: Record<string, unknown>, context: GammaActionContext): Promise<unknown> {
+async function listFolders(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   const payload = await gammaRequest({
     method: "GET",
     path: "/folders",
@@ -237,9 +232,9 @@ async function listFolders(input: Record<string, unknown>, context: GammaActionC
 
 function buildCreateGenerationBody(input: Record<string, unknown>): Record<string, unknown> {
   return compactJson({
-    inputText: readInputString(input.inputText, "inputText"),
+    inputText: requiredInputString(input.inputText, "inputText"),
     additionalInstructions: optionalString(input.additionalInstructions),
-    textMode: readInputString(input.textMode, "textMode"),
+    textMode: requiredInputString(input.textMode, "textMode"),
     format: optionalString(input.format),
     numCards: optionalInteger(input.numCards),
     cardSplit: optionalString(input.cardSplit),
@@ -255,8 +250,8 @@ function buildCreateGenerationBody(input: Record<string, unknown>): Record<strin
 
 function buildCreateGenerationFromTemplateBody(input: Record<string, unknown>): Record<string, unknown> {
   return compactJson({
-    prompt: readInputString(input.prompt, "prompt"),
-    gammaId: readInputString(input.gammaId, "gammaId"),
+    prompt: requiredInputString(input.prompt, "prompt"),
+    gammaId: requiredInputString(input.gammaId, "gammaId"),
     themeId: optionalString(input.themeId),
     imageOptions: optionalRecord(input.imageOptions),
     sharingOptions: optionalRecord(input.sharingOptions),
@@ -275,7 +270,7 @@ function buildListQuery(input: Record<string, unknown>): Record<string, string |
 
 async function fetchGeneration(
   generationId: string,
-  context: GammaActionContext,
+  context: ApiKeyProviderContext,
   timeoutMs?: number,
 ): Promise<GammaGeneration & Record<string, unknown>> {
   const payload = await gammaRequest({
@@ -295,7 +290,9 @@ function isTerminalGenerationStatus(status: string | undefined): boolean {
 
 async function gammaRequest(input: GammaRequestInput): Promise<unknown> {
   const requestTimeoutMs =
-    input.timeoutMs == null ? gammaDefaultRequestTimeoutMs : Math.min(gammaDefaultRequestTimeoutMs, input.timeoutMs);
+    input.timeoutMs == null
+      ? defaultProviderRequestTimeoutMs
+      : Math.min(defaultProviderRequestTimeoutMs, input.timeoutMs);
   const timeoutSignal = AbortSignal.timeout(requestTimeoutMs);
   const signal = input.context.signal ? AbortSignal.any([input.context.signal, timeoutSignal]) : timeoutSignal;
   const url = new URL(`${gammaApiVersionPath}${input.path}`, gammaApiBaseUrl);
@@ -325,7 +322,7 @@ async function gammaRequest(input: GammaRequestInput): Promise<unknown> {
     if (error instanceof ProviderRequestError) {
       throw error;
     }
-    if (timeoutSignal.aborted && isAbortError(error)) {
+    if (timeoutSignal.aborted && isAbortLikeError(error)) {
       throw new ProviderRequestError(504, "Gamma request timed out", error);
     }
     const message = error instanceof Error ? `Gamma request failed: ${error.message}` : "Gamma request failed";
@@ -335,7 +332,7 @@ async function gammaRequest(input: GammaRequestInput): Promise<unknown> {
 
 function gammaHeaders(apiKey: string): Record<string, string> {
   return {
-    accept: "application/json",
+    "accept": "application/json",
     "content-type": "application/json",
     "user-agent": providerUserAgent,
     "x-api-key": apiKey,
@@ -453,10 +450,6 @@ function requireResponseObject(value: unknown, fieldName: string): Record<string
   return record;
 }
 
-function readInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
-}
-
 function readResponseString(input: Record<string, unknown>, key: string): string {
   const value = optionalString(input[key]);
   if (!value) {
@@ -477,10 +470,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     globalThis.setTimeout(resolve, ms);
   });
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
 }
 
 export const proxy: ProviderProxyExecutor = defineProviderProxy({

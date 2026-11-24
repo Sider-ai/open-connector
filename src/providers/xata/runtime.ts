@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import {
@@ -12,7 +12,6 @@ import {
 
 export const xataApiBaseUrl = "https://api.xata.tech";
 const xataValidationPath = "/organizations";
-const xataTimeoutMs = 30_000;
 
 export interface XataContext {
   apiKey: string;
@@ -126,7 +125,6 @@ export async function validateXataCredential(
       accountId: firstOrganizationID ?? "xata:api_key",
       displayName: firstOrganizationName ?? "Xata API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: xataApiBaseUrl,
       validationEndpoint: xataValidationPath,
@@ -137,14 +135,14 @@ export async function validateXataCredential(
 }
 
 async function requestXataJson(context: XataContext, path: string, phase: XataPhase): Promise<unknown> {
-  const timeout = createProviderTimeout(context.signal, xataTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   let response: Response;
   try {
     response = await context.fetcher(new URL(path, xataApiBaseUrl), {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${context.apiKey}`,
         "user-agent": providerUserAgent,
       },
       signal: timeout.signal,

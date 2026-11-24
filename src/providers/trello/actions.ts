@@ -208,6 +208,7 @@ const updateCardInputSchema = s.object(
 export const trelloActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "get_member",
+    operationType: "read",
     description: "Get a Trello member, defaulting to the authenticated member.",
     requiredScopes: readMemberScopes,
     inputSchema: s.object(
@@ -226,6 +227,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_member_boards",
+    operationType: "read",
     description: "List Trello boards visible to a member.",
     requiredScopes: readBoardScopes,
     inputSchema: s.object(
@@ -253,6 +255,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_board",
+    operationType: "read",
     description: "Get a Trello board by ID.",
     requiredScopes: readBoardScopes,
     inputSchema: s.object(
@@ -271,6 +274,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_board",
+    operationType: "write",
     description: "Create a Trello board.",
     requiredScopes: writeBoardScopes,
     inputSchema: s.object("Input parameters for creating a Trello board.", boardCreateInput, {
@@ -282,6 +286,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_board_lists",
+    operationType: "read",
     description: "List Trello lists on a board.",
     requiredScopes: readBoardScopes,
     inputSchema: s.object(
@@ -300,6 +305,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_list",
+    operationType: "write",
     description: "Create a Trello list on a board.",
     requiredScopes: writeBoardScopes,
     inputSchema: s.object(
@@ -318,6 +324,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "update_list",
+    operationType: "write",
     description: "Update a Trello list name or position.",
     requiredScopes: writeBoardScopes,
     inputSchema: s.object(
@@ -336,6 +343,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "archive_list",
+    operationType: "destructive",
     description: "Archive a Trello list.",
     requiredScopes: writeBoardScopes,
     inputSchema: s.object("Input parameters for archiving a Trello list.", {
@@ -347,6 +355,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_board_cards",
+    operationType: "read",
     description: "List Trello cards on a board.",
     requiredScopes: readBoardScopes,
     inputSchema: s.object(
@@ -366,6 +375,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_board_members",
+    operationType: "read",
     description: "List Trello members on a board.",
     requiredScopes: readBoardScopes,
     inputSchema: s.object(
@@ -384,6 +394,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_board_labels",
+    operationType: "read",
     description: "List Trello labels on a board.",
     requiredScopes: readBoardScopes,
     inputSchema: s.object("Input parameters for listing Trello board labels.", {
@@ -395,6 +406,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_card",
+    operationType: "read",
     description: "Get a Trello card by ID or short link.",
     requiredScopes: readBoardScopes,
     inputSchema: s.object(
@@ -413,6 +425,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_card",
+    operationType: "write",
     description: "Create a Trello card in a list.",
     requiredScopes: writeBoardScopes,
     inputSchema: s.object(
@@ -431,6 +444,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "move_card",
+    operationType: "write",
     description: "Move a Trello card to another list.",
     requiredScopes: writeBoardScopes,
     inputSchema: s.object(
@@ -450,6 +464,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "archive_card",
+    operationType: "destructive",
     description: "Archive a Trello card.",
     requiredScopes: writeBoardScopes,
     inputSchema: s.object("Input parameters for archiving a Trello card.", {
@@ -461,6 +476,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "update_card",
+    operationType: "write",
     description: "Update a Trello card by ID or short link.",
     requiredScopes: writeBoardScopes,
     inputSchema: updateCardInputSchema,
@@ -470,6 +486,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "add_card_comment",
+    operationType: "write",
     description: "Add a comment action to a Trello card.",
     requiredScopes: writeBoardScopes,
     inputSchema: s.object("Input parameters for adding a Trello card comment.", {
@@ -482,6 +499,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_card_comments",
+    operationType: "read",
     description: "List comment actions on a Trello card.",
     requiredScopes: readBoardScopes,
     inputSchema: s.object(
@@ -503,6 +521,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "add_card_member",
+    operationType: "write",
     description: "Assign a Trello member to a card.",
     requiredScopes: writeBoardScopes,
     inputSchema: s.object("Input parameters for assigning a Trello member to a card.", {
@@ -513,6 +532,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "remove_card_member",
+    operationType: "destructive",
     description: "Remove a Trello member from a card.",
     requiredScopes: writeBoardScopes,
     inputSchema: s.object("Input parameters for removing a Trello member from a card.", {
@@ -523,6 +543,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "add_card_label",
+    operationType: "write",
     description: "Add a Trello label to a card.",
     requiredScopes: writeBoardScopes,
     inputSchema: s.object("Input parameters for adding a Trello label to a card.", {
@@ -533,6 +554,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "remove_card_label",
+    operationType: "destructive",
     description: "Remove a Trello label from a card.",
     requiredScopes: writeBoardScopes,
     inputSchema: s.object("Input parameters for removing a Trello label from a card.", {
@@ -543,6 +565,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_checklist",
+    operationType: "write",
     description: "Create a Trello checklist on a card.",
     requiredScopes: writeBoardScopes,
     inputSchema: s.object("Input parameters for creating a Trello checklist.", {
@@ -555,6 +578,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_card_checklists",
+    operationType: "read",
     description: "List Trello checklists on a card.",
     requiredScopes: readBoardScopes,
     inputSchema: s.object("Input parameters for listing Trello card checklists.", {
@@ -566,6 +590,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "add_checkitem",
+    operationType: "write",
     description: "Add a check item to a Trello checklist.",
     requiredScopes: writeBoardScopes,
     inputSchema: s.object(
@@ -586,6 +611,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "update_checkitem_state",
+    operationType: "write",
     description: "Update a Trello check item state on a card.",
     requiredScopes: writeBoardScopes,
     inputSchema: s.object("Input parameters for updating a Trello check item state.", {
@@ -599,6 +625,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "add_card_attachment_url",
+    operationType: "write",
     description: "Attach an external URL to a Trello card.",
     requiredScopes: writeBoardScopes,
     inputSchema: s.object(
@@ -618,6 +645,7 @@ export const trelloActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "search",
+    operationType: "read",
     description: "Search Trello cards, boards, members, and organizations.",
     requiredScopes: searchScopes,
     inputSchema: s.object(

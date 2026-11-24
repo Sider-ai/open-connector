@@ -1,11 +1,11 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
 import { providerUserAgent, ProviderRequestError, setSearchParams } from "../provider-runtime.ts";
 
-const wiseApiBaseUrl = "https://api.wise.com";
+export const wiseApiBaseUrl = "https://api.wise.com";
 const wiseValidationPath = "/v2/profiles";
 
 type WiseRequestMode = "validate" | "execute";
@@ -90,7 +90,6 @@ export async function validateWiseCredential(
       accountId: profileId ? `wise:profile:${profileId}` : "wise:api_token",
       displayName: buildAccountLabel(firstProfile),
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: wiseApiBaseUrl,
       validationEndpoint: wiseValidationPath,
@@ -108,8 +107,8 @@ async function requestWiseJson(options: WiseRequestOptions): Promise<unknown> {
     response = await options.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${options.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${options.apiKey}`,
         "user-agent": providerUserAgent,
       },
       signal: options.signal,

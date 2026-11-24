@@ -1,8 +1,8 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
-import { compactObject, optionalNumber, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { compactObject, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
+import { providerUserAgent, ProviderRequestError, requiredInputString } from "../provider-runtime.ts";
 
 export const gleapApiBaseUrl = "https://api.gleap.io/v3";
 
@@ -68,8 +68,8 @@ export async function validateGleapCredential(
   fetcher: typeof fetch,
   signal?: AbortSignal,
 ): Promise<CredentialValidationResult> {
-  const apiKey = requiredProviderString(input.apiKey, "apiKey");
-  const projectId = requiredProviderString(input.values.projectId, "projectId");
+  const apiKey = requiredInputString(input.apiKey, "apiKey");
+  const projectId = requiredInputString(input.values.projectId, "projectId");
   const context = { apiKey, projectId, fetcher, signal };
   const userPayload = await requestGleapJson({
     method: "GET",
@@ -92,9 +92,7 @@ export async function validateGleapCredential(
     profile: {
       accountId: userId ?? projectId,
       displayName: readUserLabel(user) ?? "Gleap API Key",
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: gleapApiBaseUrl,
       projectId,
@@ -392,9 +390,9 @@ async function requestGleapJson(input: GleapRequestInput): Promise<unknown> {
 
 function gleapHeaders(context: GleapActionContext, hasBody: boolean): HeadersInit {
   return {
-    accept: "application/json",
-    authorization: `Bearer ${context.apiKey}`,
-    Project: context.projectId,
+    "accept": "application/json",
+    "authorization": `Bearer ${context.apiKey}`,
+    "Project": context.projectId,
     "user-agent": providerUserAgent,
     ...(hasBody ? { "content-type": "application/json" } : {}),
   };
@@ -489,14 +487,6 @@ function readArray(value: unknown, message: string): unknown[] {
     throw new ProviderRequestError(502, message);
   }
   return value;
-}
-
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
-}
-
-function requiredProviderString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function requireBodyFields(body: Record<string, unknown>, message: string): void {

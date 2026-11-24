@@ -1,6 +1,5 @@
 import type { CredentialValidationResult, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -10,15 +9,12 @@ import {
   requiredRecord,
   requiredString,
 } from "../../core/cast.ts";
-import {
-  defineApiKeyProviderExecutors,
-  ProviderRequestError,
-  providerUserAgent,
-  readTransitFileInput,
-} from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { readTransitFileInput } from "../provider-files.ts";
+import { ProviderRequestError, providerResponseError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "platerecognizer";
-const apiBaseUrl = "https://api.platerecognizer.com";
+export const platerecognizerApiBaseUrl = "https://api.platerecognizer.com";
 const plateReaderPath = "/v1/plate-reader/";
 const statisticsPath = "/v1/statistics/";
 
@@ -64,9 +60,9 @@ export async function validatePlaterecognizerCredential(
   );
 
   return {
-    profile: { accountId: "platerecognizer-api-token", displayName: "Plate Recognizer API Token", grantedScopes: [] },
+    profile: { accountId: "platerecognizer-api-token", displayName: "Plate Recognizer API Token" },
     metadata: compactObject({
-      apiBaseUrl,
+      apiBaseUrl: platerecognizerApiBaseUrl,
       validationEndpoint: statisticsPath,
       usageCalls: stats.usage.calls,
       totalCalls: stats.totalCalls,
@@ -75,7 +71,7 @@ export async function validatePlaterecognizerCredential(
 }
 
 async function requestPlateRecognizerJson(input: {
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   method: "GET" | "POST";
   path: string;
   phase: PlateRecognizerPhase;
@@ -83,11 +79,11 @@ async function requestPlateRecognizerJson(input: {
 }): Promise<unknown> {
   let response: Response;
   try {
-    response = await input.context.fetcher(new URL(input.path, apiBaseUrl), {
+    response = await input.context.fetcher(new URL(input.path, platerecognizerApiBaseUrl), {
       method: input.method,
       headers: {
-        accept: "application/json",
-        authorization: `Token ${input.context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Token ${input.context.apiKey}`,
         "user-agent": providerUserAgent,
       },
       body: input.body,
@@ -283,8 +279,4 @@ function readRequiredInteger(value: unknown, fieldName: string): number {
     return value;
   }
   throw new ProviderRequestError(502, `${fieldName} must be an integer`);
-}
-
-function providerResponseError(message: string): ProviderRequestError {
-  return new ProviderRequestError(502, message);
 }

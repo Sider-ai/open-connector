@@ -1,6 +1,6 @@
 import type { CredentialValidationResult, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -12,9 +12,10 @@ import {
   optionalRecord,
   optionalString,
 } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
-const pdfmonkeyApiBaseUrl = "https://api.pdfmonkey.io";
+export const pdfmonkeyApiBaseUrl = "https://api.pdfmonkey.io";
 const currentUserPath = "/api/v1/current_user";
 const documentsPath = "/api/v1/documents";
 const documentCardsPath = "/api/v1/document_cards";
@@ -186,8 +187,8 @@ export const pdfmonkeyActionHandlers: ProviderActionHandlers<"pdfmonkey", Pdfmon
       query: compactObject({
         "q[workspace_id]": readRequiredString(input.workspaceId, "workspaceId"),
         "q[folders]": optionalString(input.folders),
-        page: optionalInteger(input.page),
-        sort: optionalString(input.sort),
+        "page": optionalInteger(input.page),
+        "sort": optionalString(input.sort),
       }),
       apiKey: context.apiKey,
       fetcher: context.fetcher,
@@ -233,7 +234,6 @@ export async function validatePdfmonkeyCredential(
     profile: {
       accountId: currentUser.id,
       displayName: currentUser.desiredName ?? currentUser.email ?? "PDFMonkey API Key",
-      grantedScopes: [],
     },
     metadata: compactObject({
       apiBaseUrl: pdfmonkeyApiBaseUrl,
@@ -273,8 +273,8 @@ async function requestPdfmonkey(input: {
   }
 
   const headers: Record<string, string> = {
-    authorization: `Bearer ${input.apiKey}`,
-    accept: "application/json",
+    "authorization": `Bearer ${input.apiKey}`,
+    "accept": "application/json",
     "user-agent": providerUserAgent,
   };
   if (input.body) {

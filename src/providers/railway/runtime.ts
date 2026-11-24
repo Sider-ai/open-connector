@@ -1,6 +1,7 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import {
   compactObject,
@@ -15,7 +16,7 @@ import {
 import { objectPayload, requestJson } from "../http-json-runtime.ts";
 import { ProviderRequestError } from "../provider-runtime.ts";
 
-const railwayApiBaseUrl = "https://backboard.railway.com";
+export const railwayApiBaseUrl: string = "https://backboard.railway.com";
 const railwayGraphqlPath = "/graphql/v2";
 
 export interface RailwayActionContext extends ApiKeyProviderContext {
@@ -287,7 +288,6 @@ export async function validateRailwayCredential(
         accountId: workspace.id ?? context.workspaceId,
         displayName: workspace.name ?? context.workspaceId,
       },
-      grantedScopes: [],
       metadata: { tokenType: "workspace", workspaceId: context.workspaceId },
     };
   }
@@ -308,7 +308,6 @@ export async function validateRailwayCredential(
       accountId,
       displayName: user.name ?? user.email ?? accountId,
     },
-    grantedScopes: [],
     metadata: { tokenType: "account" },
   };
 }

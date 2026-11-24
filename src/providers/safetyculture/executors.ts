@@ -1,22 +1,38 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { createHash } from "node:crypto";
 import {
   compactObject,
+  looseArray,
   optionalBoolean,
   optionalInteger,
   optionalRecord,
   optionalString,
   requiredString,
 } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent, requiredInputString } from "../provider-runtime.ts";
 
 const service = "safetyculture";
 const safetycultureApiBaseUrl = "https://api.safetyculture.io";
 const safetycultureCredentialHelpUrl = "https://developer.safetyculture.com/reference/authentication";
 const validationPath = "/audits/search";
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: safetycultureApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
 
 type SafetycultureRequestPhase = "validate" | "execute";
 type SafetycultureQueryValue = string | number | boolean | readonly string[] | undefined;
@@ -62,7 +78,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: `safetyculture:${hashToken(apiKey)}`,
         displayName: "SafetyCulture API Token",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: safetycultureApiBaseUrl,
         validationEndpoint: validationPath,
@@ -103,7 +118,7 @@ async function getInspection(
   input: Record<string, unknown>,
   context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
-  const inspectionId = readRequiredString(input.inspectionId, "inspectionId");
+  const inspectionId = requiredInputString(input.inspectionId, "inspectionId");
   const payload = await requestSafetycultureJson({
     path: `/inspections/v1/inspections/${encodeURIComponent(inspectionId)}`,
     apiKey: context.apiKey,
@@ -141,7 +156,7 @@ async function listActions(
   });
   const raw = requireObjectPayload(payload, "SafetyCulture actions response");
   return {
-    actions: readArray(raw.actions),
+    actions: looseArray(raw.actions),
     nextPageToken: optionalString(raw.next_page_token) ?? "",
     total: readOptionalNumber(raw.total) ?? 0,
     raw,
@@ -152,7 +167,7 @@ async function getAction(
   input: Record<string, unknown>,
   context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
-  const actionId = readRequiredString(input.actionId, "actionId");
+  const actionId = requiredInputString(input.actionId, "actionId");
   const payload = await requestSafetycultureJson({
     path: `/tasks/v1/actions/${encodeURIComponent(actionId)}`,
     apiKey: context.apiKey,
@@ -176,7 +191,7 @@ async function createAction(
     method: "POST",
     body: compactObject({
       task_id: optionalString(input.taskId),
-      title: readRequiredString(input.title, "title"),
+      title: requiredInputString(input.title, "title"),
       description: optionalString(input.description),
       collaborators: readOptionalObjectArray(input.collaborators, "collaborators"),
       priority_id: optionalString(input.priorityId),
@@ -200,7 +215,7 @@ async function createAction(
     phase: "execute",
   });
   const raw = requireObjectPayload(payload, "SafetyCulture create action response");
-  return { actionId: readRequiredString(raw.action_id, "action_id"), raw };
+  return { actionId: requiredInputString(raw.action_id, "action_id"), raw };
 }
 
 async function requestSafetycultureJson(input: {
@@ -251,8 +266,8 @@ function safetycultureUrl(path: string, query?: Record<string, SafetycultureQuer
 
 function safetycultureHeaders(apiKey: string, hasBody: boolean): Record<string, string> {
   return {
-    authorization: `Bearer ${apiKey}`,
-    accept: "application/json",
+    "authorization": `Bearer ${apiKey}`,
+    "accept": "application/json",
     ...(hasBody ? { "content-type": "application/json" } : {}),
     "user-agent": providerUserAgent,
   };
@@ -306,7 +321,7 @@ function normalizeInspectionSearchPayload(payload: unknown): Record<string, unkn
   return {
     count: readOptionalNumber(raw.count) ?? 0,
     total: readOptionalNumber(raw.total) ?? 0,
-    inspections: readArray(raw.audits),
+    inspections: looseArray(raw.audits),
     raw,
   };
 }
@@ -315,14 +330,6 @@ function requireObjectPayload(value: unknown, context: string): Record<string, u
   const record = optionalRecord(value);
   if (!record) throw new ProviderRequestError(502, `${context} must be a JSON object`);
   return record;
-}
-
-function readArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-function readRequiredString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function readOptionalStringArray(value: unknown, fieldName: string): string[] | undefined {

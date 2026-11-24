@@ -1,5 +1,5 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString, positiveInteger } from "../../core/cast.ts";
 import {
@@ -11,7 +11,6 @@ import {
 
 const freshsalesValidationPath = "/api/contacts/filters";
 const freshsalesDefaultPageSize = 25;
-const freshsalesDefaultRequestTimeoutMs = 30_000;
 
 type FreshsalesRequestPhase = "validate" | "execute";
 type FreshsalesMethod = "GET" | "POST" | "PUT" | "DELETE";
@@ -145,7 +144,6 @@ export async function validateFreshsalesCredential(
   signal?: AbortSignal,
 ): Promise<{
   profile: { accountId: string; displayName: string };
-  grantedScopes: string[];
   metadata: Record<string, unknown>;
 }> {
   const bundleAlias = normalizeFreshsalesBundleAlias(values.bundleAlias);
@@ -165,7 +163,6 @@ export async function validateFreshsalesCredential(
       accountId: `freshsales:${bundleAlias}`,
       displayName: `Freshsales ${bundleAlias}`,
     },
-    grantedScopes: [],
     metadata: {
       bundleAlias,
       baseUrl,
@@ -185,7 +182,7 @@ export function resolveFreshsalesBaseUrl(values: Record<string, string>, metadat
 }
 
 async function requestFreshsalesJson(input: FreshsalesRequestInput): Promise<unknown> {
-  const timeout = createProviderTimeout(input.signal, freshsalesDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.signal);
   try {
     const response = await input.fetcher(buildFreshsalesUrl(input), {
       method: input.method,
@@ -230,8 +227,8 @@ function buildFreshsalesUrl(input: FreshsalesRequestInput): URL {
 
 function buildFreshsalesHeaders(apiKey: string, hasBody: boolean): Record<string, string> {
   const headers: Record<string, string> = {
-    Authorization: `Token token=${apiKey}`,
-    Accept: "application/json",
+    "Authorization": `Token token=${apiKey}`,
+    "Accept": "application/json",
     "User-Agent": providerUserAgent,
   };
   if (hasBody) {

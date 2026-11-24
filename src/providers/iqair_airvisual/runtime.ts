@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { compactObject, optionalNumber, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
@@ -48,9 +48,7 @@ export async function validateIqairAirvisualCredential(
     profile: {
       accountId: "iqair_airvisual",
       displayName: "IQAir AirVisual API Key",
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: {
       validationEndpoint: "/countries",
       apiBaseUrl: iqairAirvisualApiBaseUrl,
@@ -167,7 +165,7 @@ async function iqairAirvisualJsonRequest(input: {
     response = await input.context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
       signal: input.context.signal,
@@ -225,7 +223,7 @@ function normalizeNamedObjects(data: unknown, fieldName: string, context: string
 function normalizeCityData(data: unknown, context: string): Record<string, unknown> {
   const record = readRecord(data, context);
   return compactObject({
-    name: readOptionalNonEmptyString(record.name),
+    name: optionalString(record.name),
     city: readRequiredResponseString(record.city, "city"),
     state: readRequiredResponseString(record.state, "state"),
     country: readRequiredResponseString(record.country, "country"),
@@ -286,12 +284,8 @@ function readOptionalArray(value: unknown): unknown[] | undefined {
   return Array.isArray(value) ? value : undefined;
 }
 
-function readOptionalNonEmptyString(value: unknown): string | undefined {
-  return optionalString(value);
-}
-
 function readRequiredResponseString(value: unknown, fieldName: string): string {
-  const text = readOptionalNonEmptyString(value);
+  const text = optionalString(value);
   if (!text) {
     throw new ProviderRequestError(502, `IQAir AirVisual response missing ${fieldName}`);
   }

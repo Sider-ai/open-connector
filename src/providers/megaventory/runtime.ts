@@ -1,11 +1,15 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
-import { createProviderTimeout, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import {
+  createProviderTimeout,
+  providerUserAgent,
+  ProviderRequestError,
+  providerInputError,
+} from "../provider-runtime.ts";
 export const megaventoryApiBaseUrl = "https://api.megaventory.com/v2017a";
-const timeoutMs = 30_000;
 const recordAction = "InsertOrUpdateNonEmptyFields";
 const lists: Record<string, { path: string; responseKey: string; outputKey: string }> = {
   list_products: { path: "/Product/ProductGet", responseKey: "mvProducts", outputKey: "products" },
@@ -152,7 +156,6 @@ export async function validateMegaventoryCredential(
   await request("/APIkey/APIkeyGet", {}, { apiKey, fetcher, signal }, "validate");
   return {
     profile: { displayName: "Megaventory API Key" },
-    grantedScopes: [],
     metadata: { apiBaseUrl: megaventoryApiBaseUrl },
   };
 }
@@ -162,11 +165,11 @@ async function request(
   context: ApiKeyProviderContext,
   phase: "validate" | "execute",
 ) {
-  const timeout = createProviderTimeout(context.signal, timeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const response = await context.fetcher(`${megaventoryApiBaseUrl}${path}`, {
       method: "POST",
-      headers: { accept: "application/json", "content-type": "application/json", "user-agent": providerUserAgent },
+      headers: { "accept": "application/json", "content-type": "application/json", "user-agent": providerUserAgent },
       body: JSON.stringify({ APIKEY: context.apiKey, ...body }),
       signal: timeout.signal,
     });
@@ -205,7 +208,7 @@ function error(code: number, payload: unknown, phase: "validate" | "execute") {
     optionalString(optionalRecord(optionalRecord(payload)?.ResponseStatus)?.Message) ??
     `Megaventory request failed with status ${code}`;
   if (code === 429) return new ProviderRequestError(429, message);
-  if (phase === "validate") return new ProviderRequestError(400, message);
+  if (phase === "validate") return providerInputError(message);
   if (
     message.toLowerCase().includes("api key") ||
     message.toLowerCase().includes("apikey") ||
@@ -213,7 +216,7 @@ function error(code: number, payload: unknown, phase: "validate" | "execute") {
     code === 403
   )
     return new ProviderRequestError(401, message);
-  if (code < 500) return new ProviderRequestError(400, message);
+  if (code < 500) return providerInputError(message);
   return new ProviderRequestError(code || 502, message);
 }
 function object(value: unknown, label: string): Record<string, unknown> {

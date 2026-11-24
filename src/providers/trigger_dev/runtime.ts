@@ -1,9 +1,9 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
-import { compactObject, optionalString, requiredString } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { compactObject, optionalString } from "../../core/cast.ts";
+import { providerUserAgent, ProviderRequestError, requiredInputString } from "../provider-runtime.ts";
 
 export const triggerDevApiBaseUrl = "https://api.trigger.dev";
 
@@ -30,7 +30,7 @@ export const triggerDevActionHandlers: ProviderActionHandlers<
   get_run(input, context) {
     return requestTriggerDevJson(
       {
-        path: `/api/v3/runs/${encodeURIComponent(requireInputString(input.runId, "runId"))}`,
+        path: `/api/v3/runs/${encodeURIComponent(requiredInputString(input.runId, "runId"))}`,
         mode: "execute",
       },
       context,
@@ -39,7 +39,7 @@ export const triggerDevActionHandlers: ProviderActionHandlers<
   get_run_result(input, context) {
     return requestTriggerDevJson(
       {
-        path: `/api/v1/runs/${encodeURIComponent(requireInputString(input.runId, "runId"))}/result`,
+        path: `/api/v1/runs/${encodeURIComponent(requiredInputString(input.runId, "runId"))}/result`,
         mode: "execute",
       },
       context,
@@ -48,7 +48,7 @@ export const triggerDevActionHandlers: ProviderActionHandlers<
   trigger_task(input, context) {
     return requestTriggerDevJson(
       {
-        path: `/api/v1/tasks/${encodeURIComponent(requireInputString(input.taskIdentifier, "taskIdentifier"))}/trigger`,
+        path: `/api/v1/tasks/${encodeURIComponent(requiredInputString(input.taskIdentifier, "taskIdentifier"))}/trigger`,
         method: "POST",
         body: compactObject({
           payload: input.payload,
@@ -63,7 +63,7 @@ export const triggerDevActionHandlers: ProviderActionHandlers<
   cancel_run(input, context) {
     return requestTriggerDevJson(
       {
-        path: `/api/v2/runs/${encodeURIComponent(requireInputString(input.runId, "runId"))}/cancel`,
+        path: `/api/v2/runs/${encodeURIComponent(requiredInputString(input.runId, "runId"))}/cancel`,
         method: "POST",
         mode: "execute",
       },
@@ -73,7 +73,7 @@ export const triggerDevActionHandlers: ProviderActionHandlers<
   replay_run(input, context) {
     return requestTriggerDevJson(
       {
-        path: `/api/v1/runs/${encodeURIComponent(requireInputString(input.runId, "runId"))}/replay`,
+        path: `/api/v1/runs/${encodeURIComponent(requiredInputString(input.runId, "runId"))}/replay`,
         method: "POST",
         mode: "execute",
       },
@@ -101,7 +101,6 @@ export async function validateTriggerDevCredential(
       accountId: "trigger_dev",
       displayName: "Trigger.dev API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: triggerDevApiBaseUrl,
       validationEndpoint: triggerDevValidationPath,
@@ -152,7 +151,7 @@ function listRunsQuery(input: Record<string, unknown>): Array<[string, string | 
 
 async function requestTriggerDevJson(
   options: TriggerDevRequestOptions,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
 ): Promise<TriggerDevJsonObject> {
   const response = await triggerDevFetch(options, context);
   if (!response.ok) {
@@ -163,10 +162,7 @@ async function requestTriggerDevJson(
   return parseTriggerDevJson(response);
 }
 
-async function triggerDevFetch(
-  options: TriggerDevRequestOptions,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
-): Promise<Response> {
+async function triggerDevFetch(options: TriggerDevRequestOptions, context: ApiKeyProviderContext): Promise<Response> {
   const url = new URL(options.path, triggerDevApiBaseUrl);
   const method = options.method ?? "GET";
   for (const [key, value] of options.query ?? []) {
@@ -194,8 +190,8 @@ async function triggerDevFetch(
 
 function triggerDevHeaders(apiKey: string, hasBody: boolean): Record<string, string> {
   return {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     ...(hasBody ? { "content-type": "application/json" } : {}),
     "user-agent": providerUserAgent,
   };
@@ -287,10 +283,6 @@ function commaSeparated(value: unknown): string | undefined {
     return undefined;
   }
   return value.map(String).join(",");
-}
-
-function requireInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

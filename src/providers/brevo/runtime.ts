@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import {
   compactObject,
@@ -9,9 +9,8 @@ import {
   optionalInteger,
   optionalRecord,
   optionalString,
-  requiredString,
 } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { providerUserAgent, ProviderRequestError, requiredInputString } from "../provider-runtime.ts";
 
 export const brevoApiBaseUrl = "https://api.brevo.com";
 const brevoValidationPath = "/v3/account";
@@ -19,8 +18,7 @@ const brevoValidationPath = "/v3/account";
 type BrevoRequestMode = "validate" | "execute";
 type BrevoMethod = "GET" | "POST" | "PUT" | "DELETE";
 type BrevoQueryValue = string | number | undefined;
-type BrevoActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type BrevoActionHandler = (input: Record<string, unknown>, context: BrevoActionContext) => Promise<unknown>;
+type BrevoActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 interface BrevoRequestOptions {
   apiKey: string;
@@ -92,14 +90,13 @@ export async function validateBrevoCredential(
 
   const email = optionalString(payload.email);
   const companyName = optionalString(payload.companyName);
-  const organizationId = optionalInteger(payload.organization_id);
+  const organizationId = optionalString(payload.organization_id);
 
   return {
     profile: {
       accountId: organizationId !== undefined ? `brevo:account:${organizationId}` : "brevo:api_key",
       displayName: email ?? companyName ?? "Brevo API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       validationEndpoint: brevoValidationPath,
       email,
@@ -109,7 +106,7 @@ export async function validateBrevoCredential(
   };
 }
 
-async function getAccount(context: BrevoActionContext): Promise<unknown> {
+async function getAccount(context: ApiKeyProviderContext): Promise<unknown> {
   return requestBrevoJson({
     apiKey: context.apiKey,
     path: brevoValidationPath,
@@ -119,7 +116,7 @@ async function getAccount(context: BrevoActionContext): Promise<unknown> {
   });
 }
 
-async function listContacts(input: Record<string, unknown>, context: BrevoActionContext): Promise<unknown> {
+async function listContacts(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   return requestBrevoJson({
     apiKey: context.apiKey,
     path: "/v3/contacts",
@@ -136,10 +133,10 @@ async function listContacts(input: Record<string, unknown>, context: BrevoAction
   });
 }
 
-async function getContact(input: Record<string, unknown>, context: BrevoActionContext): Promise<unknown> {
+async function getContact(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   return requestBrevoJson({
     apiKey: context.apiKey,
-    path: `/v3/contacts/${encodeURIComponent(readRequiredString(input.identifier, "identifier"))}`,
+    path: `/v3/contacts/${encodeURIComponent(requiredInputString(input.identifier, "identifier"))}`,
     query: compactObject({
       identifierType: optionalString(input.identifierType),
     }),
@@ -149,13 +146,13 @@ async function getContact(input: Record<string, unknown>, context: BrevoActionCo
   });
 }
 
-async function createContact(input: Record<string, unknown>, context: BrevoActionContext): Promise<unknown> {
+async function createContact(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   return requestBrevoJson({
     apiKey: context.apiKey,
     path: "/v3/contacts",
     method: "POST",
     body: compactObject({
-      email: readRequiredString(input.email, "email"),
+      email: requiredInputString(input.email, "email"),
       ext_id: optionalString(input.extId),
       listIds: optionalIntegerArray(input.listIds),
       emailBlacklisted: optionalBoolean(input.emailBlacklisted),
@@ -168,10 +165,10 @@ async function createContact(input: Record<string, unknown>, context: BrevoActio
   });
 }
 
-async function deleteContact(input: Record<string, unknown>, context: BrevoActionContext): Promise<unknown> {
+async function deleteContact(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   await requestBrevoNoContent({
     apiKey: context.apiKey,
-    path: `/v3/contacts/${encodeURIComponent(readRequiredString(input.identifier, "identifier"))}`,
+    path: `/v3/contacts/${encodeURIComponent(requiredInputString(input.identifier, "identifier"))}`,
     method: "DELETE",
     query: compactObject({
       identifierType: optionalString(input.identifierType),
@@ -184,7 +181,7 @@ async function deleteContact(input: Record<string, unknown>, context: BrevoActio
   return { success: true };
 }
 
-async function listContactFolders(input: Record<string, unknown>, context: BrevoActionContext): Promise<unknown> {
+async function listContactFolders(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   return requestBrevoJson({
     apiKey: context.apiKey,
     path: "/v3/contacts/folders",
@@ -195,7 +192,7 @@ async function listContactFolders(input: Record<string, unknown>, context: Brevo
   });
 }
 
-async function listContactLists(input: Record<string, unknown>, context: BrevoActionContext): Promise<unknown> {
+async function listContactLists(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   return requestBrevoJson({
     apiKey: context.apiKey,
     path: "/v3/contacts/lists",
@@ -206,13 +203,13 @@ async function listContactLists(input: Record<string, unknown>, context: BrevoAc
   });
 }
 
-async function createContactList(input: Record<string, unknown>, context: BrevoActionContext): Promise<unknown> {
+async function createContactList(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   return requestBrevoJson({
     apiKey: context.apiKey,
     path: "/v3/contacts/lists",
     method: "POST",
     body: {
-      name: readRequiredString(input.name, "name"),
+      name: requiredInputString(input.name, "name"),
       folderId: readRequiredInteger(input.folderId, "folderId"),
     },
     fetcher: context.fetcher,
@@ -221,7 +218,7 @@ async function createContactList(input: Record<string, unknown>, context: BrevoA
   });
 }
 
-async function updateContactList(input: Record<string, unknown>, context: BrevoActionContext): Promise<unknown> {
+async function updateContactList(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   await requestBrevoNoContent({
     apiKey: context.apiKey,
     path: `/v3/contacts/lists/${String(readRequiredInteger(input.listId, "listId"))}`,
@@ -238,7 +235,7 @@ async function updateContactList(input: Record<string, unknown>, context: BrevoA
   return { success: true };
 }
 
-async function listContactsInList(input: Record<string, unknown>, context: BrevoActionContext): Promise<unknown> {
+async function listContactsInList(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   return requestBrevoJson({
     apiKey: context.apiKey,
     path: `/v3/contacts/lists/${String(readRequiredInteger(input.listId, "listId"))}/contacts`,
@@ -254,7 +251,7 @@ async function listContactsInList(input: Record<string, unknown>, context: Brevo
 
 async function mutateListMembers(
   input: Record<string, unknown>,
-  context: BrevoActionContext,
+  context: ApiKeyProviderContext,
   mode: "add" | "remove",
 ): Promise<unknown> {
   return requestBrevoJson({
@@ -347,7 +344,7 @@ function buildBrevoUrl(path: string, query?: Record<string, BrevoQueryValue>): U
 
 function buildBrevoHeaders(apiKey: string, hasJsonBody: boolean): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
+    "accept": "application/json",
     "api-key": apiKey,
     "user-agent": providerUserAgent,
   };
@@ -397,10 +394,6 @@ function createBrevoError(response: Response, payload: unknown, mode: BrevoReque
   }
 
   return new ProviderRequestError(response.status || 500, message, payload);
-}
-
-function readRequiredString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function readRequiredInteger(value: unknown, fieldName: string): number {

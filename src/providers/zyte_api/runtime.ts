@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { assertPublicHttpUrl } from "../../core/request.ts";
@@ -62,7 +62,6 @@ export async function validateZyteApiCredential(
       accountId: "zyte_api:api_key",
       displayName: "Zyte API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: zyteApiBaseUrl,
       validationEndpoint: zyteApiExtractPath,
@@ -102,8 +101,8 @@ async function requestZyteApiJson(
     response = await context.fetcher(`${zyteApiBaseUrl}${zyteApiExtractPath}`, {
       method: "POST",
       headers: {
-        accept: "application/json",
-        authorization: buildBasicAuthorization(context.apiKey),
+        "accept": "application/json",
+        "authorization": buildBasicAuthorization(context.apiKey),
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },

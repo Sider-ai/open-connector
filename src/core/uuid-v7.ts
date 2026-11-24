@@ -18,3 +18,5 @@ export function generateUuidV7(timestampMs: number = Date.now()): string {
   const hexadecimal = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
   return `${hexadecimal.slice(0, 8)}-${hexadecimal.slice(8, 12)}-${hexadecimal.slice(12, 16)}-${hexadecimal.slice(16, 20)}-${hexadecimal.slice(20)}`;
 }
+
+export { generateUuidV7 as randomUUIDv7 };

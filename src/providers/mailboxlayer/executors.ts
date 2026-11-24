@@ -1,9 +1,16 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderRequestContext } from "../provider-runtime.ts";
 
 import { compactObject, optionalBoolean, optionalRecord, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "mailboxlayer";
 const mailboxlayerApiBaseUrl = "https://apilayer.net/api";
@@ -33,6 +40,16 @@ export const mailboxlayerActionHandlers: ProviderActionHandlers<"mailboxlayer", 
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, mailboxlayerActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: mailboxlayerApiBaseUrl,
+  auth: { type: "api_key_query", name: "access_key" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     return validateMailboxlayerCredential(input.apiKey, fetcher, signal);
@@ -59,7 +76,6 @@ async function validateMailboxlayerCredential(
       accountId: "api_key",
       displayName: "Mailboxlayer API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: mailboxlayerApiBaseUrl,
       validationEndpoint: "/check",
@@ -71,7 +87,7 @@ async function validateMailboxlayerCredential(
 async function requestMailboxlayer(input: {
   path: string;
   apiKey: string;
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">;
+  context: ProviderRequestContext;
   query: Array<[string, unknown]>;
 }): Promise<Record<string, unknown>> {
   const url = new URL(input.path, mailboxlayerApiBaseUrl);
@@ -86,7 +102,7 @@ async function requestMailboxlayer(input: {
     response = await input.context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
       signal: input.context.signal,

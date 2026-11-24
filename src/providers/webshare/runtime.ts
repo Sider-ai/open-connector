@@ -1,11 +1,10 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
-const webshareApiBaseUrl = "https://proxy.webshare.io";
+export const webshareApiBaseUrl = "https://proxy.webshare.io";
 
 type WebshareRequestPhase = "validate" | "execute";
 type WebshareQueryValue = string | number | boolean | undefined;
@@ -45,7 +44,6 @@ export async function validateWebshareCredential(
       accountId: userId == null ? (email ?? "webshare-api-key") : String(userId),
       displayName: email ?? firstName ?? (userId == null ? undefined : String(userId)) ?? "Webshare API Key",
     },
-    grantedScopes: [],
     metadata: {
       validationEndpoint: "/api/v2/profile/",
       userId,
@@ -60,7 +58,7 @@ async function webshareGetProfile(context: ApiKeyProviderContext): Promise<Recor
 }
 
 async function requestWebshareProfile(
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: WebshareRequestPhase,
 ): Promise<Record<string, unknown>> {
   const payload = await webshareRequest(context, { path: "/api/v2/profile/" }, phase);
@@ -151,7 +149,7 @@ async function webshareListStats(
 }
 
 async function webshareRequest(
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   request: WebshareRequestInput,
   phase: WebshareRequestPhase,
 ): Promise<unknown> {
@@ -188,8 +186,8 @@ function buildWebshareUrl(path: string, query?: Record<string, WebshareQueryValu
 
 function webshareHeaders(apiKey: string): Record<string, string> {
   return {
-    accept: "application/json",
-    authorization: `Token ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Token ${apiKey}`,
     "user-agent": providerUserAgent,
   };
 }

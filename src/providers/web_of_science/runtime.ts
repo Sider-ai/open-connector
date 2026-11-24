@@ -1,23 +1,23 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
-import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { compactObject, optionalInteger, optionalRecord, optionalString, rawStringOrNull } from "../../core/cast.ts";
 import {
   createProviderTimeout,
   isAbortLikeError,
   ProviderRequestError,
   providerUserAgent,
   readProviderJsonBody,
+  requiredInputString,
   setSearchParams,
+  providerInputError,
+  providerResponseError,
 } from "../provider-runtime.ts";
 
 const webOfScienceApiBaseUrl = "https://api.clarivate.com/apis/wos-starter/v1";
-const webOfScienceRequestTimeoutMs = 30_000;
 
 type WebOfSciencePhase = "validate" | "execute";
-type WebOfScienceContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type WebOfScienceActionHandler = (input: Record<string, unknown>, context: WebOfScienceContext) => Promise<unknown>;
+type WebOfScienceActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 export const webOfScienceActionHandlers: ProviderActionHandlers<"web_of_science", WebOfScienceActionHandler> = {
   async search_documents(input, context) {
@@ -26,7 +26,7 @@ export const webOfScienceActionHandlers: ProviderActionHandlers<"web_of_science"
       {
         path: "/documents",
         query: {
-          q: readRequiredInput(input.query, "query"),
+          q: requiredInputString(input.query, "query"),
           db: optionalString(input.database),
           limit: readOptionalIntegerString(input.limit),
           page: readOptionalIntegerString(input.page),
@@ -46,7 +46,7 @@ export const webOfScienceActionHandlers: ProviderActionHandlers<"web_of_science"
   },
 
   async get_document(input, context) {
-    const uid = readRequiredInput(input.uid, "uid");
+    const uid = requiredInputString(input.uid, "uid");
     const payload = await requestWebOfScienceJson(
       {
         path: `/documents/${encodeURIComponent(uid)}`,
@@ -73,7 +73,7 @@ export const webOfScienceActionHandlers: ProviderActionHandlers<"web_of_science"
   },
 
   async get_journal(input, context) {
-    const id = readRequiredInput(input.id, "id");
+    const id = requiredInputString(input.id, "id");
     const payload = await requestWebOfScienceJson(
       {
         path: `/journals/${encodeURIComponent(id)}`,
@@ -106,9 +106,7 @@ export async function validateWebOfScienceCredential(
     profile: {
       accountId: "web_of_science:api_key",
       displayName: "Web of Science API Key",
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: compactObject({
       validationEndpoint: "/journals",
       apiVersion: "v1",
@@ -126,14 +124,14 @@ interface WebOfScienceRequest {
 
 async function requestWebOfScienceJson(
   input: WebOfScienceRequest,
-  context: WebOfScienceContext,
+  context: ApiKeyProviderContext,
 ): Promise<Record<string, unknown>> {
-  const timeout = createProviderTimeout(context.signal, webOfScienceRequestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const response = await context.fetcher(buildWebOfScienceUrl(input.path, input.query), {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
         "X-ApiKey": context.apiKey,
       },
@@ -184,10 +182,10 @@ function createWebOfScienceError(status: number, payload: unknown, phase: WebOfS
     return new ProviderRequestError(429, message);
   }
   if (phase === "validate" && (status === 401 || status === 403)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (phase === "validate" && status >= 400 && status < 500) {
-    return new ProviderRequestError(502, message);
+    return providerResponseError(message);
   }
   if (status === 401 || status === 403) {
     return new ProviderRequestError(status, message);
@@ -248,7 +246,7 @@ function normalizeDocument(value: unknown) {
 
   return {
     uid,
-    title: readNullableString(document.title),
+    title: rawStringOrNull(document.title),
     types: readStringArray(document.types),
     sourceTypes: readStringArray(document.sourceTypes),
     source: optionalRecord(document.source) ?? null,
@@ -264,12 +262,12 @@ function normalizeDocument(value: unknown) {
 function normalizeJournal(value: unknown) {
   const journal = requireResponseRecord(value, "Web of Science returned an invalid journal");
   return {
-    id: readNullableString(journal.id),
-    name: readNullableString(journal.name),
-    jcrTitle: readNullableString(journal.jcrTitle),
-    isoTitle: readNullableString(journal.isoTitle),
-    issn: readNullableString(journal.issn),
-    eIssn: readNullableString(journal.eIssn),
+    id: rawStringOrNull(journal.id),
+    name: rawStringOrNull(journal.name),
+    jcrTitle: rawStringOrNull(journal.jcrTitle),
+    isoTitle: rawStringOrNull(journal.isoTitle),
+    issn: rawStringOrNull(journal.issn),
+    eIssn: rawStringOrNull(journal.eIssn),
     previousIssn: readStringArray(journal.previousIssn),
     links: readRecordArray(journal.links),
     raw: journal,
@@ -293,13 +291,9 @@ function readStringArray(value: unknown): string[] {
 function requireResponseRecord(value: unknown, message: string): Record<string, unknown> {
   const record = optionalRecord(value);
   if (!record) {
-    throw new ProviderRequestError(502, message);
+    throw providerResponseError(message);
   }
   return record;
-}
-
-function readRequiredInput(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function readOptionalIntegerString(value: unknown): string | undefined {
@@ -309,10 +303,6 @@ function readOptionalIntegerString(value: unknown): string | undefined {
 
 function readNullableInteger(value: unknown): number | null {
   return optionalInteger(value) ?? null;
-}
-
-function readNullableString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
 }
 
 function mapDetail(value: unknown): string | undefined {

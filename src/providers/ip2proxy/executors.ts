@@ -1,9 +1,10 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "ip2proxy";
 const ip2proxyApiBaseUrl = "https://api.ip2proxy.com";
@@ -11,8 +12,7 @@ const ip2proxyValidationIp = "8.8.8.8";
 const ip2proxyValidationPackage = "PX1";
 
 type Ip2proxyRequestPhase = "validate" | "execute";
-type Ip2proxyActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type Ip2proxyActionHandler = (input: Record<string, unknown>, context: Ip2proxyActionContext) => Promise<unknown>;
+type Ip2proxyActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 export const ip2proxyActionHandlers: ProviderActionHandlers<"ip2proxy", Ip2proxyActionHandler> = {
   lookup_ip(input, context) {
@@ -28,6 +28,16 @@ export const ip2proxyActionHandlers: ProviderActionHandlers<"ip2proxy", Ip2proxy
 };
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, ip2proxyActionHandlers);
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: ip2proxyApiBaseUrl,
+  auth: { type: "api_key_query", name: "key" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
 
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
@@ -49,7 +59,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "api_key",
         displayName: "IP2Proxy API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: ip2proxyApiBaseUrl,
         validationEndpoint: "/",
@@ -65,7 +74,7 @@ async function requestIp2proxyJson(
     ip: string;
     package: string;
   },
-  context: Ip2proxyActionContext,
+  context: ApiKeyProviderContext,
   phase: Ip2proxyRequestPhase,
 ): Promise<Record<string, unknown>> {
   let response: Response;
@@ -75,7 +84,7 @@ async function requestIp2proxyJson(
     response = await context.fetcher(buildIp2proxyUrl(context.apiKey, query), {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
       signal: context.signal,

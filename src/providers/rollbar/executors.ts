@@ -1,17 +1,18 @@
 import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { createHash } from "node:crypto";
 import {
   compactObject,
+  looseArray,
   optionalBoolean,
   optionalInteger,
   optionalRecord,
   optionalString,
   requiredString,
 } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "rollbar";
 const rollbarApiBaseUrl = "https://api.rollbar.com/api/1";
@@ -37,7 +38,7 @@ export const rollbarActionHandlers: ProviderActionHandlers<"rollbar", RollbarAct
     return {
       page: requirePositiveInteger(result.page, "page"),
       totalCount: optionalInteger(result.total_count) ?? null,
-      items: readArray(result.items).map((item) => normalizeItem(requireRecord(item, "rollbar item"))),
+      items: looseArray(result.items).map((item) => normalizeItem(requireRecord(item, "rollbar item"))),
     };
   },
   async get_item(input, context) {
@@ -56,7 +57,7 @@ export const rollbarActionHandlers: ProviderActionHandlers<"rollbar", RollbarAct
     const result = requireResultRecord(payload, "rollbar occurrence list response");
     return {
       page: requirePositiveInteger(result.page, "page"),
-      occurrences: readArray(result.instances).map((item) =>
+      occurrences: looseArray(result.instances).map((item) =>
         normalizeOccurrence(requireRecord(item, "rollbar occurrence")),
       ),
     };
@@ -76,7 +77,7 @@ export const rollbarActionHandlers: ProviderActionHandlers<"rollbar", RollbarAct
     const result = requireResultRecord(payload, "rollbar environments response");
     return {
       page: requirePositiveInteger(result.page, "page"),
-      environments: readArray(result.environments).map((item) =>
+      environments: looseArray(result.environments).map((item) =>
         normalizeEnvironment(requireRecord(item, "rollbar environment")),
       ),
     };
@@ -91,7 +92,7 @@ export const rollbarActionHandlers: ProviderActionHandlers<"rollbar", RollbarAct
     const result = requireResultRecord(payload, "rollbar deploy list response");
     return {
       page: requirePositiveInteger(result.page, "page"),
-      deploys: readArray(result.deploys).map((item) => normalizeDeploy(requireRecord(item, "rollbar deploy"))),
+      deploys: looseArray(result.deploys).map((item) => normalizeDeploy(requireRecord(item, "rollbar deploy"))),
     };
   },
   async get_deploy(input, context) {
@@ -113,7 +114,7 @@ export const credentialValidators: CredentialValidators = {
       phase: "validate",
     });
     const result = requireResultRecord(payload, "rollbar validation response");
-    const environments = readArray(result.environments).map((item) =>
+    const environments = looseArray(result.environments).map((item) =>
       normalizeEnvironment(requireRecord(item, "rollbar environment")),
     );
     const firstEnvironment = environments[0];
@@ -124,12 +125,10 @@ export const credentialValidators: CredentialValidators = {
         accountId: projectId ? `rollbar-project-${projectId}` : `rollbar-project-token-${tokenFingerprint}`,
         displayName: projectId ? `Rollbar project ${projectId}` : `Rollbar project token ${tokenFingerprint}`,
       },
-      grantedScopes: ["rollbar.project.read"],
       metadata: compactObject({
         apiBaseUrl: rollbarApiBaseUrl,
         validationEndpoint: "/environments",
         credentialKind: "project_access_token",
-        tokenScope: "read",
         environmentCount: environments.length,
         projectId,
         defaultEnvironment: firstEnvironment?.environment,
@@ -140,7 +139,7 @@ export const credentialValidators: CredentialValidators = {
 
 async function requestRollbarJson(input: {
   path: string;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   phase: RollbarRequestPhase;
   query?: Record<string, string | string[] | undefined>;
 }): Promise<RollbarRecord> {
@@ -150,7 +149,7 @@ async function requestRollbarJson(input: {
     response = await input.context.fetcher(buildRollbarUrl(input.path, input.query), {
       method: "GET",
       headers: {
-        Accept: "application/json",
+        "Accept": "application/json",
         "User-Agent": providerUserAgent,
         "X-Rollbar-Access-Token": input.context.apiKey,
       },
@@ -229,14 +228,14 @@ function buildOccurrenceQuery(input: Record<string, unknown>): Record<string, st
 function buildListItemsQuery(input: Record<string, unknown>): Record<string, string | string[] | undefined> {
   const isSnoozed = optionalBoolean(input.isSnoozed);
   return compactObject({
-    assigned_user: readOptionalString(input.assignedUser),
+    assigned_user: optionalString(input.assignedUser),
     assigned_team: readOptionalStringArray(input.assignedTeam),
     environment: readOptionalStringArray(input.environment),
     framework: readOptionalStringArray(input.framework),
     ids: readOptionalIntegerArray(input.itemIds),
     level: readOptionalStringArray(input.level),
     page: readOptionalPositiveIntegerString(input.page),
-    query: readOptionalString(input.query),
+    query: optionalString(input.query),
     status: readOptionalStringArray(input.status),
     is_snoozed: isSnoozed === undefined ? undefined : String(isSnoozed),
   });
@@ -381,17 +380,9 @@ function requireBooleanLike(value: unknown, fieldName: string): boolean {
   throw new ProviderRequestError(502, `${fieldName} is missing`);
 }
 
-function readArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
 function readOptionalPositiveIntegerString(value: unknown): string | undefined {
   const parsed = optionalInteger(value);
   return parsed == null || parsed <= 0 ? undefined : String(parsed);
-}
-
-function readOptionalString(value: unknown): string | undefined {
-  return optionalString(value);
 }
 
 function readOptionalStringArray(value: unknown): string[] | undefined {

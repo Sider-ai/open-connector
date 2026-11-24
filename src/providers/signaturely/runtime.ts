@@ -1,18 +1,15 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import {
-  createProviderTimeout,
-  isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
   readProviderJsonBody,
+  runProviderRequest,
 } from "../provider-runtime.ts";
 
 export const signaturelyApiBaseUrl = "https://api.signaturely.com/api/v1/";
-const timeoutMs = 30_000;
 export const signaturelyActionHandlers: ProviderActionHandlers<
   "signaturely",
   ProviderRuntimeHandler<ApiKeyProviderContext>
@@ -73,7 +70,6 @@ export async function validateSignaturelyCredential(
       accountId: id,
       displayName: optionalString(user.name)?.trim() || optionalString(user.email)?.trim() || "Signaturely API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       validationEndpoint: "/user/by-api",
       userId: id,
@@ -86,23 +82,22 @@ export async function validateSignaturelyCredential(
 }
 async function request(
   path: string,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
   phase: "validate" | "execute",
   method = "GET",
   body?: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const timeout = createProviderTimeout(context.signal, timeoutMs);
-  try {
+  return runProviderRequest({ signal: context.signal, label: "Signaturely" }, async (signal) => {
     const response = await context.fetcher(new URL(path, signaturelyApiBaseUrl), {
       method,
       headers: {
-        accept: "application/json",
-        authorization: `Api-Key ${context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Api-Key ${context.apiKey}`,
         "user-agent": providerUserAgent,
         ...(body ? { "content-type": "application/json" } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
-      signal: timeout.signal,
+      signal,
     });
     const payload = await readProviderJsonBody(response, {
       emptyBody: null,
@@ -121,17 +116,7 @@ async function request(
       throw new ProviderRequestError(status, message, payload);
     }
     return record(payload, "Signaturely response");
-  } catch (error) {
-    if (error instanceof ProviderRequestError) throw error;
-    if (timeout.didTimeout() || isAbortLikeError(error))
-      throw new ProviderRequestError(504, "Signaturely request timed out");
-    throw new ProviderRequestError(
-      502,
-      error instanceof Error ? `Signaturely request failed: ${error.message}` : "Signaturely request failed",
-    );
-  } finally {
-    timeout.cleanup();
-  }
+  });
 }
 function normalizeList(payload: Record<string, unknown>): Record<string, unknown> {
   if (!Array.isArray(payload.items)) throw new ProviderRequestError(502, "Signaturely folder items are missing");

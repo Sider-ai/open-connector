@@ -3,7 +3,7 @@ import type { ActionDefinition } from "../../core/types.ts";
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
 
-const service = "lightspeed_vt" as const;
+const service = "lightspeed_vt";
 
 const positiveId = (description: string) => s.integer(description, { minimum: 1 });
 const page = s.integer("The one-based result page to return.", { minimum: 1 });
@@ -45,6 +45,7 @@ const locationSchema = s.looseObject(
 export const lightspeedVtActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "list_users",
+    operationType: "read",
     description: "List or find users available to the connected LightSpeed VT API account.",
     requiredScopes: [],
     inputSchema: s.object(
@@ -80,6 +81,7 @@ export const lightspeedVtActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_user",
+    operationType: "read",
     description: "Retrieve one LightSpeed VT user by user identifier.",
     requiredScopes: [],
     inputSchema: s.object("The user to retrieve.", {
@@ -91,6 +93,7 @@ export const lightspeedVtActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_courses",
+    operationType: "read",
     description: "List active courses available to the connected LightSpeed VT API account.",
     requiredScopes: [],
     inputSchema: s.object(
@@ -110,6 +113,7 @@ export const lightspeedVtActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_course",
+    operationType: "read",
     description: "Retrieve one LightSpeed VT course by course identifier.",
     requiredScopes: [],
     inputSchema: s.object("The course to retrieve.", {
@@ -121,6 +125,7 @@ export const lightspeedVtActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_locations",
+    operationType: "read",
     description: "List locations available to the connected LightSpeed VT API account.",
     requiredScopes: [],
     inputSchema: s.object(
@@ -149,6 +154,7 @@ export const lightspeedVtActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_location",
+    operationType: "read",
     description: "Retrieve one LightSpeed VT location by location identifier.",
     requiredScopes: [],
     inputSchema: s.object("The location to retrieve.", {

@@ -1,7 +1,6 @@
 import type { ProviderDefinition } from "../core/types.ts";
 import type { IOAuthClientConfigStore, OAuthClientConfig } from "./oauth-client-config-service.ts";
 
-import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCatalogStore } from "../catalog-store.ts";
 import { provider as calendlyProvider } from "../providers/calendly/definition.ts";
@@ -24,35 +23,6 @@ const pkceProvider: ProviderDefinition = {
       scopes: ["read", "write"],
       tokenEndpointAuthMethod: "client_secret_post",
       pkce: { method: "S256" },
-    },
-  ],
-  actions: [],
-};
-
-const shopifyAdminProvider: ProviderDefinition = {
-  service: "shopify_admin",
-  displayName: "Shopify Admin",
-  categories: ["Data"],
-  authTypes: ["oauth2"],
-  auth: [
-    {
-      type: "oauth2",
-      authorizationUrl: "https://{shopDomain}/admin/oauth/authorize",
-      tokenUrl: "https://{shopDomain}/admin/oauth/access_token",
-      scopes: ["read_products"],
-      scopeSeparator: ",",
-      tokenEndpointAuthMethod: "client_secret_post",
-      tokenRequestFields: { authorizationCode: { grantType: false, redirectUri: false } },
-      tokenRequestParams: { authorizationCode: { expiring: "1" } },
-      authorizationFields: [
-        {
-          key: "shopDomain",
-          label: "Shop domain",
-          inputType: "text",
-          required: true,
-          secret: false,
-        },
-      ],
     },
   ],
   actions: [],
@@ -152,6 +122,8 @@ describe("OAuthAuthorizationService", () => {
       "forms:write",
       "offline",
       "responses:read",
+      "webhooks:read",
+      "webhooks:write",
       "workspaces:read",
     ]);
   });
@@ -248,79 +220,6 @@ describe("OAuthAuthorizationService", () => {
     });
     expect(new URL(prepared.authorizationUrl).searchParams.get("client_id")).toBe("custom-client-id");
   });
-
-  it("binds a normalized Shopify shop domain to its authorization URL and pending state", async () => {
-    const authorizations = await createAuthorizationService({}, shopifyAdminProvider);
-
-    const prepared = await authorizations.prepareAuthorization({
-      service: "shopify_admin",
-      connectionName: "store",
-      authorizationValues: { shopDomain: " Example-Shop.MyShopify.com " },
-    });
-    const url = new URL(prepared.authorizationUrl);
-
-    expect(url.origin + url.pathname).toBe("https://example-shop.myshopify.com/admin/oauth/authorize");
-    expect(url.searchParams.get("scope")).toBe("read_products");
-    expect(prepared.pending.authorizationValues).toEqual({ shopDomain: "example-shop.myshopify.com" });
-  });
-
-  it("rejects missing and non-Shopify authorization domains before creating an authorization URL", async () => {
-    const authorizations = await createAuthorizationService({}, shopifyAdminProvider);
-
-    await expect(
-      authorizations.prepareAuthorization({ service: "shopify_admin", authorizationValues: {} }),
-    ).rejects.toMatchObject({ code: "invalid_authorization_values" });
-    await expect(
-      authorizations.prepareAuthorization({
-        service: "shopify_admin",
-        authorizationValues: { shopDomain: "attacker.example" },
-      }),
-    ).rejects.toMatchObject({ code: "invalid_authorization_values" });
-  });
-
-  it("verifies Shopify's callback before exchanging an expiring shop-specific token", async () => {
-    const authorizations = await createAuthorizationService({}, shopifyAdminProvider);
-    const fetcher = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
-      Response.json({
-        access_token: "shopify-access-token",
-        refresh_token: "shopify-refresh-token",
-        expires_in: 86_399,
-        scope: "read_products",
-      }),
-    );
-    vi.stubGlobal("fetch", fetcher);
-    const prepared = await authorizations.prepareAuthorization({
-      service: "shopify_admin",
-      connectionName: "store",
-      authorizationValues: { shopDomain: "example-shop.myshopify.com" },
-    });
-    const code = "shopify-authorization-code";
-    const callbackParameters = signedShopifyCallback(code, prepared.pending.state);
-
-    const exchanged = await authorizations.exchangeAuthorizationCode({
-      pending: prepared.pending,
-      code,
-      callbackParameters,
-    });
-
-    expect(exchanged.credential).toMatchObject({
-      accessToken: "shopify-access-token",
-      refreshToken: "shopify-refresh-token",
-      metadata: {
-        scope: "read_products",
-        oauthAuthorizationValues: { shopDomain: "example-shop.myshopify.com" },
-      },
-    });
-    expect(fetcher.mock.calls[0]?.[0]).toBe("https://example-shop.myshopify.com/admin/oauth/access_token");
-    const body = fetcher.mock.calls[0]?.[1]?.body;
-    expect(body).toBeInstanceOf(URLSearchParams);
-    if (!(body instanceof URLSearchParams)) {
-      throw new Error("Expected Shopify token exchange body to use URLSearchParams");
-    }
-    expect(body.get("expiring")).toBe("1");
-    expect(body.has("grant_type")).toBe(false);
-    expect(body.has("redirect_uri")).toBe(false);
-  });
 });
 
 interface CreateAuthorizationServiceOptions {
@@ -367,16 +266,4 @@ class MemoryOAuthClientConfigStore implements IOAuthClientConfigStore {
   async list(): Promise<OAuthClientConfig[]> {
     return [...this.configs.values()];
   }
-}
-
-function signedShopifyCallback(code: string, state: string): readonly (readonly [name: string, value: string])[] {
-  const unsigned = [
-    ["code", code],
-    ["shop", "example-shop.myshopify.com"],
-    ["state", state],
-    ["timestamp", "1789545600"],
-  ] as const;
-  const message = unsigned.map(([key, value]) => `${key}=${value}`).join("&");
-  const hmac = createHmac("sha256", "client-secret").update(message).digest("hex");
-  return [...unsigned, ["hmac", hmac]];
 }

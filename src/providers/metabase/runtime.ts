@@ -1,6 +1,6 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlerSubset } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { optionalRecord, optionalString } from "../../core/cast.ts";
 import { assertPublicHttpUrl } from "../../core/request.ts";
@@ -9,7 +9,7 @@ import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts"
 const apiPathPrefix = "/api";
 const validationPath = "/user/current";
 
-interface MetabaseContext {
+export interface MetabaseContext {
   apiKey: string;
   apiBaseUrl: string;
   fetcher: typeof fetch;
@@ -19,7 +19,7 @@ interface MetabaseContext {
 type MetabasePhase = "validate" | "execute";
 type MetabaseActionHandler = ProviderRuntimeHandler<MetabaseContext>;
 
-export const metabaseActionHandlers: ProviderActionHandlers<"metabase", MetabaseActionHandler> = {
+export const metabaseActionHandlers: ProviderActionHandlerSubset<"metabase", MetabaseActionHandler> = {
   async get_current_user(_input, context) {
     const payload = await requestMetabaseJson({ path: validationPath, context, phase: "execute" });
     return { user: requireObject(payload, "Metabase user"), raw: toRawObject(payload) };
@@ -30,13 +30,13 @@ export const metabaseActionHandlers: ProviderActionHandlers<"metabase", Metabase
       context,
       phase: "execute",
       query: {
-        include: optionalString(input.include),
-        include_analytics: input.includeAnalytics,
-        saved: input.saved,
-        include_editable_data_model: input.includeEditableDataModel,
-        exclude_uneditable_details: input.excludeUneditableDetails,
-        include_only_uploadable: input.includeOnlyUploadable,
-        router_database_id: input.routerDatabaseId,
+        "include": optionalString(input.include),
+        "include_analytics": input.includeAnalytics,
+        "saved": input.saved,
+        "include_editable_data_model": input.includeEditableDataModel,
+        "exclude_uneditable_details": input.excludeUneditableDetails,
+        "include_only_uploadable": input.includeOnlyUploadable,
+        "router_database_id": input.routerDatabaseId,
         "can-query": input.canQuery,
         "can-write-metadata": input.canWriteMetadata,
       },
@@ -62,9 +62,9 @@ export const metabaseActionHandlers: ProviderActionHandlers<"metabase", Metabase
       context,
       phase: "execute",
       query: {
-        archived: input.archived,
+        "archived": input.archived,
         "exclude-other-user-collections": input.excludeOtherUserCollections,
-        namespace: optionalString(input.namespace),
+        "namespace": optionalString(input.namespace),
         "personal-only": input.personalOnly,
       },
     });
@@ -148,7 +148,6 @@ export async function validateMetabaseCredential(
       accountId: profileId,
       displayName: buildAccountLabel(user, urls.instanceUrl),
     },
-    grantedScopes: [],
     metadata: {
       instanceUrl: urls.instanceUrl,
       apiBaseUrl: urls.apiBaseUrl,
@@ -201,7 +200,7 @@ async function requestMetabaseJson(options: {
     response = await options.context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
         "x-api-key": options.context.apiKey,
       },

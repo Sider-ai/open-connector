@@ -1,16 +1,20 @@
-import type { CredentialValidators, ExecutionContext, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type {
+  CredentialValidators,
+  ExecutionContext,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
-import {
-  defineProviderExecutors,
-  providerUserAgent,
-  ProviderRequestError,
-  requireApiKeyCredential,
-} from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError, providerInputError } from "../provider-runtime.ts";
 
 const keygenApiBaseUrl = "https://api.keygen.sh/v1/accounts";
 const keygenValidationPath = "/me";
+const service = "keygen";
 
 type KeygenRequestPhase = "validate" | "execute";
 type KeygenResourceKey =
@@ -374,10 +378,10 @@ export const keygenActionHandlers: ProviderActionHandlers<"keygen", KeygenAction
 };
 
 export const executors: ProviderExecutors = defineProviderExecutors<KeygenRequestContext>({
-  service: "keygen",
+  service,
   handlers: keygenActionHandlers,
   async createContext(context: ExecutionContext, fetcher: typeof fetch): Promise<KeygenRequestContext> {
-    const credential = await requireApiKeyCredential(context, "keygen");
+    const credential = await requireApiKeyCredential(context, service);
     return {
       apiKey: credential.apiKey,
       account: requireKeygenAccount(credential.metadata.account ?? credential.values.account),
@@ -385,6 +389,17 @@ export const executors: ProviderExecutors = defineProviderExecutors<KeygenReques
       signal: context.signal,
     };
   },
+});
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  async baseUrl(context) {
+    const credential = await requireApiKeyCredential(context, service);
+    const account = requireKeygenAccount(credential.metadata.account ?? credential.values.account);
+    return `${keygenApiBaseUrl}/${encodeURIComponent(account)}`;
+  },
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  defaultHeaders: { accept: "application/vnd.api+json" },
 });
 
 export const credentialValidators: CredentialValidators = {
@@ -413,7 +428,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: profileId ? `${account}:${profileId}` : account,
         displayName: name ?? email ?? account,
       },
-      grantedScopes: [],
       metadata: compactObject({
         account,
         apiBaseUrl: `${keygenApiBaseUrl}/${encodeURIComponent(account)}`,
@@ -654,7 +668,7 @@ function appendQueryValue(searchParams: URLSearchParams, key: string, value: unk
 
 function keygenHeaders(apiKey: string, options: { auth: boolean; hasBody: boolean }) {
   return {
-    accept: "application/vnd.api+json",
+    "accept": "application/vnd.api+json",
     "user-agent": providerUserAgent,
     ...(options.hasBody ? { "content-type": "application/vnd.api+json" } : {}),
     ...(options.auth ? { authorization: `Bearer ${apiKey}` } : {}),
@@ -682,7 +696,7 @@ function createKeygenError(response: Response, payload: unknown, phase: KeygenRe
   }
 
   if (phase === "validate" && (response.status === 401 || response.status === 403)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   if (phase === "execute" && usedAuth && (response.status === 401 || response.status === 403)) {
@@ -690,11 +704,11 @@ function createKeygenError(response: Response, payload: unknown, phase: KeygenRe
   }
 
   if (phase === "execute" && !usedAuth && (response.status === 401 || response.status === 403)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   if ([400, 404, 422].includes(response.status)) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   return new ProviderRequestError(response.status || 500, message);
@@ -726,7 +740,7 @@ function buildListQuery(input: Record<string, unknown>) {
   const query: Record<string, unknown> = compactObject({
     "page[number]": input.pageNumber,
     "page[size]": input.pageSize,
-    include: input.include,
+    "include": input.include,
   });
 
   for (const [key, value] of Object.entries(filter ?? {})) {
@@ -738,7 +752,7 @@ function buildListQuery(input: Record<string, unknown>) {
 
 function buildRelationshipListQuery(input: Record<string, unknown>) {
   return compactObject({
-    limit: input.limit,
+    "limit": input.limit,
     "page[size]": input.pageSize,
     "page[cursor]": input.pageCursor,
   });

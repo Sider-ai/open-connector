@@ -1,11 +1,10 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { optionalBoolean, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
-const fernApiBaseUrl = "https://api.fernhq.com";
+export const fernApiBaseUrl = "https://api.fernhq.com";
 const fernValidationPath = "/customers?pageSize=1";
 
 type FernRequestPhase = "validate" | "execute";
@@ -46,7 +45,6 @@ export async function validateFernCredential(
     profile: {
       displayName: "Fern API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: fernApiBaseUrl,
       validationEndpoint: fernValidationPath,
@@ -105,11 +103,7 @@ function setOptionalQuery(url: URL, key: string, value: string | number | boolea
   }
 }
 
-async function fernGetJson(
-  path: string,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
-  phase: FernRequestPhase,
-): Promise<unknown> {
+async function fernGetJson(path: string, context: ApiKeyProviderContext, phase: FernRequestPhase): Promise<unknown> {
   let response: Response;
   let payload: unknown;
   try {
@@ -138,8 +132,8 @@ async function fernGetJson(
 
 function fernHeaders(apiKey: string): Record<string, string> {
   return {
-    authorization: `Bearer ${apiKey}`,
-    accept: "application/json",
+    "authorization": `Bearer ${apiKey}`,
+    "accept": "application/json",
     "user-agent": providerUserAgent,
   };
 }

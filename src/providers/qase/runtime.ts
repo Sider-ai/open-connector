@@ -1,5 +1,5 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -8,7 +8,12 @@ import {
   optionalRecord as asOptionalObject,
   optionalString as asOptionalString,
 } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import {
+  providerUserAgent,
+  ProviderRequestError,
+  providerInputError,
+  providerResponseError,
+} from "../provider-runtime.ts";
 
 export const qaseApiBaseUrl = "https://api.qase.io/v1";
 interface QaseActionInput {
@@ -52,7 +57,6 @@ export async function validateQaseCredential(
   signal?: AbortSignal,
 ): Promise<{
   profile: { accountId: string; displayName: string };
-  grantedScopes: string[];
   metadata: Record<string, unknown>;
 }> {
   await requestQase({
@@ -65,7 +69,6 @@ export async function validateQaseCredential(
   });
   return {
     profile: { accountId: `qase:${apiKey.slice(-8)}`, displayName: "Qase API Token" },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: qaseApiBaseUrl,
       validationEndpoint: "/project?limit=1",
@@ -193,9 +196,9 @@ async function requestQase(input: QaseRequestInput) {
     const response = await input.fetcher(url, {
       method: input.method ?? "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
-        token: input.apiKey,
+        "token": input.apiKey,
         "user-agent": providerUserAgent,
       },
       body: input.body === undefined ? undefined : JSON.stringify(input.body),
@@ -240,9 +243,9 @@ function createQaseError(response: Response, payload: unknown, phase: "validate"
     return new ProviderRequestError(phase === "validate" ? 400 : 401, message);
   }
   if (400 <= response.status && response.status < 500) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
-  return new ProviderRequestError(502, message);
+  return providerResponseError(message);
 }
 
 function readPage(payload: unknown, entity: string) {

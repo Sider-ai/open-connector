@@ -3,7 +3,7 @@ import type { ProviderFetch } from "./provider-runtime.ts";
 
 import { optionalRecord, optionalString } from "../core/cast.ts";
 import { queryParams } from "../core/request.ts";
-import { providerUserAgent, ProviderRequestError } from "./provider-runtime.ts";
+import { isAbortLikeError, isAbortSignalError, providerUserAgent, ProviderRequestError } from "./provider-runtime.ts";
 
 export type ProviderRequestPhase = "validate" | "execute";
 
@@ -34,6 +34,9 @@ export async function requestJson(input: JsonRequestOptions): Promise<unknown> {
   } catch (error) {
     if (error instanceof ProviderRequestError) {
       throw error;
+    }
+    if (isAbortLikeError(error) || isAbortSignalError(input.signal, error)) {
+      throw new ProviderRequestError(504, `${input.providerName} request timed out`);
     }
     throw new ProviderRequestError(
       502,
@@ -94,7 +97,7 @@ function buildJsonRequestUrl(baseUrl: string, path: string, query: Record<string
 
 function buildJsonRequestHeaders(headers: Record<string, string> = {}, body: unknown): Record<string, string> {
   const output: Record<string, string> = {
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     ...headers,
   };

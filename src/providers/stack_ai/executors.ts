@@ -4,27 +4,29 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
+import { requireCustomCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
 import {
-  createProviderFetch,
   createProviderProxyUrl,
-  createProviderTimeout,
-  defineProviderExecutors,
-  isAbortLikeError,
   normalizeProviderProxyHeaders,
-  ProviderRequestError,
-  providerUserAgent,
   readProviderProxyErrorMessage,
   readProviderProxyResponse,
-  requireCustomCredential,
   toProviderProxyError,
+} from "../provider-proxy.ts";
+import {
+  createProviderFetch,
+  createProviderTimeout,
+  isAbortLikeError,
+  ProviderRequestError,
+  providerUserAgent,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 const service = "stack_ai";
 const stackAiInferenceBaseUrl = "https://stack-inference.com";
-const stackAiRequestTimeoutMs = 30_000;
 
 const stackAiFetch = createProviderFetch({ skipDnsValidation: true });
 
@@ -109,7 +111,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: `${context.organizationId}/${context.flowId}`,
         displayName: `StackAI Flow ${context.flowId}`,
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: stackAiInferenceBaseUrl,
         organizationId: context.organizationId,
@@ -146,7 +147,7 @@ async function runStackAiFlow(input: Record<string, unknown>, context: StackAiCo
       path: buildRunPath(context.organizationId, context.flowId),
       phase: "execute",
       body: {
-        user_id: requireInputField(input.userId, "userId"),
+        user_id: requiredInputString(input.userId, "userId"),
         variables: optionalRecord(input.variables) ?? {},
       },
     },
@@ -157,7 +158,7 @@ async function runStackAiFlow(input: Record<string, unknown>, context: StackAiCo
 }
 
 async function getStackAiRunMetadata(input: Record<string, unknown>, context: StackAiContext): Promise<unknown> {
-  const runId = requireInputField(input.runId, "runId");
+  const runId = requiredInputString(input.runId, "runId");
   const responsePayload = await stackAiJsonRequest(
     {
       method: "GET",
@@ -183,7 +184,7 @@ async function stackAiJsonRequest(
   },
   context: StackAiContext,
 ): Promise<unknown> {
-  const timeout = createProviderTimeout(context.signal, stackAiRequestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const url = new URL(input.path, stackAiInferenceBaseUrl);
     for (const [key, value] of Object.entries(input.query ?? {})) {
@@ -195,8 +196,8 @@ async function stackAiJsonRequest(
     const response = await context.fetcher(url, {
       method: input.method ?? "GET",
       headers: compactObject({
-        accept: "application/json",
-        authorization: `Bearer ${context.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${context.apiKey}`,
         "user-agent": providerUserAgent,
         "content-type": input.body ? "application/json" : undefined,
       }) as Record<string, string>,
@@ -315,14 +316,6 @@ function requireTextField(value: string | undefined, key: string): string {
     throw new ProviderRequestError(400, `${key} is required.`);
   }
   return normalized;
-}
-
-function requireInputField(value: unknown, key: string): string {
-  const text = optionalString(value);
-  if (!text) {
-    throw new ProviderRequestError(400, `${key} is required.`);
-  }
-  return text;
 }
 
 function firstNonEmptyString(...values: unknown[]): string | null {

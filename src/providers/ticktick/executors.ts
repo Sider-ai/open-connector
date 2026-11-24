@@ -1,11 +1,25 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
 
-import { defineBearerProviderExecutors } from "../provider-runtime.ts";
-import { fetchTicktickCurrentAccount, ticktickActionHandlers, validateTicktickCredential } from "./runtime.ts";
+import { defineBearerProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import {
+  fetchTicktickCurrentAccount,
+  ticktickActionHandlers,
+  ticktickApiBaseUrl,
+  validateTicktickCredential,
+} from "./runtime.ts";
 
 const service = "ticktick";
 
 export const executors: ProviderExecutors = defineBearerProviderExecutors(service, ticktickActionHandlers);
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: ticktickApiBaseUrl,
+  auth: { type: "bearer" },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
 
 export const credentialValidators: CredentialValidators = {
   apiKey: validateTicktickCredential,

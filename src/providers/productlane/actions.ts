@@ -3,7 +3,7 @@ import type { ActionDefinition } from "../../core/types.ts";
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
 
-const service = "productlane" as const;
+const service = "productlane";
 
 const identitySchema = s.looseRequiredObject("The authenticated Productlane API key identity.", {
   workspace_id: s.nonEmptyString("The Productlane workspace ID associated with the API key."),
@@ -283,66 +283,77 @@ const listContactsInputSchema = s.object(
 export const productlaneActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "get_authenticated_identity",
+    operationType: "read",
     description: "Get the authenticated Productlane API key identity, granted scopes, and Linear team selection.",
     inputSchema: s.requiredObject("This Productlane action does not require any input.", {}),
     outputSchema: identitySchema,
   }),
   defineProviderAction(service, {
     name: "list_companies",
+    operationType: "read",
     description: "List Productlane companies with cursor pagination and documented filters.",
     inputSchema: listCompaniesInputSchema,
     outputSchema: companyListSchema,
   }),
   defineProviderAction(service, {
     name: "create_company",
+    operationType: "write",
     description: "Create a company in the connected Productlane workspace.",
     inputSchema: createCompanyInputSchema,
     outputSchema: companySchema,
   }),
   defineProviderAction(service, {
     name: "get_company",
+    operationType: "read",
     description: "Get a Productlane company by ID.",
     inputSchema: resourceIdInputSchema("company"),
     outputSchema: companySchema,
   }),
   defineProviderAction(service, {
     name: "update_company",
+    operationType: "write",
     description: "Update a Productlane company by ID.",
     inputSchema: updateCompanyInputSchema,
     outputSchema: companySchema,
   }),
   defineProviderAction(service, {
     name: "delete_company",
+    operationType: "destructive",
     description: "Soft-delete a Productlane company by ID.",
     inputSchema: resourceIdInputSchema("company"),
     outputSchema: deleteResultSchema,
   }),
   defineProviderAction(service, {
     name: "list_contacts",
+    operationType: "read",
     description: "List Productlane contacts with cursor pagination and documented filters.",
     inputSchema: listContactsInputSchema,
     outputSchema: contactListSchema,
   }),
   defineProviderAction(service, {
     name: "create_contact",
+    operationType: "write",
     description: "Create a contact in the connected Productlane workspace.",
     inputSchema: createContactInputSchema,
     outputSchema: contactSchema,
   }),
   defineProviderAction(service, {
     name: "get_contact",
+    operationType: "read",
     description: "Get a Productlane contact by ID.",
     inputSchema: resourceIdInputSchema("contact"),
     outputSchema: contactSchema,
   }),
   defineProviderAction(service, {
     name: "update_contact",
+    operationType: "write",
     description: "Update a Productlane contact by ID.",
     inputSchema: updateContactInputSchema,
     outputSchema: contactSchema,
   }),
   defineProviderAction(service, {
     name: "delete_contact",
+    operationType: "destructive",
     description: "Soft-delete a Productlane contact by ID.",
     inputSchema: resourceIdInputSchema("contact"),
     outputSchema: deleteResultSchema,

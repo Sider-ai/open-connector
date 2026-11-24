@@ -5,23 +5,20 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
 import { optionalBoolean, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
-import { assertPublicHttpUrl, isPrivateNetworkAccessAllowed } from "../../core/request.ts";
+import { assertPublicHttpUrl, encodePathSegment, isPrivateNetworkAccessAllowed } from "../../core/request.ts";
+import { requireApiKeyCredential, requireCustomCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
 import {
-  createProviderFetch,
   createProviderProxyUrl,
-  defineProviderExecutors,
   normalizeProviderProxyHeaders,
-  ProviderRequestError,
-  providerUserAgent,
   readProviderProxyResponse,
-  requireApiKeyCredential,
-  requireCustomCredential,
   toProviderProxyError,
-} from "../provider-runtime.ts";
+} from "../provider-proxy.ts";
+import { createProviderFetch, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 import { elasticsearchExpandWildcardValues } from "./actions.ts";
 
 const elasticsearchFetch = createProviderFetch({ allowPrivateNetwork: isPrivateNetworkAccessAllowed });
@@ -227,7 +224,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: `elasticsearch:${buildInstanceKey(baseUrl)}:${accountId}`,
         displayName: `Elasticsearch - ${accountName}`,
       },
-      grantedScopes: [],
       metadata: {
         baseUrl,
         ...(apiKeyId ? { apiKeyId } : {}),
@@ -258,7 +254,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: `elasticsearch:${buildInstanceKey(baseUrl)}:${authenticatedUsername}`,
         displayName: fullName || `Elasticsearch - ${authenticatedUsername}`,
       },
-      grantedScopes: [],
       metadata: {
         baseUrl,
         username: authenticatedUsername,
@@ -454,8 +449,8 @@ async function elasticsearchRequest<T>(input: ElasticsearchRequestInput): Promis
   const response = await input.fetcher(url.toString(), {
     method: input.method,
     headers: {
-      accept: "application/json",
-      authorization: input.authorization,
+      "accept": "application/json",
+      "authorization": input.authorization,
       "user-agent": elasticsearchUserAgent,
       ...(input.ndjsonBody !== undefined
         ? { "content-type": "application/x-ndjson" }
@@ -564,10 +559,6 @@ function buildBasicAuthHeader(username: string, password: string) {
 
 function buildApiKeyAuthHeader(apiKey: string) {
   return `ApiKey ${apiKey}`;
-}
-
-function encodePathSegment(value: string) {
-  return encodeURIComponent(value);
 }
 
 async function readElasticsearchPayload(response: Response) {

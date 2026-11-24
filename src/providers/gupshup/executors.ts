@@ -7,13 +7,10 @@ import {
   requiredString,
   requiredStringArray,
 } from "../../core/cast.ts";
-import {
-  defineProviderExecutors,
-  defineProviderProxy,
-  ProviderRequestError,
-  providerUserAgent,
-  requireApiKeyCredential,
-} from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerInputError, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "gupshup";
 const baseUrl = "https://api.gupshup.io";
@@ -23,7 +20,6 @@ interface Context {
   fetcher: typeof fetch;
   signal?: AbortSignal;
 }
-const inputError = (message: string) => new ProviderRequestError(400, message);
 async function request(
   context: Context,
   path: string,
@@ -42,8 +38,8 @@ async function request(
   const response = await context.fetcher(url, {
     method,
     headers: {
-      accept: "application/json",
-      apikey: context.apiKey,
+      "accept": "application/json",
+      "apikey": context.apiKey,
       "user-agent": providerUserAgent,
       ...(body ? { "content-type": "application/x-www-form-urlencoded" } : {}),
     },
@@ -73,38 +69,37 @@ async function request(
 const handlers = {
   send_text_message(input: Record<string, unknown>, context: Context) {
     return request(context, "/wa/api/v1/msg", "POST", {
-      channel: "whatsapp",
-      source: requiredString(input.source, "source", inputError),
-      destination: requiredString(input.destination, "destination", inputError),
-      "src.name": requiredString(input.appName, "appName", inputError),
-      message: JSON.stringify({ type: "text", text: requiredString(input.text, "text", inputError) }),
-      disablePreview: typeof input.disablePreview === "boolean" ? String(input.disablePreview) : undefined,
+      "channel": "whatsapp",
+      "source": requiredString(input.source, "source", providerInputError),
+      "destination": requiredString(input.destination, "destination", providerInputError),
+      "src.name": requiredString(input.appName, "appName", providerInputError),
+      "message": JSON.stringify({ type: "text", text: requiredString(input.text, "text", providerInputError) }),
+      "disablePreview": typeof input.disablePreview === "boolean" ? String(input.disablePreview) : undefined,
     });
   },
   send_template_message(input: Record<string, unknown>, context: Context) {
     return request(context, "/wa/api/v1/template/msg", "POST", {
-      channel: "whatsapp",
-      source: requiredString(input.source, "source", inputError),
-      destination: requiredString(input.destination, "destination", inputError),
-      "src.name": requiredString(input.appName, "appName", inputError),
-      template: JSON.stringify({
-        id: requiredString(input.templateId, "templateId", inputError),
-        params: input.parameters === undefined ? [] : requiredStringArray(input.parameters, "parameters", inputError),
+      "channel": "whatsapp",
+      "source": requiredString(input.source, "source", providerInputError),
+      "destination": requiredString(input.destination, "destination", providerInputError),
+      "src.name": requiredString(input.appName, "appName", providerInputError),
+      "template": JSON.stringify({
+        id: requiredString(input.templateId, "templateId", providerInputError),
+        params:
+          input.parameters === undefined ? [] : requiredStringArray(input.parameters, "parameters", providerInputError),
       }),
     });
   },
   async list_templates(input: Record<string, unknown>, context: Context) {
-    return {
-      data: await request(context, `/wa/app/${encodeURIComponent(context.appId)}/template`, "GET", {
-        pageNo: optionalInteger(input.pageNo),
-        pageSize: optionalInteger(input.pageSize),
-        templateStatus: optionalString(input.templateStatus),
-        templateCategory: optionalString(input.templateCategory),
-        templateType: optionalString(input.templateType),
-        quality: optionalString(input.quality),
-        languageCode: optionalString(input.languageCode),
-      }),
-    };
+    return request(context, `/wa/app/${encodeURIComponent(context.appId)}/template`, "GET", {
+      pageNo: optionalInteger(input.pageNo),
+      pageSize: optionalInteger(input.pageSize),
+      templateStatus: optionalString(input.templateStatus),
+      templateCategory: optionalString(input.templateCategory),
+      templateType: optionalString(input.templateType),
+      quality: optionalString(input.quality),
+      languageCode: optionalString(input.languageCode),
+    });
   },
 };
 export const executors: ProviderExecutors = defineProviderExecutors<Context>({
@@ -115,7 +110,7 @@ export const executors: ProviderExecutors = defineProviderExecutors<Context>({
     const credential = await requireApiKeyCredential(context, service);
     return {
       apiKey: credential.apiKey,
-      appId: requiredString(credential.metadata.appId ?? credential.values.appId, "appId", inputError),
+      appId: requiredString(credential.metadata.appId ?? credential.values.appId, "appId", providerInputError),
       fetcher,
       signal: context.signal,
     };
@@ -133,7 +128,7 @@ export const proxy: ProviderProxyExecutor = defineProviderProxy({
 });
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
-    const appId = requiredString(input.values.appId, "appId", inputError);
+    const appId = requiredString(input.values.appId, "appId", providerInputError);
     const validationEndpoint = `/wa/app/${encodeURIComponent(appId)}/template`;
     await request({ apiKey: input.apiKey, appId, fetcher, signal }, validationEndpoint, "GET", {
       pageNo: 0,
@@ -141,7 +136,6 @@ export const credentialValidators: CredentialValidators = {
     });
     return {
       profile: { accountId: appId, displayName: "Gupshup WhatsApp App" },
-      grantedScopes: [],
       metadata: { apiBaseUrl: baseUrl, appId, validationEndpoint },
     };
   },

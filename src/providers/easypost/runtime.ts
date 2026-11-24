@@ -1,6 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
 import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
@@ -13,16 +12,13 @@ import {
 
 export const easypostApiBaseUrl = "https://api.easypost.com/v2";
 
-const easypostDefaultRequestTimeoutMs = 30_000;
-
 type EasypostPhase = "validate" | "execute";
-type EasypostContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type EasypostActionHandler = (input: Record<string, unknown>, context: EasypostContext) => Promise<unknown>;
+type EasypostActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 interface EasypostRequest {
   method: "GET" | "POST";
   path: string;
-  context: EasypostContext;
+  context: ApiKeyProviderContext;
   search?: URLSearchParams;
   body?: Record<string, unknown>;
   phase: EasypostPhase;
@@ -114,7 +110,6 @@ export async function validateEasypostCredential(
       accountId: "api_key",
       displayName: "EasyPost API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: easypostApiBaseUrl,
       validationEndpoint: "/carrier_types",
@@ -132,7 +127,7 @@ async function requestEasypost(request: EasypostRequest): Promise<unknown> {
     }
   }
 
-  const timeout = createProviderTimeout(request.context.signal, easypostDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(request.context.signal);
   try {
     const response = await request.context.fetcher(url.toString(), {
       method: request.method,
@@ -169,8 +164,8 @@ function normalizePath(path: string): string {
 
 function easypostHeaders(apiKey: string, hasBody: boolean): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
-    authorization: `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
+    "accept": "application/json",
+    "authorization": `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
     "user-agent": providerUserAgent,
   };
   if (hasBody) {

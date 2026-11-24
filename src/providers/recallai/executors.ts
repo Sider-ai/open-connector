@@ -5,18 +5,15 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { createHash } from "node:crypto";
 import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import {
-  defineProviderProxy,
-  defineProviderExecutors,
-  ProviderRequestError,
-  providerUserAgent,
-  requireApiKeyCredential,
-} from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent, requiredInputString } from "../provider-runtime.ts";
 
 const service = "recallai";
 const recallaiApiBaseUrlByRegion: Record<RecallAiRegion, string> = {
@@ -147,9 +144,7 @@ export async function validateRecallAiCredential(
     profile: {
       accountId: buildRecallAiAccountId(apiKey, region),
       displayName: `Recall.ai API Key (${region})`,
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: {
       region,
       apiBaseUrl,
@@ -168,7 +163,7 @@ export const credentialValidators: CredentialValidators = {
 
 async function requestRecallAi(input: {
   path: string;
-  context: Pick<RecallAiContext, "apiKey" | "apiBaseUrl" | "fetcher" | "signal">;
+  context: RecallAiContext;
   mode: "validate" | "execute";
   method?: "GET" | "POST";
   body?: Record<string, unknown>;
@@ -179,8 +174,8 @@ async function requestRecallAi(input: {
     response = await input.context.fetcher(new URL(input.path, input.context.apiBaseUrl), {
       method: input.method ?? "GET",
       headers: {
-        authorization: `Token ${input.context.apiKey}`,
-        accept: "application/json",
+        "authorization": `Token ${input.context.apiKey}`,
+        "accept": "application/json",
         ...(input.body ? { "content-type": "application/json" } : {}),
         "user-agent": providerUserAgent,
       },
@@ -293,10 +288,6 @@ function readRecallAiObject(payload: unknown): Record<string, unknown> {
   const record = optionalRecord(payload);
   if (!record) throw new ProviderRequestError(502, "Recall.ai returned a non-object payload");
   return record;
-}
-
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function readOptionalObject(value: unknown, fieldName: string): Record<string, unknown> | undefined {

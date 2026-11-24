@@ -1,24 +1,18 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
-import {
-  optionalBoolean,
-  optionalNumber,
-  optionalRecord,
-  optionalString,
-  requiredString,
-  stringArray,
-} from "../../core/cast.ts";
+import { optionalBoolean, optionalNumber, optionalRecord, optionalString, stringArray } from "../../core/cast.ts";
 import {
   createProviderTimeout,
   isAbortLikeError,
+  providerInputError,
   providerUserAgent,
   ProviderRequestError,
+  requiredInputString,
+  requiredResponseRecord,
 } from "../provider-runtime.ts";
 
 const mailsSoApiBaseUrl = "https://api.mails.so";
-const mailsSoDefaultRequestTimeoutMs = 30_000;
 
 type MailsSoRequestPhase = "validate" | "execute";
 type MailsSoActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
@@ -34,7 +28,7 @@ export const mailsSoActionHandlers: ProviderActionHandlers<"mails_so", MailsSoAc
   create_validation_batch(input, context) {
     return requestCreateBatch({
       context,
-      emails: stringArray(input.emails, "emails", inputError),
+      emails: stringArray(input.emails, "emails", providerInputError),
       phase: "execute",
     });
   },
@@ -63,7 +57,6 @@ export async function validateMailsSoCredential(
       accountId: await buildMailsSoProviderAccountId(apiKey),
       displayName: "Mails API Key",
     },
-    grantedScopes: [],
     metadata: {
       apiBaseUrl: mailsSoApiBaseUrl,
       validationEndpoint: "/v1/validate",
@@ -77,7 +70,7 @@ async function buildMailsSoProviderAccountId(apiKey: string): Promise<string> {
 }
 
 async function requestSingleValidation(input: {
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   email: string;
   phase: MailsSoRequestPhase;
 }): Promise<unknown> {
@@ -88,8 +81,8 @@ async function requestSingleValidation(input: {
     query: { email: input.email },
   });
 
-  const body = requireObject(payload, "mails_so single validation response");
-  const record = requireObject(body.data, "mails_so single validation data");
+  const body = requiredResponseRecord(payload, "mails_so single validation response");
+  const record = requiredResponseRecord(body.data, "mails_so single validation data");
   return normalizeValidationResult(record);
 }
 
@@ -105,7 +98,7 @@ async function requestCreateBatch(input: {
     method: "POST",
     body: { emails: input.emails },
   });
-  return normalizeBatchRecord(requireObject(payload, "mails_so create batch response"));
+  return normalizeBatchRecord(requiredResponseRecord(payload, "mails_so create batch response"));
 }
 
 async function requestBatch(input: {
@@ -119,20 +112,22 @@ async function requestBatch(input: {
     phase: input.phase,
   });
 
-  const record = requireObject(payload, "mails_so batch response");
+  const record = requiredResponseRecord(payload, "mails_so batch response");
   if (!Array.isArray(record.emails)) {
     throw new ProviderRequestError(502, "mails_so batch response is missing emails");
   }
 
   return {
     ...normalizeBatchRecord(record),
-    emails: record.emails.map((item) => normalizeValidationResult(requireObject(item, "mails_so batch email result"))),
+    emails: record.emails.map((item) =>
+      normalizeValidationResult(requiredResponseRecord(item, "mails_so batch email result")),
+    ),
   };
 }
 
 async function requestMailsSoJson(input: {
   path: string;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   phase: MailsSoRequestPhase;
   method?: "GET" | "POST";
   body?: Record<string, unknown>;
@@ -143,10 +138,10 @@ async function requestMailsSoJson(input: {
     url.searchParams.set(key, value);
   }
 
-  const timeout = createProviderTimeout(input.context.signal, mailsSoDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   try {
     const headers = new Headers({
-      accept: "application/json",
+      "accept": "application/json",
       "user-agent": providerUserAgent,
       "x-mails-api-key": input.context.apiKey,
     });
@@ -202,7 +197,7 @@ async function readMailsSoErrorMessage(response: Response): Promise<string> {
 
 function mapMailsSoError(status: number, message: string, phase: MailsSoRequestPhase): ProviderRequestError {
   if (status === 400 || status === 404) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (status === 401) {
     if (message.toLowerCase().includes("paid subscription")) {
@@ -249,18 +244,6 @@ function normalizeValidationResult(record: Record<string, unknown>): Record<stri
   };
 }
 
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, inputError);
-}
-
-function requireObject(value: unknown, label: string): Record<string, unknown> {
-  const object = optionalRecord(value);
-  if (!object) {
-    throw new ProviderRequestError(502, `${label} must be an object`);
-  }
-  return object;
-}
-
 function requireProviderString(value: unknown, fieldName: string): string {
   const parsed = optionalString(value);
   if (!parsed) {
@@ -297,8 +280,4 @@ function readNullableBoolean(value: unknown): boolean | null {
     return null;
   }
   return requireProviderBoolean(value, "boolean field");
-}
-
-function inputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

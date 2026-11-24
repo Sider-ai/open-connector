@@ -5,24 +5,23 @@ import type {
   ProviderProxyExecutor,
   ResolvedCredential,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import { compactObject, optionalNumber, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { assertPublicHttpUrl } from "../../core/request.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineProviderExecutors,
-  defineProviderProxy,
   isAbortLikeError,
   ProviderRequestError,
   providerUserAgent,
-  requireApiKeyCredential,
 } from "../provider-runtime.ts";
 
 const service = "nyne_ai";
 const nyneAiApiBaseUrl = "https://api.nyne.ai";
-const nyneAiRequestTimeoutMs = 30_000;
 
 type NyneAiMode = "validate" | "execute";
 type NyneAiActionHandler = ProviderRuntimeHandler<NyneAiActionContext>;
@@ -233,7 +232,6 @@ export const credentialValidators: CredentialValidators = {
         displayName:
           availableCredits === undefined ? "Nyne.ai API Key" : `Nyne.ai (${formatCredits(availableCredits)} credits)`,
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: nyneAiApiBaseUrl,
         validationEndpoint: "/usage",
@@ -277,7 +275,7 @@ async function requestNyneAiJson(
   input: NyneAiRequestInput,
   context: NyneAiActionContext,
 ): Promise<Record<string, unknown>> {
-  const timeout = createProviderTimeout(context.signal, nyneAiRequestTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const response = await context.fetcher(buildNyneAiUrl(input), {
       method: input.method,
@@ -324,7 +322,7 @@ function buildNyneAiUrl(input: NyneAiRequestInput): URL {
 
 function buildNyneAiHeaders(context: NyneAiActionContext, hasBody: boolean): Record<string, string> {
   return compactObject({
-    accept: "application/json",
+    "accept": "application/json",
     "content-type": hasBody ? "application/json" : undefined,
     "user-agent": providerUserAgent,
     "X-API-Key": context.apiKey,

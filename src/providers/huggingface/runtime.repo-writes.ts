@@ -3,7 +3,7 @@ import type { HuggingfaceActionContext } from "./runtime.shared.ts";
 import { HubApiError, uploadFile } from "@huggingface/hub";
 import { requiredString } from "../../core/cast.ts";
 import { assertPublicHttpUrl, readBoundedResponseBytes } from "../../core/request.ts";
-import { createProviderTimeout, providerFetch, ProviderRequestError } from "../provider-runtime.ts";
+import { createProviderTimeout, providerFetch, providerInputError, ProviderRequestError } from "../provider-runtime.ts";
 import {
   asRecord,
   huggingfaceRequestJson,
@@ -14,10 +14,6 @@ import {
 const hub = "https://huggingface.co";
 const maxFileBytes = 32 * 1024 * 1024;
 
-function badInput(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
-}
-
 interface PersonalRepo {
   name: string;
   repoId: string;
@@ -25,7 +21,7 @@ interface PersonalRepo {
 }
 
 async function personalRepo(input: Record<string, unknown>, context: HuggingfaceActionContext): Promise<PersonalRepo> {
-  const repoId = requiredString(input.repoId, "repoId", badInput);
+  const repoId = requiredString(input.repoId, "repoId", providerInputError);
   const parts = repoId.split("/");
   const [owner, name] = parts;
   if (
@@ -36,10 +32,10 @@ async function personalRepo(input: Record<string, unknown>, context: Huggingface
     !/^[\w.-]{1,96}$/.test(name) ||
     /^[.-]|[.-]$|\.\.|--|\.git$/i.test(name)
   ) {
-    throw badInput("repoId must identify one personal repository in username/repo-name form.");
+    throw providerInputError("repoId must identify one personal repository in username/repo-name form.");
   }
   const type = input.repoType;
-  if (type !== "model" && type !== "dataset" && type !== "space") throw badInput("Invalid repoType.");
+  if (type !== "model" && type !== "dataset" && type !== "space") throw providerInputError("Invalid repoType.");
   const { preferredUsername } = await readHuggingfaceCurrentUser(context);
   if (!preferredUsername || owner.toLowerCase() !== preferredUsername.toLowerCase()) {
     throw new ProviderRequestError(403, "Choose a repository in the connected user's own personal namespace.");
@@ -53,10 +49,10 @@ export async function createPersonalRepo(
   context: HuggingfaceActionContext,
 ): Promise<unknown> {
   const visibility = input.visibility ?? "private";
-  if (visibility !== "private" && visibility !== "public") throw badInput("Invalid repository visibility.");
+  if (visibility !== "private" && visibility !== "public") throw providerInputError("Invalid repository visibility.");
   const sdk = input.spaceSdk;
   if (sdk !== undefined && (input.repoType !== "space" || !["static", "gradio", "docker"].includes(String(sdk)))) {
-    throw badInput("spaceSdk is only supported for Spaces and must be static, gradio, or docker.");
+    throw providerInputError("spaceSdk is only supported for Spaces and must be static, gradio, or docker.");
   }
   const repo = await personalRepo(input, context);
   const result = asRecord(
@@ -77,18 +73,18 @@ export async function createPersonalRepo(
 
 async function fileContent(input: Record<string, unknown>, signal: AbortSignal): Promise<Blob> {
   if ((input.content !== undefined) === (input.fileUrl !== undefined))
-    throw badInput("Specify exactly one of content or fileUrl.");
+    throw providerInputError("Specify exactly one of content or fileUrl.");
   if (input.content !== undefined) {
-    if (typeof input.content !== "string") throw badInput("content must be UTF-8 text.");
+    if (typeof input.content !== "string") throw providerInputError("content must be UTF-8 text.");
     const blob = new Blob([input.content]);
     if (blob.size > maxFileBytes) throw new ProviderRequestError(413, "File exceeds 32 MiB.");
     return blob;
   }
-  const url = assertPublicHttpUrl(requiredString(input.fileUrl, "fileUrl", badInput), {
+  const url = assertPublicHttpUrl(requiredString(input.fileUrl, "fileUrl", providerInputError), {
     fieldName: "fileUrl",
-    createError: badInput,
+    createError: providerInputError,
   });
-  if (url.username || url.password) throw badInput("fileUrl must not include credentials.");
+  if (url.username || url.password) throw providerInputError("fileUrl must not include credentials.");
   const response = await providerFetch(url, { signal });
   if (!response.ok) throw new ProviderRequestError(502, `File download failed (HTTP ${response.status}).`);
   const bytes = await readBoundedResponseBytes(response, {
@@ -104,23 +100,25 @@ export async function uploadPersonalRepoFile(
   input: Record<string, unknown>,
   context: HuggingfaceActionContext,
 ): Promise<unknown> {
-  const path = requiredString(input.path, "path", badInput);
+  const path = requiredString(input.path, "path", providerInputError);
   if (
     /[\\\p{Cc}]/u.test(path) ||
     path.split("/").some((p) => !p || p === "." || p === ".." || p.toLowerCase() === ".git")
   ) {
-    throw badInput("path must be a repository-relative file path.");
+    throw providerInputError("path must be a repository-relative file path.");
   }
-  const branch = input.branch === undefined ? "main" : requiredString(input.branch, "branch", badInput);
-  if (branch.split("/").some((p) => !p || p === "." || p === "..")) throw badInput("Invalid branch.");
+  const branch = input.branch === undefined ? "main" : requiredString(input.branch, "branch", providerInputError);
+  if (branch.split("/").some((p) => !p || p === "." || p === "..")) throw providerInputError("Invalid branch.");
   const parentCommit =
-    input.parentCommit === undefined ? undefined : requiredString(input.parentCommit, "parentCommit", badInput);
+    input.parentCommit === undefined
+      ? undefined
+      : requiredString(input.parentCommit, "parentCommit", providerInputError);
   if (parentCommit !== undefined && !/^[0-9a-f]{40}$/i.test(parentCommit))
-    throw badInput("parentCommit must be a commit SHA.");
+    throw providerInputError("parentCommit must be a commit SHA.");
   const title =
     input.commitMessage === undefined
       ? `Upload ${path}`
-      : requiredString(input.commitMessage, "commitMessage", badInput);
+      : requiredString(input.commitMessage, "commitMessage", providerInputError);
   const repo = await personalRepo(input, context);
   const timeout = createProviderTimeout(context.signal, 120_000);
   try {

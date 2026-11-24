@@ -1,9 +1,11 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalBoolean, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { selectMinimaxModels } from "../minimax/text-models.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
 const service = "openrouter";
 const openrouterApiBaseUrl = "https://openrouter.ai/api/v1";
@@ -90,8 +92,8 @@ export const openrouterActionHandlers: ProviderActionHandlers<"openrouter", Open
       context,
     );
   },
-  list_available_models(input, context) {
-    return openrouterRequest(
+  async list_available_models(input, context) {
+    const payload = await openrouterRequest(
       context.apiKey,
       {
         path: "/models",
@@ -100,6 +102,7 @@ export const openrouterActionHandlers: ProviderActionHandlers<"openrouter", Open
       },
       context,
     );
+    return input.includeLegacyMinimax === true ? payload : selectMinimaxModels(payload, true);
   },
   list_embedding_models(input, context) {
     return openrouterRequest(context.apiKey, { path: "/embeddings/models", headerSource: input }, context);
@@ -116,8 +119,9 @@ export const openrouterActionHandlers: ProviderActionHandlers<"openrouter", Open
   list_providers(_input, context) {
     return openrouterRequest(context.apiKey, { path: "/providers" }, context);
   },
-  list_user_models(input, context) {
-    return openrouterRequest(context.apiKey, { path: "/models/user", headerSource: input }, context);
+  async list_user_models(input, context) {
+    const payload = await openrouterRequest(context.apiKey, { path: "/models/user", headerSource: input }, context);
+    return input.includeLegacyMinimax === true ? payload : selectMinimaxModels(payload, true);
   },
   list_zdr_endpoints(input, context) {
     return openrouterRequest(context.apiKey, { path: "/endpoints/zdr", headerSource: input }, context);
@@ -125,6 +129,13 @@ export const openrouterActionHandlers: ProviderActionHandlers<"openrouter", Open
 };
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, openrouterActionHandlers);
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: openrouterApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+});
 
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
@@ -149,9 +160,7 @@ export const credentialValidators: CredentialValidators = {
       profile: {
         accountId,
         displayName: label,
-        grantedScopes: [],
       },
-      grantedScopes: [],
       metadata: {
         validationEndpoint: "/key",
         currentKey: dataRecord ?? {},
@@ -163,7 +172,7 @@ export const credentialValidators: CredentialValidators = {
 async function openrouterRequest(
   apiKey: string,
   input: OpenrouterRequestInput,
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">,
+  context: ApiKeyProviderContext,
 ): Promise<unknown> {
   const url = buildOpenrouterUrl(input.path, input.query ?? {});
   let response: Response;
@@ -194,7 +203,7 @@ function buildOpenrouterHeaders(
   const title = input ? optionalString(input.xTitle) : undefined;
 
   const headers = new Headers({
-    authorization: `Bearer ${apiKey}`,
+    "authorization": `Bearer ${apiKey}`,
     "user-agent": providerUserAgent,
   });
 

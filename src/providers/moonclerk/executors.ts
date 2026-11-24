@@ -1,14 +1,28 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
-import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { optionalRecord, optionalString } from "../../core/cast.ts";
 import { queryParams } from "../../core/request.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError, requiredInputString } from "../provider-runtime.ts";
 
 const service = "moonclerk";
 const moonclerkApiBaseUrl = "https://api.moonclerk.com";
 const moonclerkVersionHeader = "application/vnd.moonclerk+json;version=1";
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: moonclerkApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Token token=" },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: moonclerkVersionHeader },
+});
 
 type MoonclerkRequestPhase = "validate" | "execute";
 type MoonclerkActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
@@ -116,7 +130,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: `moonclerk:${input.apiKey.slice(-6)}`,
         displayName: "MoonClerk API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: moonclerkApiBaseUrl,
         validationEndpoint: "/forms?count=1",
@@ -128,7 +141,7 @@ export const credentialValidators: CredentialValidators = {
 
 async function requestMoonclerk(input: {
   path: string;
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   phase: MoonclerkRequestPhase;
   query?: Record<string, string>;
 }): Promise<unknown> {
@@ -142,8 +155,8 @@ async function requestMoonclerk(input: {
     response = await input.context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: moonclerkVersionHeader,
-        authorization: `Token token=${input.context.apiKey}`,
+        "accept": moonclerkVersionHeader,
+        "authorization": `Token token=${input.context.apiKey}`,
         "user-agent": providerUserAgent,
       },
       signal: input.context.signal,
@@ -202,10 +215,6 @@ function extractMoonclerkErrorMessage(payload: unknown): string | undefined {
   }
 
   return optionalString(record.error) ?? optionalString(record.message) ?? optionalString(record.detail);
-}
-
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function requiredArrayField(payload: unknown, fieldName: string): unknown[] {

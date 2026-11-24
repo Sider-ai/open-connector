@@ -1,5 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString, positiveInteger } from "../../core/cast.ts";
@@ -64,7 +64,6 @@ export async function validateBreezeCredential(
       accountId: `breeze:${subdomain}`,
       displayName: `Breeze ${subdomain}`,
     },
-    grantedScopes: [],
     metadata: {
       subdomain,
       baseUrl,
@@ -192,7 +191,7 @@ async function requestBreezeJson(
     response = await context.fetcher(url, {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "api-key": context.apiKey,
         "user-agent": providerUserAgent,
       },

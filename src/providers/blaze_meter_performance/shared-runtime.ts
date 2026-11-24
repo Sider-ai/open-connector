@@ -1,26 +1,28 @@
 import type { CredentialValidationResult, ProviderProxyExecutor, ProxyExecutionResult } from "../../core/types.ts";
-import type { ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { Buffer } from "node:buffer";
 import { compactObject, optionalRecord, optionalScalarString, optionalString } from "../../core/cast.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import {
+  createProviderProxyUrl,
+  normalizeProviderProxyHeaders,
+  readProviderProxyResponse,
+  toProviderProxyError,
+} from "../provider-proxy.ts";
 import {
   createProviderFetch,
-  createProviderProxyUrl,
   createProviderTimeout,
   isAbortLikeError,
-  normalizeProviderProxyHeaders,
   ProviderRequestError,
   providerUserAgent,
-  readProviderProxyResponse,
-  requireApiKeyCredential,
-  toProviderProxyError,
 } from "../provider-runtime.ts";
 
 export const blazeMeterApiBaseUrl = "https://a.blazemeter.com/api/v4";
 export const blazeMeterValidationPath = "/user";
 
 const blazeMeterRequestBaseUrl = "https://a.blazemeter.com/api/v4/";
-const blazeMeterDefaultTimeoutMs = 30_000;
 const blazeMeterFetch = createProviderFetch({ skipDnsValidation: true });
 
 export type BlazeMeterPhase = "validate" | "execute";
@@ -92,7 +94,6 @@ async function validateBlazeMeterCredentialWith(
       accountId: userId,
       displayName: email ?? displayName ?? name ?? "BlazeMeter API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: blazeMeterApiBaseUrl,
       validationEndpoint: blazeMeterValidationPath,
@@ -192,7 +193,7 @@ async function requestBlazeMeter(
     appendBlazeMeterQueryValue(url, key, value);
   }
 
-  const timeout = createProviderTimeout(context.signal, blazeMeterDefaultTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   try {
     const response = await context.fetcher(url.toString(), {
       method: input.method ?? "GET",
@@ -222,13 +223,10 @@ async function requestBlazeMeter(
   }
 }
 
-function blazeMeterHeaders(
-  context: Pick<BlazeMeterContext, "apiKeyId" | "apiSecret">,
-  headers: Record<string, string> = {},
-): Record<string, string> {
+function blazeMeterHeaders(context: BlazeMeterContext, headers: Record<string, string> = {}): Record<string, string> {
   return {
-    accept: "application/json",
-    authorization: buildBasicAuthorizationHeader(context.apiKeyId, context.apiSecret),
+    "accept": "application/json",
+    "authorization": buildBasicAuthorizationHeader(context.apiKeyId, context.apiSecret),
     "user-agent": providerUserAgent,
     ...headers,
   };

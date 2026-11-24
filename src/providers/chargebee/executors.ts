@@ -6,18 +6,15 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
 import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { queryParams } from "../../core/request.ts";
-import {
-  defineProviderProxy,
-  defineProviderExecutors,
-  providerUserAgent,
-  ProviderRequestError,
-  requireApiKeyCredential,
-} from "../provider-runtime.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "chargebee";
 const apiVersionSegment = "api/v2";
@@ -135,7 +132,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: `chargebee:${site}`,
         displayName: `Chargebee ${site}`,
       },
-      grantedScopes: [],
       metadata: compactObject({
         site,
         apiBaseUrl: buildChargebeeApiBaseUrl(site),
@@ -164,16 +160,16 @@ async function listWrapped(
 
 function buildListQuery(input: Record<string, unknown>): Record<string, unknown> {
   return compactObject({
-    limit: optionalInteger(input.limit),
-    offset: optionalString(input.offset),
+    "limit": optionalInteger(input.limit),
+    "offset": optionalString(input.offset),
     "id[is]": optionalString(input.id),
     "customer_id[is]": optionalString(input.customerId),
     "subscription_id[is]": optionalString(input.subscriptionId),
     "email[is]": optionalString(input.email),
     "status[is]": optionalString(input.status),
     "item_id[is]": optionalString(input.itemId),
-    sort_by: optionalString(input.sortBy),
-    sort_order: optionalString(input.sortOrder),
+    "sort_by": optionalString(input.sortBy),
+    "sort_order": optionalString(input.sortOrder),
   });
 }
 
@@ -213,8 +209,8 @@ async function requestChargebeeJson(
   const response = await context.fetcher(url, {
     method: options.method ?? "GET",
     headers: {
-      accept: "application/json",
-      authorization: `Basic ${Buffer.from(`${context.apiKey}:`).toString("base64")}`,
+      "accept": "application/json",
+      "authorization": `Basic ${Buffer.from(`${context.apiKey}:`).toString("base64")}`,
       "user-agent": providerUserAgent,
       ...(body ? { "content-type": "application/x-www-form-urlencoded" } : {}),
     },

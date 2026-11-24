@@ -1,19 +1,20 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderRequestContext } from "../provider-runtime.ts";
 
 import { optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
   isAbortLikeError,
   ProviderRequestError,
   providerUserAgent,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 const service = "statuscake";
 const statuscakeApiBaseUrl = "https://api.statuscake.com/v1";
-const statuscakeDefaultRequestTimeoutMs = 30_000;
 
 type StatuscakePhase = "validate" | "execute";
 type StatuscakeActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
@@ -50,6 +51,16 @@ export const statuscakeActionHandlers: ProviderActionHandlers<"statuscake", Stat
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, statuscakeActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: statuscakeApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const context: ApiKeyProviderContext = {
@@ -73,7 +84,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "statuscake-api-token",
         displayName: "StatusCake API Token",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: statuscakeApiBaseUrl,
         validationEndpoint: "/uptime?limit=1",
@@ -99,7 +109,7 @@ async function listUptimeTests(input: Record<string, unknown>, context: ApiKeyPr
 }
 
 async function getUptimeTest(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
-  const testId = requireInputString(input.test_id, "test_id");
+  const testId = requiredInputString(input.test_id, "test_id");
   const payload = await requestStatuscakeJson<Record<string, unknown>>({
     apiKey: context.apiKey,
     path: `/uptime/${encodeURIComponent(testId)}`,
@@ -124,7 +134,7 @@ async function createUptimeTest(input: Record<string, unknown>, context: ApiKeyP
 }
 
 async function updateUptimeTest(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
-  const testId = requireInputString(input.test_id, "test_id");
+  const testId = requiredInputString(input.test_id, "test_id");
   const payload = await requestStatuscakeJson<Record<string, unknown>>({
     apiKey: context.apiKey,
     path: `/uptime/${encodeURIComponent(testId)}`,
@@ -138,7 +148,7 @@ async function updateUptimeTest(input: Record<string, unknown>, context: ApiKeyP
 }
 
 async function deleteUptimeTest(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
-  const testId = requireInputString(input.test_id, "test_id");
+  const testId = requiredInputString(input.test_id, "test_id");
   await requestStatuscakeJson({
     apiKey: context.apiKey,
     path: `/uptime/${encodeURIComponent(testId)}`,
@@ -152,7 +162,7 @@ async function deleteUptimeTest(input: Record<string, unknown>, context: ApiKeyP
 async function listUptimeTestHistory(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   return listWindowedUptimeResource({
     apiKey: context.apiKey,
-    testId: requireInputString(input.test_id, "test_id"),
+    testId: requiredInputString(input.test_id, "test_id"),
     resourcePath: "history",
     resultKey: "history",
     input,
@@ -163,7 +173,7 @@ async function listUptimeTestHistory(input: Record<string, unknown>, context: Ap
 async function listUptimeTestPeriods(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   return listWindowedUptimeResource({
     apiKey: context.apiKey,
-    testId: requireInputString(input.test_id, "test_id"),
+    testId: requiredInputString(input.test_id, "test_id"),
     resourcePath: "periods",
     resultKey: "periods",
     input,
@@ -174,7 +184,7 @@ async function listUptimeTestPeriods(input: Record<string, unknown>, context: Ap
 async function listUptimeTestAlerts(input: Record<string, unknown>, context: ApiKeyProviderContext): Promise<unknown> {
   return listWindowedUptimeResource({
     apiKey: context.apiKey,
-    testId: requireInputString(input.test_id, "test_id"),
+    testId: requiredInputString(input.test_id, "test_id"),
     resourcePath: "alerts",
     resultKey: "alerts",
     input,
@@ -220,7 +230,7 @@ async function listUptimeLocations(context: ApiKeyProviderContext): Promise<unkn
 async function requestStatuscakeJson<T>(input: {
   apiKey: string;
   path: string;
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">;
+  context: ProviderRequestContext;
   phase: StatuscakePhase;
   method?: "GET" | "POST" | "PUT" | "DELETE";
   query?: URLSearchParams;
@@ -237,7 +247,7 @@ async function requestStatuscakeJson<T>(input: {
 async function statuscakeFetch(input: {
   apiKey: string;
   path: string;
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">;
+  context: ProviderRequestContext;
   method?: "GET" | "POST" | "PUT" | "DELETE";
   query?: URLSearchParams;
   body?: URLSearchParams;
@@ -248,7 +258,7 @@ async function statuscakeFetch(input: {
     url.search = input.query.toString();
   }
 
-  const timeout = createProviderTimeout(input.context.signal, statuscakeDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   try {
     return await input.context.fetcher(url, {
       method: input.method ?? "GET",
@@ -271,8 +281,8 @@ async function statuscakeFetch(input: {
 
 function buildStatuscakeHeaders(apiKey: string, body?: URLSearchParams): Record<string, string> {
   return {
-    Authorization: `Bearer ${apiKey}`,
-    Accept: "application/json",
+    "Authorization": `Bearer ${apiKey}`,
+    "Accept": "application/json",
     "User-Agent": providerUserAgent,
     ...(body ? { "content-type": "application/x-www-form-urlencoded" } : {}),
   };
@@ -348,14 +358,6 @@ function requireArrayPayload(value: unknown, label: string): unknown[] {
     throw new ProviderRequestError(502, `${label} is not an array.`, value);
   }
   return value;
-}
-
-function requireInputString(value: unknown, fieldName: string): string {
-  const parsed = optionalString(value);
-  if (!parsed) {
-    throw new ProviderRequestError(400, `${fieldName} is required.`);
-  }
-  return parsed;
 }
 
 function buildQueryParams(input: Record<string, unknown>): URLSearchParams {

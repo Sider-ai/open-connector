@@ -1,11 +1,15 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalRecord } from "../../core/cast.ts";
-import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import {
+  ProviderRequestError,
+  providerUserAgent,
+  providerInputError,
+  providerResponseError,
+} from "../provider-runtime.ts";
 
-const lushaApiBaseUrl = "https://api.lusha.com";
+export const lushaApiBaseUrl = "https://api.lusha.com";
 
 type LushaActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
@@ -71,7 +75,6 @@ export async function validateLushaCredential(
       accountId: "lusha:api-key",
       displayName: "Lusha API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: lushaApiBaseUrl,
       validationEndpoint: "/v3/account/usage",
@@ -83,7 +86,7 @@ export async function validateLushaCredential(
 }
 
 async function requestLusha(input: {
-  context: Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
+  context: ApiKeyProviderContext;
   path: string;
   phase: "validate" | "execute";
   method?: "GET" | "POST";
@@ -95,8 +98,8 @@ async function requestLusha(input: {
     response = await input.context.fetcher(url.toString(), {
       method: input.method ?? "GET",
       headers: {
-        accept: "application/json",
-        api_key: input.context.apiKey,
+        "accept": "application/json",
+        "api_key": input.context.apiKey,
         "user-agent": providerUserAgent,
         ...(input.body ? { "content-type": "application/json" } : {}),
       },
@@ -149,10 +152,10 @@ function mapLushaError(status: number, message: string, phase: "validate" | "exe
     return new ProviderRequestError(429, message);
   }
   if (status === 401 || status === 403) {
-    return new ProviderRequestError(phase === "validate" ? 400 : 409, message);
+    return new ProviderRequestError(phase === "validate" ? 400 : 401, message);
   }
   if (status >= 400 && status < 500) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
-  return new ProviderRequestError(502, message);
+  return providerResponseError(message);
 }

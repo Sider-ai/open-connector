@@ -1,14 +1,25 @@
-import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type {
+  CredentialValidationResult,
+  CredentialValidators,
+  ProviderExecutors,
+  ProviderProxyExecutor,
+} from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderRequestContext } from "../provider-runtime.ts";
 
 import { compactObject, optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import {
+  providerUserAgent,
+  ProviderRequestError,
+  providerInputError,
+  defaultProviderRequestTimeoutMs,
+} from "../provider-runtime.ts";
 
 const service = "screenshot_fyi";
 const screenshotFyiApiBaseUrl = "https://www.screenshot.fyi";
 const screenshotFyiCapturePath = "/api/take";
-const screenshotFyiDefaultRequestTimeoutMs = 30_000;
 const screenshotFyiValidationUrl = "https://example.com";
 
 type ScreenshotFyiRequestPhase = "validate" | "execute";
@@ -27,6 +38,14 @@ export const screenshotFyiActionHandlers: ProviderActionHandlers<"screenshot_fyi
 };
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, screenshotFyiActionHandlers);
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: screenshotFyiApiBaseUrl,
+  auth: { type: "api_key_query", name: "accessKey" },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
 
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }): Promise<CredentialValidationResult> {
@@ -49,7 +68,6 @@ export const credentialValidators: CredentialValidators = {
       profile: {
         displayName: "screenshot.fyi API Key",
       },
-      grantedScopes: [],
       metadata: {
         apiBaseUrl: screenshotFyiApiBaseUrl,
         validationEndpoint: screenshotFyiCapturePath,
@@ -73,15 +91,15 @@ function buildTakeScreenshotQuery(input: Record<string, unknown>): Record<string
 async function requestScreenshotFyiJson(input: {
   apiKey: string;
   query: Record<string, string | undefined>;
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">;
+  context: ProviderRequestContext;
   phase: ScreenshotFyiRequestPhase;
 }): Promise<unknown> {
-  const timeout = createTimeoutSignal(input.context.signal, screenshotFyiDefaultRequestTimeoutMs);
+  const timeout = createTimeoutSignal(input.context.signal, defaultProviderRequestTimeoutMs);
   try {
     const response = await input.context.fetcher(buildScreenshotFyiUrl(input.apiKey, input.query), {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "user-agent": providerUserAgent,
       },
       signal: timeout.signal,
@@ -150,7 +168,7 @@ function createScreenshotFyiError(
   const message =
     extractScreenshotFyiErrorMessage(payload) ?? `screenshot.fyi request failed with status ${response.status}`;
   if (phase === "validate" && response.status >= 400 && response.status < 500) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   return new ProviderRequestError(response.status || 500, message);
 }

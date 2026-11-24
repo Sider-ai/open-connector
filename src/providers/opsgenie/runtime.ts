@@ -1,5 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -14,12 +14,11 @@ import {
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 export const opsgenieUsApiBaseUrl = "https://api.opsgenie.com";
 export const opsgenieEuApiBaseUrl = "https://api.eu.opsgenie.com";
-
-const opsgenieDefaultTimeoutMs = 30_000;
 
 type OpsgenieEnvironment = "us" | "eu";
 type OpsgenieRequestPhase = "validate" | "execute";
@@ -91,9 +90,7 @@ export async function validateOpsgenieCredential(
     profile: {
       accountId: accountName || environment,
       displayName: accountName || `Opsgenie ${environment.toUpperCase()} Account`,
-      grantedScopes: [],
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl,
       environment,
@@ -148,7 +145,7 @@ async function listAlerts(input: Record<string, unknown>, context: OpsgenieConte
 }
 
 async function getAlert(input: Record<string, unknown>, context: OpsgenieContext): Promise<Record<string, unknown>> {
-  const identifier = requireInputString(input.identifier, "identifier");
+  const identifier = requiredInputString(input.identifier, "identifier");
   const payload = await requestOpsgenieJson<Record<string, unknown>>({
     context,
     path: `/v2/alerts/${encodeURIComponent(identifier)}`,
@@ -167,7 +164,7 @@ async function getAlert(input: Record<string, unknown>, context: OpsgenieContext
 
 async function createAlert(input: Record<string, unknown>, context: OpsgenieContext): Promise<Record<string, unknown>> {
   const body = compactObject({
-    message: requireInputString(input.message, "message"),
+    message: requiredInputString(input.message, "message"),
     alias: optionalString(input.alias),
     description: optionalString(input.description),
     responders: input.responders,
@@ -196,7 +193,7 @@ async function mutateAlert(
   context: OpsgenieContext,
   action: "acknowledge" | "close",
 ): Promise<Record<string, unknown>> {
-  const identifier = requireInputString(input.identifier, "identifier");
+  const identifier = requiredInputString(input.identifier, "identifier");
   const body = compactObject({
     user: optionalString(input.user),
     source: optionalString(input.source),
@@ -220,7 +217,7 @@ async function getRequestStatus(
   input: Record<string, unknown>,
   context: OpsgenieContext,
 ): Promise<Record<string, unknown>> {
-  const requestId = requireInputString(input.requestId, "requestId");
+  const requestId = requiredInputString(input.requestId, "requestId");
   return requestOpsgenieJson<Record<string, unknown>>({
     context,
     path: `/v2/alerts/requests/${encodeURIComponent(requestId)}`,
@@ -235,11 +232,11 @@ async function requestOpsgenieJson<T>(input: OpsgenieRequestInput): Promise<T> {
     appendQueryParam(url, key, value);
   }
 
-  const timeout = createProviderTimeout(input.context.signal, opsgenieDefaultTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
   try {
     const headers = compactObject({
-      accept: "application/json",
-      authorization: `GenieKey ${input.context.apiKey}`,
+      "accept": "application/json",
+      "authorization": `GenieKey ${input.context.apiKey}`,
       "content-type": input.body === undefined ? undefined : "application/json",
       "user-agent": providerUserAgent,
     }) as Record<string, string>;
@@ -313,10 +310,6 @@ function extractOpsgenieErrorMessage(payload: unknown): string | undefined {
     return undefined;
   }
   return optionalString(record.message) ?? optionalString(record.error) ?? optionalString(record.result);
-}
-
-function requireInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function requireStringPayload(value: unknown, label: string): string {

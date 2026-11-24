@@ -1,9 +1,10 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext, ProviderFetch } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
-import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
-import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { compactObject, looseArray, optionalRecord, optionalString } from "../../core/cast.ts";
+import { ProviderRequestError, providerUserAgent, providerInputError } from "../provider-runtime.ts";
 
 export const valyuApiBaseUrl = "https://api.valyu.ai";
 
@@ -40,7 +41,7 @@ export const valyuActionHandlers: ProviderActionHandlers<"valyu", ValyuActionHan
     const response = asObject(payload);
     return {
       ...response,
-      results: readArray(response.results).map(normalizeSearchResult),
+      results: looseArray(response.results).map(normalizeSearchResult),
       results_by_source: optionalRecord(response.results_by_source) ?? {},
       raw: response,
     };
@@ -63,7 +64,6 @@ export async function validateValyuCredential(
     profile: {
       accountId: "valyu-api-key",
       displayName: "Valyu API Key",
-      grantedScopes: [],
     },
     metadata: {
       apiBaseUrl: valyuApiBaseUrl,
@@ -108,7 +108,7 @@ async function valyuRequest(input: {
 
 function valyuHeaders(apiKey: string, hasBody: boolean): Record<string, string> {
   const headers: Record<string, string> = {
-    accept: "application/json",
+    "accept": "application/json",
     "x-api-key": apiKey,
     "user-agent": providerUserAgent,
   };
@@ -129,10 +129,9 @@ async function readValyuPayload(response: Response): Promise<unknown> {
 function createValyuError(response: Response, payload: unknown, phase: "validate" | "execute"): ProviderRequestError {
   const message = readErrorMessage(payload) ?? (response.statusText.trim() || "valyu request failed");
   if (response.status === 429) return new ProviderRequestError(429, message);
-  if (phase === "validate" && (response.status === 401 || response.status === 403))
-    return new ProviderRequestError(400, message);
+  if (phase === "validate" && (response.status === 401 || response.status === 403)) return providerInputError(message);
   if (phase === "execute" && response.status === 401) return new ProviderRequestError(401, message);
-  if (response.status === 400 || response.status === 422) return new ProviderRequestError(400, message);
+  if (response.status === 400 || response.status === 422) return providerInputError(message);
   if (response.status === 402 || response.status === 403) return new ProviderRequestError(response.status, message);
   return new ProviderRequestError(response.status || 502, message);
 }
@@ -169,10 +168,6 @@ function normalizeSearchResult(value: unknown): Record<string, unknown> {
     metadata: optionalRecord(input.metadata),
     raw: input,
   });
-}
-
-function readArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
 }
 
 function asObject(value: unknown): Record<string, unknown> {

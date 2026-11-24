@@ -1,5 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 import type { ProviderFetch } from "../provider-runtime.ts";
 
 import {
@@ -73,7 +73,6 @@ export async function validateBtcpayServerCredential(
       accountId: `btcpay_server:${buildInstanceKey(baseUrl)}`,
       displayName: buildAccountLabel(baseUrl, stores),
     },
-    grantedScopes: [],
     metadata: compactObject({
       baseUrl,
       validationEndpoint: buildValidationEndpoint(baseUrl, btcpayValidationPath),
@@ -304,8 +303,8 @@ async function btcpayFetch(input: {
 }): Promise<Response> {
   const url = buildBtcpayApiUrl(input.baseUrl, input.path, input.query);
   const headers = new Headers({
-    Accept: "application/json",
-    Authorization: `token ${input.apiKey}`,
+    "Accept": "application/json",
+    "Authorization": `token ${input.apiKey}`,
     "User-Agent": providerUserAgent,
   });
 

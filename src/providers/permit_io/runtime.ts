@@ -1,9 +1,14 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ProviderRuntimeHandler } from "../provider-executors.ts";
 
-import { optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
-import { createProviderTimeout, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { optionalInteger, optionalString, recordOrEmpty } from "../../core/cast.ts";
+import {
+  createProviderTimeout,
+  providerUserAgent,
+  ProviderRequestError,
+  providerInputError,
+} from "../provider-runtime.ts";
 
 export const permitIoApiBaseUrl = "https://api.permit.io";
 
@@ -147,7 +152,7 @@ export async function validatePermitIoCredential(
     signal,
     phase: "validate",
   });
-  const scope = readRecord(payload);
+  const scope = recordOrEmpty(payload);
   const organizationId = requiredResponseString(scope.organization_id, "organization_id");
   const projectId = optionalString(scope.project_id);
   const environmentId = optionalString(scope.environment_id);
@@ -162,7 +167,6 @@ export async function validatePermitIoCredential(
           ? `Permit.io project ${projectId}`
           : `Permit.io organization ${organizationId}`,
     },
-    grantedScopes: [],
     metadata: {
       organizationId,
       projectId,
@@ -204,7 +208,7 @@ function resolveContext(context: PermitIoContext, input: Record<string, unknown>
 }
 
 async function requestPermitIoJson(options: PermitIoRequestOptions): Promise<unknown> {
-  const timeout = createProviderTimeout(options.signal, 30_000);
+  const timeout = createProviderTimeout(options.signal);
   const url = new URL(options.path, permitIoApiBaseUrl);
   for (const [name, value] of Object.entries(options.query ?? {})) {
     if (value !== undefined) {
@@ -218,8 +222,8 @@ async function requestPermitIoJson(options: PermitIoRequestOptions): Promise<unk
     response = await options.fetcher(url, {
       method: options.method,
       headers: {
-        accept: "application/json",
-        authorization: `Bearer ${options.apiKey}`,
+        "accept": "application/json",
+        "authorization": `Bearer ${options.apiKey}`,
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },
@@ -264,7 +268,7 @@ async function readPayload(response: Response): Promise<unknown> {
 }
 
 function permitIoError(response: Response, payload: unknown, phase: "validate" | "execute"): ProviderRequestError {
-  const record = readRecord(payload);
+  const record = recordOrEmpty(payload);
   const message =
     optionalString(record.detail) ??
     optionalString(record.message) ??
@@ -273,7 +277,7 @@ function permitIoError(response: Response, payload: unknown, phase: "validate" |
     return new ProviderRequestError(phase === "validate" ? 400 : response.status, message);
   }
   if (response.status === 404 || response.status === 422) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (response.status === 429) {
     return new ProviderRequestError(429, message);
@@ -314,10 +318,6 @@ function pickBody(input: Record<string, unknown>, fields: readonly string[]): Re
 
 function pathValue(value: unknown, field: string): string {
   return encodeURIComponent(requiredInputString(value, field));
-}
-
-function readRecord(value: unknown): Record<string, unknown> {
-  return optionalRecord(value) ?? {};
 }
 
 function requiredInputString(value: unknown, field: string): string {

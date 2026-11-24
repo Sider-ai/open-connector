@@ -1,11 +1,19 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderRequestContext } from "../provider-runtime.ts";
 
-import { compactObject, optionalBoolean, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
+import {
+  compactObject,
+  optionalBoolean,
+  optionalNumber,
+  optionalRecord,
+  optionalString,
+  recordOrEmpty,
+} from "../../core/cast.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
@@ -13,7 +21,6 @@ import {
 
 const service = "radar";
 const radarApiBaseUrl = "https://api.radar.io";
-const radarDefaultRequestTimeoutMs = 30_000;
 const radarValidationPath = "/v1/geocode/ip";
 
 type RadarRequestPhase = "validate" | "execute";
@@ -28,14 +35,14 @@ export const radarActionHandlers: ProviderActionHandlers<"radar", RadarActionHan
         query: readRequiredString(input.query, "query"),
         layers: joinStringList(input.layers),
         country: joinCountryCodeList(input.country),
-        lang: readOptionalString(input.lang),
+        lang: optionalString(input.lang),
       }),
       context,
       phase: "execute",
     });
 
     return {
-      meta: normalizeMeta(payload.meta),
+      meta: recordOrEmpty(payload.meta),
       addresses: normalizeAddressList(payload.addresses),
     };
   },
@@ -55,7 +62,7 @@ export const radarActionHandlers: ProviderActionHandlers<"radar", RadarActionHan
     });
 
     return {
-      meta: normalizeMeta(payload.meta),
+      meta: recordOrEmpty(payload.meta),
       addresses: normalizeAddressList(payload.addresses),
     };
   },
@@ -87,7 +94,7 @@ export const radarActionHandlers: ProviderActionHandlers<"radar", RadarActionHan
     });
 
     return {
-      meta: normalizeMeta(payload.meta),
+      meta: recordOrEmpty(payload.meta),
       addresses: normalizeAddressList(payload.addresses),
     };
   },
@@ -116,13 +123,23 @@ export const radarActionHandlers: ProviderActionHandlers<"radar", RadarActionHan
     });
 
     return {
-      meta: normalizeMeta(payload.meta),
+      meta: recordOrEmpty(payload.meta),
       places: normalizePlaceList(payload.places),
     };
   },
 };
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, radarActionHandlers);
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: radarApiBaseUrl,
+  auth: { type: "api_key_header", name: "Authorization" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
 
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
@@ -141,7 +158,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "radar:api_key",
         displayName: "Radar API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: radarApiBaseUrl,
         validationEndpoint: radarValidationPath,
@@ -157,17 +173,17 @@ async function requestRadarJson(input: {
   path: string;
   apiKey: string;
   query: Record<string, string | undefined>;
-  context: Pick<ApiKeyProviderContext, "fetcher" | "signal">;
+  context: ProviderRequestContext;
   phase: RadarRequestPhase;
 }): Promise<Record<string, unknown>> {
-  const timeout = createProviderTimeout(input.context.signal, radarDefaultRequestTimeoutMs);
+  const timeout = createProviderTimeout(input.context.signal);
 
   try {
     const response = await input.context.fetcher(buildRadarUrl(input.path, input.query), {
       method: "GET",
       headers: {
-        accept: "application/json",
-        authorization: input.apiKey,
+        "accept": "application/json",
+        "authorization": input.apiKey,
         "user-agent": providerUserAgent,
       },
       signal: timeout.signal,
@@ -270,7 +286,7 @@ function normalizeIpGeocodePayload(payload: Record<string, unknown>): {
   }
 
   return compactObject({
-    meta: normalizeMeta(payload.meta),
+    meta: recordOrEmpty(payload.meta),
     address: normalizeAddress(address),
     proxy: optionalBoolean(payload.proxy),
     ip: optionalString(payload.ip),
@@ -280,10 +296,6 @@ function normalizeIpGeocodePayload(payload: Record<string, unknown>): {
     proxy?: boolean;
     ip?: string;
   };
-}
-
-function normalizeMeta(value: unknown): Record<string, unknown> {
-  return optionalRecord(value) ?? {};
 }
 
 function normalizeAddressList(value: unknown): Array<Record<string, unknown>> {
@@ -415,10 +427,6 @@ function readRequiredString(value: unknown, fieldName: string): string {
   }
 
   return stringValue;
-}
-
-function readOptionalString(value: unknown): string | undefined {
-  return optionalString(value);
 }
 
 function readRequiredNumber(value: unknown, fieldName: string): number {

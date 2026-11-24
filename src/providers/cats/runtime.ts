@@ -1,9 +1,9 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalIntegerLike, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { ProviderRequestError, providerUserAgent, setSearchParams } from "../provider-runtime.ts";
+import { providerInputError, ProviderRequestError, providerUserAgent, setSearchParams } from "../provider-runtime.ts";
 
 export const catsApiBaseUrl = "https://api.catsone.com/v3";
 
@@ -65,7 +65,6 @@ export async function validateCatsCredential(
       accountId: siteId ?? siteSubdomain ?? "cats",
       displayName: siteName ?? "CATS API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       siteId,
       siteSubdomain,
@@ -194,8 +193,8 @@ async function catsRequest(input: {
 
 function catsHeaders(apiKey: string): HeadersInit {
   return {
-    accept: "application/json",
-    authorization: `Token ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Token ${apiKey}`,
     "content-type": "application/json",
     "user-agent": providerUserAgent,
   };
@@ -302,8 +301,4 @@ function readString(value: unknown): string | undefined {
     : typeof value === "number" && Number.isFinite(value)
       ? String(value)
       : undefined;
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

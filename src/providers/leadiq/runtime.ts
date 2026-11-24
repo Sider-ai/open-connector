@@ -1,7 +1,12 @@
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ApiKeyActionRequest, ProviderActionHandlers } from "../provider-executors.ts";
 
 import { optionalRecord, optionalString, requiredRecord } from "../../core/cast.ts";
-import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import {
+  ProviderRequestError,
+  providerUserAgent,
+  providerInputError,
+  providerResponseError,
+} from "../provider-runtime.ts";
 
 export interface LeadiqCredentialCheck {
   providerAccountId?: string;
@@ -10,19 +15,11 @@ export interface LeadiqCredentialCheck {
   providerMetadata: Record<string, unknown>;
 }
 
-interface ApiKeyProviderActionInput {
-  apiKey: string;
-  actionName: string;
-  input: Record<string, unknown>;
-  providerMetadata?: Record<string, unknown>;
-  values?: Record<string, string>;
-}
-
 export const leadiqApiBaseUrl = "https://api.leadiq.com";
 export const leadiqGraphqlPath = "/graphql";
 
 type LeadiqRequestPhase = "validate" | "execute";
-type LeadiqActionHandler = (input: ApiKeyProviderActionInput, fetcher: typeof fetch) => Promise<unknown>;
+type LeadiqActionHandler = (input: ApiKeyActionRequest, fetcher: typeof fetch) => Promise<unknown>;
 
 interface GraphqlRequest {
   query: string;
@@ -169,7 +166,7 @@ function requireAdvancedSearchFilter(input: Record<string, unknown>): void {
 
 function requireAnyStringField(input: Record<string, unknown>, fields: string[], message: string): void {
   if (!fields.some((field) => typeof input[field] === "string" && input[field].trim().length > 0)) {
-    throw new ProviderRequestError(400, message);
+    throw providerInputError(message);
   }
 }
 
@@ -212,8 +209,8 @@ async function leadiqRequest(
     response = await fetcher(`${leadiqApiBaseUrl}${leadiqGraphqlPath}`, {
       method: "POST",
       headers: {
-        accept: "application/json",
-        authorization: `Basic ${apiKey}`,
+        "accept": "application/json",
+        "authorization": `Basic ${apiKey}`,
         "content-type": "application/json",
         "user-agent": providerUserAgent,
       },
@@ -268,7 +265,7 @@ function readGraphqlErrorMessage(payload: Record<string, unknown>) {
 
 function mapLeadiqError(status: number, message: string, phase: LeadiqRequestPhase) {
   if (status === 401 || status === 403) {
-    return new ProviderRequestError(phase === "validate" ? 400 : 409, message);
+    return new ProviderRequestError(phase === "validate" ? 400 : 401, message);
   }
   if (status === 402) {
     return new ProviderRequestError(402, message || "LeadIQ credits are insufficient");
@@ -277,9 +274,9 @@ function mapLeadiqError(status: number, message: string, phase: LeadiqRequestPha
     return new ProviderRequestError(429, message);
   }
   if (status >= 400 && status < 500) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
-  return new ProviderRequestError(502, message);
+  return providerResponseError(message);
 }
 
 function requireGraphqlObject(data: Record<string, unknown>, field: string) {

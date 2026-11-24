@@ -4,13 +4,15 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { OAuthProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { ProviderOAuthRuntime } from "../../oauth/oauth-token.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { OAuthProviderContext, ProviderRuntimeHandler } from "../provider-executors.ts";
 
 import {
   compactObject,
   objectArray,
   optionalInteger,
+  optionalNumber,
   optionalRecord,
   optionalString,
   optionalStringArray,
@@ -18,12 +20,15 @@ import {
   requiredString,
 } from "../../core/cast.ts";
 import { queryParams } from "../../core/request.ts";
+import { defineOAuthProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
-  defineOAuthProviderExecutors,
-  defineProviderProxy,
+  providerInputError,
   ProviderRequestError,
+  providerResponseError,
   providerUserAgent,
   readProviderJsonBody,
+  requiredInputString,
   setSearchParams,
 } from "../provider-runtime.ts";
 
@@ -43,7 +48,7 @@ interface MiroRequestOptions {
   path: string;
   phase: MiroRequestPhase;
   signal?: AbortSignal;
-  method?: "GET" | "POST" | "PUT" | "PATCH";
+  method?: "DELETE" | "GET" | "PATCH" | "POST" | "PUT";
   query?: Record<string, string>;
   body?: Record<string, unknown> | Record<string, unknown>[];
 }
@@ -80,7 +85,7 @@ export const miroActionHandlers: ProviderActionHandlers<"miro", MiroActionHandle
     };
   },
   async get_board(input, context): Promise<unknown> {
-    const boardId = requireInputString(input.boardId, "boardId");
+    const boardId = requiredInputString(input.boardId, "boardId");
     return {
       board: requireMiroObject(
         await requestMiroJson({
@@ -102,7 +107,7 @@ export const miroActionHandlers: ProviderActionHandlers<"miro", MiroActionHandle
           path: "/v2/boards",
           phase: "execute",
           body: compactObject({
-            name: requireInputString(input.name, "name"),
+            name: requiredInputString(input.name, "name"),
             description: optionalString(input.description),
             teamId: optionalString(input.teamId),
             projectId: optionalString(input.projectId),
@@ -119,7 +124,7 @@ export const miroActionHandlers: ProviderActionHandlers<"miro", MiroActionHandle
       method: "PUT",
       path: "/v2/boards",
       phase: "execute",
-      query: { copy_from: requireInputString(boardId, "boardId") },
+      query: { copy_from: requiredInputString(boardId, "boardId") },
       body: { name, description, teamId, policy },
     });
     return { board: requireMiroObject(board, "copy board response") };
@@ -132,7 +137,7 @@ export const miroActionHandlers: ProviderActionHandlers<"miro", MiroActionHandle
       ...context,
       method: "PATCH",
       phase: "execute",
-      path: `/v2/boards/${encodeURIComponent(requireInputString(boardId, "boardId"))}/items/${encodeURIComponent(requireInputString(itemId, "itemId"))}`,
+      path: `/v2/boards/${encodeURIComponent(requiredInputString(boardId, "boardId"))}/items/${encodeURIComponent(requiredInputString(itemId, "itemId"))}`,
       body: { parent, position },
     });
     return { item: requireMiroObject(item, "move item response") };
@@ -146,26 +151,8 @@ export const miroActionHandlers: ProviderActionHandlers<"miro", MiroActionHandle
     );
     return { items: objectArray(payload.data, "Miro bulk item", providerResponseError) };
   },
-  async create_shape({ boardId, data, style, position, geometry, parent }, context): Promise<unknown> {
-    return { item: await postBoardResource(boardId, "shapes", { data, style, position, geometry, parent }, context) };
-  },
-  async create_connector({ boardId, startItem, endItem, shape, style, captions }, context): Promise<unknown> {
-    const start = requiredRecord(startItem, "startItem", providerInputError);
-    const end = requiredRecord(endItem, "endItem", providerInputError);
-    if (requireInputString(start.id, "startItem.id") === requireInputString(end.id, "endItem.id")) {
-      throw providerInputError("startItem.id and endItem.id must refer to different items");
-    }
-    return {
-      connector: await postBoardResource(
-        boardId,
-        "connectors",
-        { startItem, endItem, shape, style, captions },
-        context,
-      ),
-    };
-  },
   async list_items(input, context): Promise<unknown> {
-    const boardId = requireInputString(input.boardId, "boardId");
+    const boardId = requiredInputString(input.boardId, "boardId");
     const payload = requireMiroObject(
       await requestMiroJson({
         ...context,
@@ -187,8 +174,8 @@ export const miroActionHandlers: ProviderActionHandlers<"miro", MiroActionHandle
     };
   },
   async get_item(input, context): Promise<unknown> {
-    const boardId = requireInputString(input.boardId, "boardId");
-    const itemId = requireInputString(input.itemId, "itemId");
+    const boardId = requiredInputString(input.boardId, "boardId");
+    const itemId = requiredInputString(input.itemId, "itemId");
     return {
       item: requireMiroObject(
         await requestMiroJson({
@@ -200,11 +187,69 @@ export const miroActionHandlers: ProviderActionHandlers<"miro", MiroActionHandle
       ),
     };
   },
+  async delete_item(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
+    const boardId = requiredInputString(input.boardId, "boardId");
+    const itemId = requiredInputString(input.itemId, "itemId");
+    await requestMiroJson({
+      ...context,
+      method: "DELETE",
+      path: `/v2/boards/${encodeURIComponent(boardId)}/items/${encodeURIComponent(itemId)}`,
+      phase: "execute",
+    });
+    return { boardId, itemId, deleted: true };
+  },
   async create_sticky_note(input, context): Promise<unknown> {
     return createBoardItem(input, context, "sticky_notes");
   },
   async create_text(input, context): Promise<unknown> {
     return createBoardItem(input, context, "texts");
+  },
+  async create_shape(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
+    return createBoardItem(input, context, "shapes");
+  },
+  async update_sticky_note(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
+    return updateStickyNote(input, context);
+  },
+  async create_connector(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
+    const boardId = requiredInputString(input.boardId, "boardId");
+    const startItem = requiredRecord(input.startItem, "startItem", providerInputError);
+    const endItem = requiredRecord(input.endItem, "endItem", providerInputError);
+    validateConnectorEndpoint(startItem, "startItem");
+    validateConnectorEndpoint(endItem, "endItem");
+    if (
+      requiredString(startItem.id, "startItem.id", providerInputError) ===
+      requiredString(endItem.id, "endItem.id", providerInputError)
+    ) {
+      throw new ProviderRequestError(400, "startItem.id and endItem.id must identify different items");
+    }
+    const connector = requireMiroObject(
+      await requestMiroJson({
+        ...context,
+        method: "POST",
+        path: `/v2/boards/${encodeURIComponent(boardId)}/connectors`,
+        phase: "execute",
+        body: compactObject({
+          startItem,
+          endItem,
+          shape: optionalString(input.shape),
+          captions: Array.isArray(input.captions) ? input.captions : undefined,
+          style: optionalRecord(input.style),
+        }),
+      }),
+      "create connector response",
+    );
+    return { connector };
+  },
+  async delete_connector(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
+    const boardId = requiredInputString(input.boardId, "boardId");
+    const connectorId = requiredInputString(input.connectorId, "connectorId");
+    await requestMiroJson({
+      ...context,
+      method: "DELETE",
+      path: `/v2/boards/${encodeURIComponent(boardId)}/connectors/${encodeURIComponent(connectorId)}`,
+      phase: "execute",
+    });
+    return { boardId, connectorId, deleted: true };
   },
 };
 
@@ -218,6 +263,49 @@ export const proxy: ProviderProxyExecutor = defineProviderProxy({
   auth: { type: "oauth_bearer" },
   skipDnsValidation: true,
 });
+
+export const oauth: ProviderOAuthRuntime = {
+  async refreshAccessToken(input) {
+    const body = new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: input.refreshToken,
+      client_id: input.clientConfig.clientId,
+      client_secret: input.clientConfig.clientSecret,
+    });
+    const response = await input.fetcher("https://api.miro.com/v1/oauth/token", {
+      method: "POST",
+      headers: {
+        "accept": "application/json",
+        "content-type": "application/x-www-form-urlencoded",
+        "user-agent": providerUserAgent,
+      },
+      body,
+      redirect: "manual",
+    });
+    const payload = optionalRecord(
+      await readProviderJsonBody(response, {
+        emptyBody: null,
+        invalidJsonMessage: "Miro token refresh returned invalid JSON",
+      }),
+    );
+    const message = optionalString(payload?.message);
+    if (!response.ok) {
+      if (message === "Invalid refresh token") {
+        throw new ProviderRequestError(401, message, payload);
+      }
+      throw input.createError(message ?? `Miro token refresh failed (HTTP ${response.status}).`);
+    }
+    const accessToken = requiredString(payload?.access_token, "access_token", input.createError);
+    const expiresIn = optionalNumber(payload?.expires_in);
+    return {
+      accessToken,
+      refreshToken: optionalString(payload?.refresh_token),
+      tokenType: optionalString(payload?.token_type) ?? "Bearer",
+      expiresAt: expiresIn === undefined ? undefined : new Date(Date.now() + expiresIn * 1000).toISOString(),
+      metadata: compactObject({ expires_in: expiresIn, scope: optionalString(payload?.scope) }),
+    };
+  },
+};
 
 export const credentialValidators: CredentialValidators = {
   async oauth2(input, { fetcher, signal }) {
@@ -239,10 +327,12 @@ export const credentialValidators: CredentialValidators = {
 async function createBoardItem(
   input: Record<string, unknown>,
   context: OAuthProviderContext,
-  endpoint: "sticky_notes" | "texts",
+  endpoint: "shapes" | "sticky_notes" | "texts",
 ): Promise<{ item: Record<string, unknown> }> {
-  const data = requiredRecord(input.data, "data", providerInputError);
-  requiredString(data.content, "data.content", providerInputError);
+  const boardId = requiredInputString(input.boardId, "boardId");
+  const data =
+    endpoint === "shapes" ? optionalRecord(input.data) : requiredRecord(input.data, "data", providerInputError);
+  if (endpoint !== "shapes") requiredString(data?.content, "data.content", providerInputError);
   const geometry = optionalRecord(input.geometry);
   if (endpoint === "sticky_notes" && geometry?.width !== undefined && geometry.height !== undefined) {
     throw new ProviderRequestError(400, "geometry must specify either width or height, not both");
@@ -252,7 +342,7 @@ async function createBoardItem(
   }
 
   const item = await postBoardResource(
-    input.boardId,
+    boardId,
     endpoint,
     {
       data,
@@ -277,19 +367,52 @@ async function postBoardResource(
       ...context,
       method: "POST",
       phase: "execute",
-      path: `/v2/boards/${encodeURIComponent(requireInputString(boardId, "boardId"))}/${resource}`,
+      path: `/v2/boards/${encodeURIComponent(requiredInputString(boardId, "boardId"))}/${resource}`,
       body,
     }),
     `create ${resource} response`,
   );
 }
 
+async function updateStickyNote(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {
+  const data = optionalRecord(input.data);
+  const style = optionalRecord(input.style);
+  const position = optionalRecord(input.position);
+  const geometry = optionalRecord(input.geometry);
+  const parent = optionalRecord(input.parent);
+  if (!data && !style && !position && !geometry && !parent) {
+    throw new ProviderRequestError(400, "at least one sticky note field is required");
+  }
+  if (geometry?.width !== undefined && geometry.height !== undefined) {
+    throw new ProviderRequestError(400, "geometry must specify either width or height, not both");
+  }
+  const boardId = requiredInputString(input.boardId, "boardId");
+  const itemId = requiredInputString(input.itemId, "itemId");
+  const item = requireMiroObject(
+    await requestMiroJson({
+      ...context,
+      method: "PATCH",
+      path: `/v2/boards/${encodeURIComponent(boardId)}/sticky_notes/${encodeURIComponent(itemId)}`,
+      phase: "execute",
+      body: compactObject({ data, style, position, geometry, parent }),
+    }),
+    "update sticky note response",
+  );
+  return { item };
+}
+
+function validateConnectorEndpoint(endpoint: Record<string, unknown>, label: string): void {
+  if (endpoint.position !== undefined && endpoint.snapTo !== undefined) {
+    throw new ProviderRequestError(400, `${label} must specify either position or snapTo, not both`);
+  }
+}
+
 async function requestMiroJson(input: MiroRequestOptions): Promise<unknown> {
   const url = new URL(input.path.replace(/^\//u, ""), `${miroApiBaseUrl}/`);
   setSearchParams(url, input.query ?? {});
   const headers: Record<string, string> = {
-    authorization: `${input.tokenType ?? "Bearer"} ${input.accessToken}`,
-    accept: "application/json",
+    "authorization": `${input.tokenType ?? "Bearer"} ${input.accessToken}`,
+    "accept": "application/json",
     "user-agent": providerUserAgent,
   };
   if (input.body !== undefined) {
@@ -364,16 +487,4 @@ function requireMiroObject(value: unknown, source: string): Record<string, unkno
     throw new ProviderRequestError(502, `Miro ${source} must be an object`, value);
   }
   return object;
-}
-
-function requireInputString(value: unknown, field: string): string {
-  return requiredString(value, field, providerInputError);
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
-}
-
-function providerResponseError(message: string): ProviderRequestError {
-  return new ProviderRequestError(502, message);
 }

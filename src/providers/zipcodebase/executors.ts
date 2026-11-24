@@ -1,17 +1,17 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalNumber, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerInputError, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "zipcodebase";
 const zipcodebaseApiBaseUrl = "https://app.zipcodebase.com/api/v1";
 
 type ZipcodebaseRequestPhase = "validate" | "execute";
 type ZipcodebaseQueryValue = string | number | undefined;
-type ZipcodebaseActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
-type ZipcodebaseActionHandler = (input: Record<string, unknown>, context: ZipcodebaseActionContext) => Promise<unknown>;
+type ZipcodebaseActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 export const zipcodebaseActionHandlers: ProviderActionHandlers<"zipcodebase", ZipcodebaseActionHandler> = {
   get_status(_input, context) {
@@ -32,9 +32,9 @@ export const zipcodebaseActionHandlers: ProviderActionHandlers<"zipcodebase", Zi
     return requestZipcodebaseJson(
       "/distance",
       {
-        code: requiredString(input.code, "code", badInput),
+        code: requiredString(input.code, "code", providerInputError),
         compare: readStringList(input.compare, "compare").join(","),
-        country: requiredString(input.country, "country", badInput),
+        country: requiredString(input.country, "country", providerInputError),
         unit: optionalString(input.unit),
       },
       context,
@@ -45,9 +45,9 @@ export const zipcodebaseActionHandlers: ProviderActionHandlers<"zipcodebase", Zi
     return requestZipcodebaseJson(
       "/radius",
       {
-        code: requiredString(input.code, "code", badInput),
+        code: requiredString(input.code, "code", providerInputError),
         radius: requiredNumber(input.radius, "radius"),
-        country: requiredString(input.country, "country", badInput),
+        country: requiredString(input.country, "country", providerInputError),
         unit: optionalString(input.unit),
       },
       context,
@@ -60,7 +60,7 @@ export const zipcodebaseActionHandlers: ProviderActionHandlers<"zipcodebase", Zi
       {
         codes: readStringList(input.codes, "codes").join(","),
         distance: requiredNumber(input.distance, "distance"),
-        country: requiredString(input.country, "country", badInput),
+        country: requiredString(input.country, "country", providerInputError),
         unit: optionalString(input.unit),
       },
       context,
@@ -71,8 +71,8 @@ export const zipcodebaseActionHandlers: ProviderActionHandlers<"zipcodebase", Zi
     return requestZipcodebaseJson(
       "/code/city",
       {
-        city: requiredString(input.city, "city", badInput),
-        country: requiredString(input.country, "country", badInput),
+        city: requiredString(input.city, "city", providerInputError),
+        country: requiredString(input.country, "country", providerInputError),
         state_name: optionalString(input.state_name),
       },
       context,
@@ -83,8 +83,8 @@ export const zipcodebaseActionHandlers: ProviderActionHandlers<"zipcodebase", Zi
     return requestZipcodebaseJson(
       "/code/state",
       {
-        state_name: requiredString(input.state_name, "state_name", badInput),
-        country: requiredString(input.country, "country", badInput),
+        state_name: requiredString(input.state_name, "state_name", providerInputError),
+        country: requiredString(input.country, "country", providerInputError),
       },
       context,
       "execute",
@@ -93,6 +93,13 @@ export const zipcodebaseActionHandlers: ProviderActionHandlers<"zipcodebase", Zi
 };
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, zipcodebaseActionHandlers);
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: zipcodebaseApiBaseUrl,
+  auth: { type: "api_key_header", name: "apikey" },
+  skipDnsValidation: true,
+  defaultHeaders: { accept: "application/json" },
+});
 
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
@@ -113,7 +120,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: "zipcodebase",
         displayName: "Zipcodebase API Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: zipcodebaseApiBaseUrl,
         validationEndpoint: "/status",
@@ -126,7 +132,7 @@ export const credentialValidators: CredentialValidators = {
 async function requestZipcodebaseJson(
   path: string,
   query: Record<string, ZipcodebaseQueryValue>,
-  context: ZipcodebaseActionContext,
+  context: ApiKeyProviderContext,
   phase: ZipcodebaseRequestPhase,
 ): Promise<unknown> {
   let response: Response;
@@ -134,8 +140,8 @@ async function requestZipcodebaseJson(
     response = await context.fetcher(buildZipcodebaseUrl(path, query), {
       method: "GET",
       headers: {
-        accept: "application/json",
-        apikey: context.apiKey,
+        "accept": "application/json",
+        "apikey": context.apiKey,
         "user-agent": providerUserAgent,
       },
       signal: context.signal,
@@ -185,11 +191,7 @@ function requiredNumber(value: unknown, fieldName: string): number {
   if (parsed !== undefined) {
     return parsed;
   }
-  throw badInput(`${fieldName} must be a number`);
-}
-
-function badInput(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
+  throw providerInputError(`${fieldName} must be a number`);
 }
 
 async function readZipcodebasePayload(response: Response): Promise<unknown> {

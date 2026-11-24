@@ -1,8 +1,13 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
-import { compactObject, optionalRecord, optionalString, requiredRecord, requiredString } from "../../core/cast.ts";
-import { ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import { compactObject, optionalRecord, optionalString, requiredRecord } from "../../core/cast.ts";
+import {
+  ProviderRequestError,
+  providerUserAgent,
+  requiredInputString,
+  providerInputError,
+} from "../provider-runtime.ts";
 
 export const amplemarketApiBaseUrl = "https://api.amplemarket.com";
 
@@ -113,7 +118,7 @@ export async function validateAmplemarketCredential(
   signal?: AbortSignal,
 ): Promise<CredentialValidationResult> {
   const context = {
-    apiKey: requireInputString(input.apiKey, "apiKey"),
+    apiKey: requiredInputString(input.apiKey, "apiKey"),
     fetcher,
     signal,
   };
@@ -130,7 +135,6 @@ export async function validateAmplemarketCredential(
       accountId: accountId ?? "amplemarket_api_key",
       displayName: accountName ?? accountId ?? "Amplemarket API Key",
     },
-    grantedScopes: [],
     metadata: compactObject({
       apiBaseUrl: amplemarketApiBaseUrl,
       validationEndpoint: "/account-info",
@@ -233,8 +237,8 @@ async function requestAmplemarket(
 
 function amplemarketHeaders(apiKey: string) {
   return {
-    accept: "application/json",
-    authorization: `Bearer ${apiKey}`,
+    "accept": "application/json",
+    "authorization": `Bearer ${apiKey}`,
     "user-agent": providerUserAgent,
   };
 }
@@ -264,7 +268,7 @@ function mapAmplemarketError(status: number, payload: unknown, mode: "validate" 
     return new ProviderRequestError(429, message);
   }
   if (status >= 400 && status < 500 && mode === "execute") {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   return new ProviderRequestError(status >= 500 ? status : 502, message);
 }
@@ -284,14 +288,6 @@ function readAmplemarketErrorMessage(payload: unknown) {
     return optionalString(firstError?.detail) ?? optionalString(firstError?.title) ?? optionalString(firstError?.code);
   }
   return undefined;
-}
-
-function requireInputString(value: unknown, fieldName: string) {
-  return requiredString(value, fieldName, providerInputError);
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }
 
 function requireRecord(value: unknown, label: string) {

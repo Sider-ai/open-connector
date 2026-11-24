@@ -1,6 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlers, ApiKeyProviderContext } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -10,7 +9,13 @@ import {
   requiredRecord,
   requiredString,
 } from "../../core/cast.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import {
+  providerInputError,
+  providerResponseError,
+  providerUserAgent,
+  ProviderRequestError,
+  requiredInputString,
+} from "../provider-runtime.ts";
 
 const codemagicV3BaseUrl = "https://codemagic.io";
 const codemagicLegacyBaseUrl = "https://api.codemagic.io";
@@ -21,7 +26,6 @@ interface CodemagicCredentialInput {
 
 type CodemagicRequestPhase = "validate" | "execute";
 type CodemagicQueryValue = string | number | boolean | string[] | undefined;
-type CodemagicRuntimeContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
 type CodemagicActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
 export const codemagicActionHandlers: ProviderActionHandlers<"codemagic", CodemagicActionHandler> = {
@@ -84,7 +88,7 @@ export const codemagicActionHandlers: ProviderActionHandlers<"codemagic", Codema
   },
 
   async list_team_apps(input, context) {
-    const teamId = requireInputString(input.team_id, "team_id");
+    const teamId = requiredInputString(input.team_id, "team_id");
     const payload = await requestCodemagicV3Json<{
       data?: unknown;
       page_size?: unknown;
@@ -111,7 +115,7 @@ export const codemagicActionHandlers: ProviderActionHandlers<"codemagic", Codema
   },
 
   async list_team_builds(input, context) {
-    const teamId = requireInputString(input.team_id, "team_id");
+    const teamId = requiredInputString(input.team_id, "team_id");
     const payload = await requestCodemagicV3Json<{
       data?: unknown;
       page_size?: unknown;
@@ -141,7 +145,7 @@ export const codemagicActionHandlers: ProviderActionHandlers<"codemagic", Codema
   },
 
   async get_build(input, context) {
-    const buildId = requireInputString(input.build_id, "build_id");
+    const buildId = requiredInputString(input.build_id, "build_id");
     const payload = await requestCodemagicV3Json<{ data?: unknown }>({
       context,
       path: `/api/v3/builds/${encodeURIComponent(buildId)}`,
@@ -162,8 +166,8 @@ export const codemagicActionHandlers: ProviderActionHandlers<"codemagic", Codema
       path: "/builds",
       method: "POST",
       body: compactObject({
-        appId: requireInputString(input.appId, "appId"),
-        workflowId: requireInputString(input.workflowId, "workflowId"),
+        appId: requiredInputString(input.appId, "appId"),
+        workflowId: requiredInputString(input.workflowId, "workflowId"),
         branch: optionalString(input.branch),
         tag: optionalString(input.tag),
         labels: readOptionalStringArray(input.labels),
@@ -179,7 +183,7 @@ export const codemagicActionHandlers: ProviderActionHandlers<"codemagic", Codema
   },
 
   async cancel_build(input, context) {
-    const buildId = requireInputString(input.build_id, "build_id");
+    const buildId = requiredInputString(input.build_id, "build_id");
     const response = await codemagicFetch({
       baseUrl: codemagicLegacyBaseUrl,
       context,
@@ -203,7 +207,7 @@ export async function validateCodemagicApiKey(
   input: CodemagicCredentialInput,
   options: { fetcher: typeof fetch; signal?: AbortSignal },
 ): Promise<CredentialValidationResult> {
-  const context: CodemagicRuntimeContext = {
+  const context: ApiKeyProviderContext = {
     apiKey: input.apiKey,
     fetcher: options.fetcher,
     signal: options.signal,
@@ -229,7 +233,6 @@ export async function validateCodemagicApiKey(
       accountId,
       displayName,
     },
-    grantedScopes: [],
     metadata: compactObject({
       validationEndpoint: "/api/v3/user",
       avatar_url: optionalString(user.avatar_url),
@@ -242,7 +245,7 @@ export async function validateCodemagicApiKey(
 }
 
 async function requestCodemagicV3Json<T>(input: {
-  context: CodemagicRuntimeContext;
+  context: ApiKeyProviderContext;
   path: string;
   phase: CodemagicRequestPhase;
   method?: string;
@@ -267,7 +270,7 @@ async function requestCodemagicV3Json<T>(input: {
 }
 
 async function requestCodemagicLegacyJson<T>(input: {
-  context: CodemagicRuntimeContext;
+  context: ApiKeyProviderContext;
   path: string;
   phase: CodemagicRequestPhase;
   method?: string;
@@ -292,7 +295,7 @@ async function requestCodemagicLegacyJson<T>(input: {
 
 async function codemagicFetch(input: {
   baseUrl: string;
-  context: CodemagicRuntimeContext;
+  context: ApiKeyProviderContext;
   path: string;
   method?: string;
   query?: Record<string, CodemagicQueryValue>;
@@ -329,7 +332,7 @@ async function codemagicFetch(input: {
 
 function buildCodemagicHeaders(apiKey: string, hasBody: boolean): Headers {
   const headers = new Headers({
-    accept: "application/json",
+    "accept": "application/json",
     "user-agent": providerUserAgent,
     "x-auth-token": apiKey,
   });
@@ -354,10 +357,10 @@ async function toCodemagicError(
     return new ProviderRequestError(429, message);
   }
   if (response.status === 400) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
   if (response.status === 404 && notFoundAsInvalidInput) {
-    return new ProviderRequestError(400, message);
+    return providerInputError(message);
   }
 
   return new ProviderRequestError(response.status || 502, message);
@@ -393,10 +396,6 @@ async function readJsonResponse<T>(response: Response, providerName: string): Pr
   }
 }
 
-function requireInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, invalidInputError);
-}
-
 function requireResponsePositiveInteger(value: unknown, fieldName: string): number {
   const parsed = readOptionalPositiveInteger(value, fieldName);
   if (parsed === undefined) {
@@ -427,7 +426,7 @@ function readOptionalPositiveInteger(value: unknown, fieldName: string): number 
   if (value == null || value === "") {
     return undefined;
   }
-  return positiveInteger(value, fieldName, invalidInputError);
+  return positiveInteger(value, fieldName, providerInputError);
 }
 
 function readOptionalStringArray(value: unknown): string[] | undefined {
@@ -445,7 +444,7 @@ function readOptionalEnvironment(value: unknown): Record<string, unknown> | unde
     return undefined;
   }
 
-  const input = requiredRecord(value, "environment", invalidInputError);
+  const input = requiredRecord(value, "environment", providerInputError);
   return compactObject({
     variables: readOptionalPrimitiveRecord(input.variables),
     groups: readOptionalStringArray(input.groups),
@@ -457,7 +456,7 @@ function readOptionalPrimitiveRecord(value: unknown): Record<string, string | nu
   if (value === undefined) {
     return undefined;
   }
-  const input = requiredRecord(value, "environment.variables", invalidInputError);
+  const input = requiredRecord(value, "environment.variables", providerInputError);
   return Object.fromEntries(
     Object.entries(input).map(([key, child]) => {
       if (typeof child !== "string" && typeof child !== "number" && typeof child !== "boolean") {
@@ -472,7 +471,7 @@ function readOptionalStringRecord(value: unknown): Record<string, string> | unde
   if (value === undefined) {
     return undefined;
   }
-  const input = requiredRecord(value, "environment.softwareVersions", invalidInputError);
+  const input = requiredRecord(value, "environment.softwareVersions", providerInputError);
   return Object.fromEntries(
     Object.entries(input).map(([key, child]) => {
       if (typeof child !== "string") {
@@ -490,12 +489,4 @@ function pickFirstNonEmptyString(...values: Array<string | undefined>): string |
     }
   }
   return undefined;
-}
-
-function invalidInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
-}
-
-function providerResponseError(message: string): ProviderRequestError {
-  return new ProviderRequestError(502, message);
 }

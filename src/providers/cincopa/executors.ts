@@ -1,5 +1,5 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 
 import {
   compactObject,
@@ -9,12 +9,18 @@ import {
   requiredRecord,
   requiredString,
 } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import {
+  isAbortLikeError,
+  providerUserAgent,
+  ProviderRequestError,
+  defaultProviderRequestTimeoutMs,
+} from "../provider-runtime.ts";
 
 const service = "cincopa";
 const apiBaseUrl = "https://api.cincopa.com/v2";
 const validationPath = "/ping.json";
-const requestTimeoutMs = 30_000;
 
 type CincopaMode = "validate" | "execute";
 interface CincopaContext {
@@ -110,6 +116,16 @@ export const cincopaActionHandlers: ProviderActionHandlers<
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, cincopaActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: apiBaseUrl,
+  auth: { type: "api_key_query", name: "api_token" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const body = await requestBody(
@@ -122,7 +138,6 @@ export const credentialValidators: CredentialValidators = {
         accountId,
         displayName: optionalString(body.useremail) ?? optionalString(body.accemail) ?? "Cincopa API Token",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl,
         validationEndpoint: validationPath,
@@ -155,14 +170,14 @@ async function requestJson(input: {
   query?: Record<string, string | undefined>;
 }): Promise<unknown> {
   const signal = input.context.signal
-    ? AbortSignal.any([input.context.signal, AbortSignal.timeout(requestTimeoutMs)])
-    : AbortSignal.timeout(requestTimeoutMs);
+    ? AbortSignal.any([input.context.signal, AbortSignal.timeout(defaultProviderRequestTimeoutMs)])
+    : AbortSignal.timeout(defaultProviderRequestTimeoutMs);
   let response: Response;
   let payload: unknown;
   try {
     response = await input.context.fetcher(buildUrl(input.path, input.query ?? {}, input.context.apiKey), {
       method: "GET",
-      headers: { accept: "application/json", "user-agent": providerUserAgent },
+      headers: { "accept": "application/json", "user-agent": providerUserAgent },
       signal,
     });
     payload = await readJson(response);
@@ -268,8 +283,4 @@ function joinStringArray(value: unknown): string | undefined {
 
 function providerError(message: string): ProviderRequestError {
   return new ProviderRequestError(502, `Cincopa returned invalid ${message}`);
-}
-
-function isAbortLikeError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
 }

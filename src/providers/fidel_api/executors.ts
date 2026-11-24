@@ -1,13 +1,19 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ProviderActionHandlers } from "../provider-runtime.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalBoolean, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import {
+  isAbortLikeError,
+  providerUserAgent,
+  ProviderRequestError,
+  defaultProviderRequestTimeoutMs,
+} from "../provider-runtime.ts";
 
 const service = "fidel_api";
 const fidelApiBaseUrl = "https://api.fidel.uk/v1";
-const fidelApiTimeoutMs = 30_000;
 
 interface FidelApiResponse {
   payload: unknown;
@@ -113,6 +119,17 @@ export const fidelApiActionHandlers: ProviderActionHandlers<"fidel_api", FidelAp
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, fidelApiActionHandlers);
 
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: fidelApiBaseUrl,
+  auth: { type: "api_key_header", name: "Fidel-Key" },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+    headers.set("content-type", "application/json");
+  },
+});
+
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher, signal }) {
     const brandList = normalizeBrandListResponse(
@@ -131,7 +148,6 @@ export const credentialValidators: CredentialValidators = {
         accountId: optionalString(brandList.brands[0]?.accountId) ?? "api_key",
         displayName: optionalString(brandList.brands[0]?.name) ?? "Fidel API Secret Key",
       },
-      grantedScopes: [],
       metadata: compactObject({
         apiBaseUrl: fidelApiBaseUrl,
         validationEndpoint: "/brands",
@@ -155,7 +171,7 @@ async function requestFidelJson(input: {
     const response = await input.fetcher(buildFidelUrl(input.path, input.query), {
       method: "GET",
       headers: {
-        accept: "application/json",
+        "accept": "application/json",
         "content-type": "application/json",
         "Fidel-Key": input.apiKey,
         "user-agent": providerUserAgent,
@@ -570,7 +586,7 @@ function tryParseJson(value: string): unknown | undefined {
 
 function createFidelRequestSignal(parent?: AbortSignal): FidelApiRequestSignal {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), fidelApiTimeoutMs);
+  const timeout = setTimeout(() => controller.abort(), defaultProviderRequestTimeoutMs);
   const abortFromParent = (): void => controller.abort(parent?.reason);
   if (parent?.aborted) {
     controller.abort(parent.reason);
@@ -585,8 +601,4 @@ function createFidelRequestSignal(parent?: AbortSignal): FidelApiRequestSignal {
       parent?.removeEventListener("abort", abortFromParent);
     },
   };
-}
-
-function isAbortLikeError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
 }
