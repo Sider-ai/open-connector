@@ -19,7 +19,114 @@ type TypeformRequestPhase = "validate" | "execute";
 type TypeformQueryValue = string | number | undefined;
 type TypeformActionHandler = ProviderRuntimeHandler<BearerProviderContext>;
 
+interface TypeformRequest {
+  accessToken: string;
+  path: string;
+  fetcher: ProviderFetch;
+  phase: TypeformRequestPhase;
+  query?: Record<string, TypeformQueryValue>;
+  notFoundAsInvalidInput?: boolean;
+  signal?: AbortSignal;
+  method?: "POST" | "PUT" | "PATCH";
+  body?: Record<string, unknown> | Record<string, unknown>[];
+  ifMatch?: string;
+  captureEtag?: (etag: string | null) => void;
+}
+
 export const typeformActionHandlers: ProviderActionHandlers<"typeform", TypeformActionHandler> = {
+  async create_form(input, context) {
+    const title = requiredString(input.title, "title", badInput);
+    const workspaceId =
+      input.workspaceId === undefined ? undefined : requiredString(input.workspaceId, "workspaceId", badInput);
+    const form = await requestTypeformObject({
+      ...context,
+      phase: "execute",
+      method: "POST",
+      path: "/forms",
+      body: {
+        title,
+        fields: input.fields,
+        settings: { is_public: false },
+        workspace: workspaceId
+          ? { href: `${typeformApiBaseUrl}/workspaces/${encodeURIComponent(workspaceId)}` }
+          : undefined,
+      },
+    });
+    if (optionalRecord(form.settings)?.is_public !== false)
+      throw providerOutput("Typeform did not confirm private form creation; inspect the form before retrying.");
+    return { form };
+  },
+  async update_form(input, context) {
+    const formId = requiredString(input.formId, "formId", badInput);
+    const path = formPath(formId);
+    const title = input.title === undefined ? undefined : requiredString(input.title, "title", badInput);
+    const additions = input.addFields === undefined ? [] : objectArray(input.addFields, "addFields", badInput);
+    const renames = input.renameFields === undefined ? [] : objectArray(input.renameFields, "renameFields", badInput);
+    if (!title && !additions.length && !renames.length) throw badInput("Provide a title or question edits.");
+    let etag: string | undefined;
+    const req: TypeformRequest = { ...context, path, phase: "execute", notFoundAsInvalidInput: true };
+    const form = await requestTypeformObject({
+      ...req,
+      captureEtag: (value) => {
+        etag = value ?? undefined;
+      },
+    });
+    if (optionalRecord(form.settings)?.is_public !== false)
+      throw badInput("update_form only edits non-public forms with a known visibility.");
+    if (!additions.length && !renames.length) {
+      await requestTypeformJson({
+        ...req,
+        method: "PATCH",
+        ifMatch: etag,
+        body: [{ op: "replace", path: "/title", value: title }],
+      });
+    } else {
+      // PUT is a full replacement. Start with the retrieved definition, keep every existing
+      // field (including nested IDs/refs), and never accept a replacement array from the caller.
+      const fields = form.fields === undefined ? [] : objectArray(form.fields, "existing fields", providerOutput);
+      const remaining = new Map<string, string>();
+      for (const rename of renames) {
+        const id = requiredString(rename.id, "field id", badInput);
+        if (remaining.has(id)) throw badInput("Duplicate field ID in renameFields.");
+        remaining.set(id, requiredString(rename.title, "field title", badInput));
+      }
+      const nextFields = fields.map((field) => {
+        const id = requiredString(field.id, "existing field ID", providerOutput);
+        const replacement = remaining.get(id);
+        if (!replacement) return field;
+        remaining.delete(id);
+        return { ...field, title: replacement };
+      });
+      if (remaining.size) throw badInput("Unknown top-level field ID; read the form again before editing.");
+      if (form.id !== formId) throw providerOutput("Typeform returned an unexpected form ID.");
+      const definition = { ...form };
+      for (const key of ["id", "_links", "created_at", "last_updated_at", "published_at"]) delete definition[key];
+      await requestTypeformObject({
+        ...req,
+        method: "PUT",
+        ifMatch: etag,
+        body: {
+          ...definition,
+          title: title ?? form.title,
+          fields: [...nextFields, ...additions],
+          settings: { ...optionalRecord(form.settings), is_public: false },
+        },
+      });
+    }
+    return { formId, updated: true };
+  },
+  async publish_form(input, context) {
+    const formId = requiredString(input.formId, "formId", badInput);
+    await requestTypeformJson({
+      ...context,
+      path: formPath(formId),
+      phase: "execute",
+      method: "PATCH",
+      notFoundAsInvalidInput: true,
+      body: [{ op: "replace", path: "/settings/is_public", value: true }],
+    });
+    return { formId, isPublic: true };
+  },
   async get_current_user(_input, context) {
     return {
       user: await requestTypeformObject({
@@ -127,7 +234,6 @@ export async function validateTypeformCredential(
   profile: {
     accountId: string;
     displayName: string;
-    grantedScopes: string[];
   };
   metadata: Record<string, unknown>;
 }> {
@@ -142,7 +248,6 @@ export async function fetchTypeformCurrentAccount(
   profile: {
     accountId: string;
     displayName: string;
-    grantedScopes: string[];
   };
   metadata: Record<string, unknown>;
 }> {
@@ -176,28 +281,17 @@ async function requestTypeformList(input: {
   };
 }
 
-async function requestTypeformObject(input: {
-  accessToken: string;
-  path: string;
-  fetcher: ProviderFetch;
-  phase: TypeformRequestPhase;
-  query?: Record<string, TypeformQueryValue>;
-  notFoundAsInvalidInput?: boolean;
-  signal?: AbortSignal;
-}): Promise<Record<string, unknown>> {
+async function requestTypeformObject(input: TypeformRequest): Promise<Record<string, unknown>> {
   const payload = await requestTypeformJson(input);
   return requireObject(payload, "Typeform object response");
 }
 
-async function requestTypeformJson(input: {
-  accessToken: string;
-  path: string;
-  fetcher: ProviderFetch;
-  phase: TypeformRequestPhase;
-  query?: Record<string, TypeformQueryValue>;
-  notFoundAsInvalidInput?: boolean;
-  signal?: AbortSignal;
-}): Promise<unknown> {
+function formPath(formId: string): string {
+  if (!/^[a-zA-Z0-9_-]+$/.test(formId)) throw badInput("Invalid Typeform form ID.");
+  return `/forms/${formId}`;
+}
+
+async function requestTypeformJson(input: TypeformRequest): Promise<unknown> {
   const url = new URL(input.path, typeformApiBaseUrl);
   for (const [key, value] of Object.entries(input.query ?? {})) {
     if (value !== undefined) {
@@ -209,11 +303,14 @@ async function requestTypeformJson(input: {
 
   try {
     const response = await input.fetcher(url, {
-      method: "GET",
+      method: input.method ?? "GET",
+      body: input.body === undefined ? undefined : JSON.stringify(input.body),
       headers: {
         Accept: "application/json",
         Authorization: `Bearer ${input.accessToken}`,
         "User-Agent": providerUserAgent,
+        ...(input.body === undefined ? {} : { "Content-Type": "application/json" }),
+        ...(input.ifMatch === undefined ? {} : { "If-Match": input.ifMatch }),
       },
       signal: timeoutHandle.signal,
     });
@@ -229,6 +326,8 @@ async function requestTypeformJson(input: {
       });
     }
 
+    input.captureEtag?.(response.headers.get("etag"));
+    if (input.method === "PATCH" && response.status === 204) return null;
     if (payload.kind === "empty") {
       throw new ProviderRequestError(502, `typeform ${input.path} returned an empty response body`);
     }
@@ -331,7 +430,6 @@ function buildTypeformAccountProfile(user: Record<string, unknown>): {
   profile: {
     accountId: string;
     displayName: string;
-    grantedScopes: string[];
   };
   metadata: Record<string, unknown>;
 } {
@@ -344,7 +442,6 @@ function buildTypeformAccountProfile(user: Record<string, unknown>): {
     profile: {
       accountId,
       displayName,
-      grantedScopes: [],
     },
     metadata: compactObject({
       apiBaseUrl: typeformApiBaseUrl,

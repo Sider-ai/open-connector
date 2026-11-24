@@ -7,6 +7,7 @@ import { createCatalogStore } from "../catalog-store.ts";
 import { provider as calendlyProvider } from "../providers/calendly/definition.ts";
 import { provider as huggingfaceProvider } from "../providers/huggingface/definition.ts";
 import { provider as mondayProvider } from "../providers/monday/definition.ts";
+import { provider as typeformProvider } from "../providers/typeform/definition.ts";
 import { OAuthAuthorizationService } from "./oauth-authorization-service.ts";
 import { OAuthClientConfigService } from "./oauth-client-config-service.ts";
 
@@ -139,6 +140,19 @@ describe("OAuthAuthorizationService", () => {
       "profile",
       "read-repos",
       "write-repos",
+    ]);
+  });
+
+  it("requests Typeform write access while retaining read and offline scopes", async () => {
+    const service = await createAuthorizationService({}, typeformProvider);
+    const { authorizationUrl } = await service.prepareAuthorization({ service: "typeform" });
+    expect(new URL(authorizationUrl).searchParams.get("scope")?.split(" ").sort()).toEqual([
+      "accounts:read",
+      "forms:read",
+      "forms:write",
+      "offline",
+      "responses:read",
+      "workspaces:read",
     ]);
   });
 

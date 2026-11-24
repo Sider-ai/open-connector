@@ -2,6 +2,7 @@ import type { ActionDefinition } from "../../core/types.ts";
 
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
+import { typeformFormsWriteScope } from "./scopes.ts";
 
 const service = "typeform";
 
@@ -183,7 +184,68 @@ const listOutputSchema = (description: string, itemDescription: string, itemSche
     totalItems: s.nonNegativeInteger("The total number of matching items."),
   });
 
+const formId = s.nonWhitespaceString("The ID of the exact Typeform form.");
+const formTitle = s.nonWhitespaceString("Form title.");
+const newQuestion = s.requiredObject("A new question, without an existing field ID.", {
+  title: s.nonWhitespaceString("Question shown to the respondent."),
+  type: s.nonWhitespaceString("Typeform field type, e.g. short_text, email, or multiple_choice."),
+  ref: s.optional(s.nonWhitespaceString("Unique developer reference.")),
+  properties: s.optional(s.unknownObject("Type-specific properties, e.g. choices for multiple_choice.")),
+  validations: s.optional(s.unknownObject("Validation settings, e.g. required.")),
+});
+const writeFormOutput = s.requiredObject("The resulting Typeform form.", { form: fullFormSchema });
+
 export const typeformActions: ActionDefinition[] = [
+  defineProviderAction(service, {
+    name: "create_form",
+    description:
+      "Create a closed Typeform form with optional questions. It does not accept responses until publish_form is called.",
+    requiredScopes: [typeformFormsWriteScope],
+    inputSchema: s.requiredObject("New non-public form.", {
+      title: formTitle,
+      fields: s.optional(s.array(newQuestion)),
+      workspaceId: s.optional(s.nonWhitespaceString("Optional destination workspace ID.")),
+    }),
+    outputSchema: writeFormOutput,
+  }),
+  defineProviderAction(service, {
+    name: "update_form",
+    description:
+      "Edit a non-public form: rename the form, append new questions, or rename existing questions by field ID. Does not delete questions or publish the form.",
+    requiredScopes: [...formsReadScope, typeformFormsWriteScope],
+    inputSchema: s.requireAnyProperty(
+      s.requiredObject("Changes to a non-public form.", {
+        formId,
+        title: s.optional(formTitle),
+        addFields: s.optional(s.array(newQuestion, { minItems: 1 })),
+        renameFields: s.optional(
+          s.array(
+            s.requiredObject("An existing question to rename.", {
+              id: s.nonWhitespaceString("Field ID returned by get_form."),
+              title: s.nonWhitespaceString("New question title."),
+            }),
+            { minItems: 1 },
+          ),
+        ),
+      }),
+      ["title", "addFields", "renameFields"],
+    ),
+    outputSchema: s.requiredObject("Result of editing the form.", {
+      formId,
+      updated: s.boolean("Whether Typeform accepted the edit."),
+    }),
+  }),
+  defineProviderAction(service, {
+    name: "publish_form",
+    description:
+      "Make this form public and open it for responses. Use this action for publication, not for saving edits.",
+    requiredScopes: [typeformFormsWriteScope],
+    inputSchema: s.requiredObject("Target form to make public.", { formId }),
+    outputSchema: s.requiredObject("Publication result.", {
+      formId,
+      isPublic: s.boolean("Whether the form is public."),
+    }),
+  }),
   defineProviderAction(service, {
     name: "get_current_user",
     description: "Get the current Typeform user associated with the authenticated personal access token.",

@@ -1,10 +1,18 @@
 import type { ProviderDefinition } from "../../core/types.ts";
 
 import { typeformActions } from "./actions.ts";
+import { typeformFormsWriteScope } from "./scopes.ts";
 
 const service = "typeform";
 
-const typeformRequestedProviderScopes = ["accounts:read", "forms:read", "responses:read", "workspaces:read", "offline"];
+const typeformRequestedProviderScopes = [
+  "accounts:read",
+  "forms:read",
+  typeformFormsWriteScope,
+  "responses:read",
+  "workspaces:read",
+  "offline",
+];
 
 export const provider: ProviderDefinition = {
   service,
